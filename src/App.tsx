@@ -91,6 +91,9 @@ interface FinanceMovement {
   concept: string;
   category: string;
   value: number;
+  invoiceValue?: number;
+  paidValue?: number;
+  dueDate?: string;
   paymentMethod: string;
   costCenter: string;
   scope: MovementScope;
@@ -98,6 +101,7 @@ interface FinanceMovement {
   attachment?: string;
   attachmentPreview?: string;
   attachmentUrl?: string;
+  note?: string;
 }
 
 const navItems: Array<{ id: View; label: string; icon: ElementType }> = [
@@ -207,6 +211,8 @@ const initialFinance: FinanceMovement[] = [
     concept: 'Plan regenerativo',
     category: 'Tratamientos',
     value: 3600000,
+    invoiceValue: 7200000,
+    paidValue: 3600000,
     paymentMethod: 'Transferencia',
     costCenter: 'Operacion',
     scope: 'Empresa',
@@ -220,6 +226,7 @@ const initialFinance: FinanceMovement[] = [
     concept: 'Compra de insumos',
     category: 'Inventario',
     value: 820000,
+    paidValue: 820000,
     paymentMethod: 'Tarjeta',
     costCenter: 'Inventario',
     scope: 'Empresa',
@@ -235,6 +242,7 @@ const initialFinance: FinanceMovement[] = [
     concept: 'Retiro personal',
     category: 'Personal',
     value: 450000,
+    paidValue: 450000,
     paymentMethod: 'Efectivo',
     costCenter: 'Personal',
     scope: 'Retiro socio',
@@ -243,15 +251,36 @@ const initialFinance: FinanceMovement[] = [
   {
     id: 'MOV-004',
     kind: 'Ingreso',
-    date: '2026-06-23',
+    date: '2026-06-03',
     person: 'Paciente demo 2',
-    concept: 'Saldo pendiente',
+    concept: 'Plan anti-inflamatorio',
     category: 'Cuentas por cobrar',
     value: 1100000,
+    invoiceValue: 3800000,
+    paidValue: 2700000,
+    dueDate: '2026-06-16',
+    paymentMethod: 'Pendiente',
+    costCenter: 'Operacion',
+    scope: 'Empresa',
+    status: 'Vencido',
+    note: 'Saldo de cierre de tratamiento pendiente por recaudo.',
+  },
+  {
+    id: 'MOV-005',
+    kind: 'Ingreso',
+    date: '2026-06-15',
+    person: 'Paciente demo 3',
+    concept: 'Plan energia y metabolismo',
+    category: 'Cuentas por cobrar',
+    value: 1000000,
+    invoiceValue: 1900000,
+    paidValue: 900000,
+    dueDate: '2026-06-28',
     paymentMethod: 'Pendiente',
     costCenter: 'Operacion',
     scope: 'Empresa',
     status: 'Pendiente',
+    note: 'Pendiente antes de la siguiente entrega de peptidos.',
   },
 ];
 
@@ -263,6 +292,23 @@ const currency = new Intl.NumberFormat('es-CO', {
 
 function formatCurrency(value: number) {
   return currency.format(value);
+}
+
+function daysFromDueDate(dueDate?: string) {
+  if (!dueDate) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(`${dueDate}T00:00:00`);
+  const diff = today.getTime() - due.getTime();
+  return Math.ceil(diff / 86400000);
+}
+
+function dueLabel(movement: FinanceMovement) {
+  const days = daysFromDueDate(movement.dueDate);
+  if (days === null) return movement.status === 'Vencido' ? 'Sin fecha limite' : 'Sin fecha';
+  if (days > 0) return `${days} dias en mora`;
+  if (days === 0) return 'Vence hoy';
+  return `Vence en ${Math.abs(days)} dias`;
 }
 
 function classifySale(value: number): PatientTier {
@@ -515,6 +561,10 @@ export function App() {
     const attachmentFile = form.get('attachment');
     const hasAttachment = attachmentFile instanceof File && attachmentFile.size > 0;
     const attachmentUrl = String(form.get('attachmentUrl') || '').trim();
+    const paidValue = Number(form.get('paidValue')) || 0;
+    const invoiceValue = Number(form.get('invoiceValue')) || 0;
+    const dueDate = String(form.get('dueDate') || '').trim();
+    const note = String(form.get('note') || '').trim();
     const newMovement: FinanceMovement = {
       id: `MOV-${String(finance.length + 1).padStart(3, '0')}`,
       kind,
@@ -523,6 +573,9 @@ export function App() {
       concept: String(form.get('concept') || 'Movimiento'),
       category: String(form.get('category') || 'General'),
       value: Number(form.get('value')) || 0,
+      invoiceValue: invoiceValue || undefined,
+      paidValue: paidValue || undefined,
+      dueDate: dueDate || undefined,
       paymentMethod,
       costCenter: String(form.get('costCenter') || 'Operacion'),
       scope: String(form.get('scope') || 'Empresa') as MovementScope,
@@ -530,6 +583,7 @@ export function App() {
       attachment: hasAttachment ? attachmentFile.name : undefined,
       attachmentPreview: hasAttachment ? URL.createObjectURL(attachmentFile) : undefined,
       attachmentUrl: attachmentUrl || undefined,
+      note: note || undefined,
     };
     setFinance((current) => [newMovement, ...current]);
     event.currentTarget.reset();
@@ -1179,22 +1233,6 @@ function AccountingView({
   const personalOut = expenseMovements
     .filter((movement) => movement.scope !== 'Empresa')
     .reduce((total, movement) => total + movement.value, 0);
-  const netProfit = companyIncome - companyExpenses;
-  const incomeByCategory = sumBy(
-    incomeMovements,
-    (movement) => movement.category,
-    (movement) => movement.value,
-  );
-  const expensesByCenter = sumBy(
-    expenseMovements,
-    (movement) => movement.costCenter,
-    (movement) => movement.value,
-  );
-  const personalByScope = sumBy(
-    expenseMovements.filter((movement) => movement.scope !== 'Empresa'),
-    (movement) => movement.scope,
-    (movement) => movement.value,
-  );
   const activeMovements =
     activeTab === 'ingresos' ? incomeMovements : activeTab === 'egresos' ? expenseMovements : receivableMovements;
   const activeTotal = activeMovements.reduce((total, movement) => total + movement.value, 0);
@@ -1218,11 +1256,6 @@ function AccountingView({
       empty: 'No hay cuentas por cobrar en este periodo.',
     },
   }[activeTab];
-  const paymentByMethod = sumBy(
-    activeMovements,
-    (movement) => movement.paymentMethod,
-    (movement) => movement.value,
-  );
 
   return (
     <div className="content-stack">
@@ -1233,59 +1266,6 @@ function AccountingView({
         open={filterOpen}
         onToggle={() => setFilterOpen((current) => !current)}
       />
-      <section className="stats-grid">
-        <StatCard label="Empresa" value={formatCurrency(companyIncome)} helper="Ingresos recibidos" icon={TrendingUp} tone="success" />
-        <StatCard label="Gastos operativos" value={formatCurrency(companyExpenses)} helper="Sin personales" icon={CreditCard} tone="warning" />
-        <StatCard label="Utilidad" value={formatCurrency(netProfit)} helper="Caja empresa" icon={CircleDollarSign} tone="success" />
-        <StatCard label="Personal/retiros" value={formatCurrency(personalOut)} helper="Vista separada" icon={WalletCards} tone="neutral" />
-      </section>
-
-      <section className="detail-grid">
-        <article className="detail-card">
-          <div className="detail-card-title">
-            <TrendingUp size={18} />
-            <strong>Ingresos empresa</strong>
-          </div>
-          <DetailLine label="Recibido" value={formatCurrency(companyIncome)} />
-          <DetailLine label="Por cobrar" value={formatCurrency(pendingIncome)} />
-          {Object.entries(incomeByCategory).map(([category, value]) => (
-            <DetailLine key={category} label={category} value={formatCurrency(value)} />
-          ))}
-        </article>
-        <article className="detail-card">
-          <div className="detail-card-title">
-            <Layers3 size={18} />
-            <strong>Gastos por centro</strong>
-          </div>
-          <DetailLine label="Total operativo" value={formatCurrency(companyExpenses)} />
-          {Object.entries(expensesByCenter).map(([center, value]) => (
-            <DetailLine key={center} label={center} value={formatCurrency(value)} />
-          ))}
-        </article>
-        <article className="detail-card">
-          <div className="detail-card-title">
-            <WalletCards size={18} />
-            <strong>Personal separado</strong>
-          </div>
-          <DetailLine label="Total no empresa" value={formatCurrency(personalOut)} />
-          {Object.entries(personalByScope).map(([scope, value]) => (
-            <DetailLine key={scope} label={scope} value={formatCurrency(value)} />
-          ))}
-        </article>
-        <article className="detail-card payment-methods-card">
-          <div className="detail-card-title">
-            <CreditCard size={18} />
-            <strong>Metodos de pago</strong>
-          </div>
-          {Object.keys(paymentByMethod).length > 0 ? (
-            Object.entries(paymentByMethod).map(([method, value]) => (
-              <DetailLine key={method} label={method} value={formatCurrency(value)} />
-            ))
-          ) : (
-            <DetailLine label="Sin movimientos" value={formatCurrency(0)} />
-          )}
-        </article>
-      </section>
 
       <div className="accounting-tabs" role="tablist" aria-label="Secciones de contabilidad">
         <button
@@ -1323,7 +1303,21 @@ function AccountingView({
         </button>
       </div>
 
-      <section className="split-layout">
+      <article className="panel accounting-page-panel">
+        <SectionHeader
+          eyebrow={activeMeta.eyebrow}
+          title={activeMeta.title}
+          action={<Badge label={`${activeMeta.badge} · ${formatCurrency(activeTotal)}`} tone={activeTab === 'egresos' ? 'warning' : activeTab === 'cobrar' ? 'danger' : 'success'} />}
+        />
+        <AccountingTabPanel
+          tab={activeTab}
+          movements={activeMovements}
+          emptyText={activeMeta.empty}
+          onSupport={setSelectedSupport}
+        />
+      </article>
+
+      <section className="split-layout accounting-entry-layout">
         <article className="panel">
           <SectionHeader eyebrow="Nuevo" title="Movimiento" />
           <form className="form-grid" onSubmit={addMovement}>
@@ -1353,6 +1347,18 @@ function AccountingView({
             <label>
               Valor
               <input name="value" type="number" placeholder="0" />
+            </label>
+            <label>
+              Valor factura
+              <input name="invoiceValue" type="number" placeholder="Total vendido" />
+            </label>
+            <label>
+              Abonado
+              <input name="paidValue" type="number" placeholder="Pagado hasta ahora" />
+            </label>
+            <label>
+              Fecha limite
+              <input name="dueDate" type="date" />
             </label>
             <label>
               Medio de pago
@@ -1405,25 +1411,15 @@ function AccountingView({
               Link soporte
               <input name="attachmentUrl" type="url" placeholder="Drive, banco, factura..." />
             </label>
+            <label className="full">
+              Nota
+              <input name="note" placeholder="Acuerdo, abono, responsable o detalle importante" />
+            </label>
             <button className="primary-action full" type="submit">
               <Plus size={18} />
               Registrar
             </button>
           </form>
-        </article>
-
-        <article className="panel span-2">
-          <SectionHeader
-            eyebrow={activeMeta.eyebrow}
-            title={activeMeta.title}
-            action={<Badge label={`${activeMeta.badge} · ${formatCurrency(activeTotal)}`} tone={activeTab === 'egresos' ? 'warning' : activeTab === 'cobrar' ? 'danger' : 'success'} />}
-          />
-          <AccountingTabPanel
-            tab={activeTab}
-            movements={activeMovements}
-            emptyText={activeMeta.empty}
-            onSupport={setSelectedSupport}
-          />
         </article>
       </section>
 
@@ -1452,18 +1448,23 @@ function AccountingTabPanel({
   const overdue = movements.filter((movement) => movement.status === 'Vencido').reduce((sum, movement) => sum + movement.value, 0);
   const operational = movements.filter((movement) => movement.scope === 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
   const personal = movements.filter((movement) => movement.scope !== 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
+  const invoiceTotal = movements.reduce((sum, movement) => sum + (movement.invoiceValue ?? movement.value), 0);
+  const paidTotal = movements.reduce((sum, movement) => sum + (movement.paidValue ?? (tab === 'ingresos' ? movement.value : 0)), 0);
+  const byStatus = sumBy(movements, (movement) => movement.status, (movement) => movement.value);
 
   const config = {
     ingresos: {
       className: 'income',
       title: 'Panel de ingresos recibidos',
-      copy: 'Lectura de ventas efectivamente pagadas, separadas por medio de pago y categoria.',
+      copy: 'Pagos reales por paciente, servicio, fecha de recaudo y metodo de pago.',
       firstLabel: 'Recibido total',
       firstValue: formatCurrency(total),
       secondLabel: 'Metodos activos',
       secondValue: String(Object.keys(byPayment).length),
       thirdLabel: 'Ticket promedio',
       thirdValue: movements.length ? formatCurrency(total / movements.length) : formatCurrency(0),
+      fourthLabel: 'Clientes cobrados',
+      fourthValue: String(new Set(movements.map((movement) => movement.person)).size),
       tableTitle: 'Detalle de ingresos cobrados',
     },
     egresos: {
@@ -1476,18 +1477,22 @@ function AccountingTabPanel({
       secondValue: `${supported}/${movements.length}`,
       thirdLabel: 'No empresa',
       thirdValue: formatCurrency(personal),
+      fourthLabel: 'Operativo empresa',
+      fourthValue: formatCurrency(operational),
       tableTitle: 'Detalle de gastos y retiros',
     },
     cobrar: {
       className: 'receivable',
       title: 'Seguimiento de cartera',
-      copy: 'Pacientes con saldo pendiente, estado de recaudo y valor que todavia falta por cobrar.',
+      copy: 'Cartera por paciente: valor facturado, abonos, saldo, fecha limite y dias de mora.',
       firstLabel: 'Por cobrar',
       firstValue: formatCurrency(total),
       secondLabel: 'Vencido',
       secondValue: formatCurrency(overdue),
-      thirdLabel: 'Pendientes',
-      thirdValue: String(movements.length),
+      thirdLabel: 'Abonado',
+      thirdValue: formatCurrency(paidTotal),
+      fourthLabel: 'Facturado',
+      fourthValue: formatCurrency(invoiceTotal),
       tableTitle: 'Detalle de cuentas por cobrar',
     },
   }[tab];
@@ -1515,19 +1520,17 @@ function AccountingTabPanel({
           <span>{config.thirdLabel}</span>
           <strong>{config.thirdValue}</strong>
         </div>
-        {tab === 'egresos' && (
-          <div>
-            <span>Operativo empresa</span>
-            <strong>{formatCurrency(operational)}</strong>
-          </div>
-        )}
+        <div>
+          <span>{config.fourthLabel}</span>
+          <strong>{config.fourthValue}</strong>
+        </div>
       </div>
 
       <div className="accounting-breakdown">
         <article>
-          <strong>{tab === 'cobrar' ? 'Estado de cartera' : 'Categorias'}</strong>
-          {Object.keys(byCategory).length > 0 ? (
-            Object.entries(byCategory).map(([category, value]) => (
+          <strong>{tab === 'cobrar' ? 'Estado de recaudo' : tab === 'egresos' ? 'Centros de costo' : 'Categorias vendidas'}</strong>
+          {Object.keys(tab === 'cobrar' ? byStatus : tab === 'egresos' ? sumBy(movements, (movement) => movement.costCenter, (movement) => movement.value) : byCategory).length > 0 ? (
+            Object.entries(tab === 'cobrar' ? byStatus : tab === 'egresos' ? sumBy(movements, (movement) => movement.costCenter, (movement) => movement.value) : byCategory).map(([category, value]) => (
               <DetailLine key={category} label={category} value={formatCurrency(value)} />
             ))
           ) : (
@@ -1548,12 +1551,71 @@ function AccountingTabPanel({
       </div>
 
       <SectionHeader eyebrow="Detalle" title={config.tableTitle} />
-      <MovementTable movements={movements} emptyText={emptyText} onSupport={onSupport} />
+      {tab === 'ingresos' && <IncomeTable movements={movements} emptyText={emptyText} />}
+      {tab === 'egresos' && <ExpenseTable movements={movements} emptyText={emptyText} onSupport={onSupport} />}
+      {tab === 'cobrar' && <ReceivableTable movements={movements} emptyText={emptyText} />}
     </div>
   );
 }
 
-function MovementTable({
+function IncomeTable({
+  movements,
+  emptyText,
+}: {
+  movements: FinanceMovement[];
+  emptyText: string;
+}) {
+  return (
+    <div className="table-wrap accounting-table-wrap">
+      <table className="accounting-table income-table">
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>Fecha pago</th>
+            <th>Servicio</th>
+            <th>Categoria</th>
+            <th>Metodo</th>
+            <th>Factura</th>
+            <th>Recibido</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {movements.length === 0 ? (
+            <tr>
+              <td className="empty-table" colSpan={8}>{emptyText}</td>
+            </tr>
+          ) : (
+            movements.map((movement) => (
+              <tr key={movement.id}>
+                <td data-label="Cliente">
+                  <strong>{movement.person}</strong>
+                  <span>{movement.id}</span>
+                </td>
+                <td data-label="Fecha pago">{movement.date}</td>
+                <td data-label="Servicio">
+                  <strong>{movement.concept}</strong>
+                  <span>{movement.note ?? 'Pago registrado en caja empresa'}</span>
+                </td>
+                <td data-label="Categoria">{movement.category}</td>
+                <td data-label="Metodo">
+                  <strong className="payment-method">{movement.paymentMethod}</strong>
+                </td>
+                <td data-label="Factura">{formatCurrency(movement.invoiceValue ?? movement.value)}</td>
+                <td data-label="Recibido">{formatCurrency(movement.value)}</td>
+                <td data-label="Estado">
+                  <span className="status-text">{movement.status}</span>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ExpenseTable({
   movements,
   emptyText,
   onSupport,
@@ -1564,18 +1626,18 @@ function MovementTable({
 }) {
   return (
     <div className="table-wrap accounting-table-wrap">
-      <table className="accounting-table">
+      <table className="accounting-table expense-table">
         <thead>
           <tr>
-            <th>Movimiento</th>
+            <th>Proveedor / retiro</th>
             <th>Fecha</th>
-            <th>Cliente/proveedor</th>
+            <th>Concepto</th>
             <th>Categoria</th>
             <th>Centro</th>
-            <th>Metodo de pago</th>
-            <th>Estado</th>
             <th>Valor</th>
-            <th>Tipo</th>
+            <th>Clasificacion</th>
+            <th>Metodo</th>
+            <th>Estado</th>
             <th>Soporte</th>
           </tr>
         </thead>
@@ -1587,35 +1649,31 @@ function MovementTable({
           ) : (
             movements.map((movement) => (
               <tr key={movement.id}>
-                <td data-label="Movimiento">
-                  <strong>{movement.concept}</strong>
-                  <span>{movement.id} · {movement.kind}</span>
+                <td data-label="Proveedor / retiro">
+                  <strong>{movement.person}</strong>
+                  <span>{movement.id}</span>
                 </td>
                 <td data-label="Fecha">{movement.date}</td>
-                <td data-label="Cliente / prov.">{movement.person}</td>
+                <td data-label="Concepto">
+                  <strong>{movement.concept}</strong>
+                  <span>{movement.note ?? 'Gasto registrado'}</span>
+                </td>
                 <td data-label="Categoria">
                   <strong>{movement.category}</strong>
                 </td>
                 <td data-label="Centro">{movement.costCenter}</td>
-                <td data-label="Metodo de pago">
+                <td data-label="Valor">{formatCurrency(movement.value)}</td>
+                <td data-label="Clasificacion">
+                  <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
+                </td>
+                <td data-label="Metodo">
                   <strong className="payment-method">{movement.paymentMethod}</strong>
                 </td>
                 <td data-label="Estado">
                   <span className="status-text">{movement.status}</span>
                 </td>
-                <td data-label="Valor">{formatCurrency(movement.value)}</td>
-                <td data-label="Tipo">
-                  <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
-                </td>
                 <td data-label="Soporte">
-                  {movement.attachment || movement.attachmentUrl ? (
-                    <button className="support-button" onClick={() => onSupport(movement)} type="button">
-                      <Eye size={16} />
-                      Ver soporte
-                    </button>
-                  ) : (
-                    '-'
-                  )}
+                  <SupportCell movement={movement} onSupport={onSupport} />
                 </td>
               </tr>
             ))
@@ -1623,6 +1681,74 @@ function MovementTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ReceivableTable({ movements, emptyText }: { movements: FinanceMovement[]; emptyText: string }) {
+  return (
+    <div className="table-wrap accounting-table-wrap">
+      <table className="accounting-table receivable-table">
+        <thead>
+          <tr>
+            <th>Deudor</th>
+            <th>Desde</th>
+            <th>Fecha limite</th>
+            <th>Mora</th>
+            <th>Concepto</th>
+            <th>Facturado</th>
+            <th>Abonado</th>
+            <th>Saldo</th>
+            <th>Estado</th>
+            <th>Nota</th>
+          </tr>
+        </thead>
+        <tbody>
+          {movements.length === 0 ? (
+            <tr>
+              <td className="empty-table" colSpan={10}>{emptyText}</td>
+            </tr>
+          ) : (
+            movements.map((movement) => (
+              <tr key={movement.id}>
+                <td data-label="Deudor">
+                  <strong>{movement.person}</strong>
+                  <span>{movement.id}</span>
+                </td>
+                <td data-label="Desde">{movement.date}</td>
+                <td data-label="Fecha limite">{movement.dueDate ?? '-'}</td>
+                <td data-label="Mora">
+                  <strong className={daysFromDueDate(movement.dueDate) && daysFromDueDate(movement.dueDate)! > 0 ? 'overdue-text' : 'due-text'}>
+                    {dueLabel(movement)}
+                  </strong>
+                </td>
+                <td data-label="Concepto">
+                  <strong>{movement.concept}</strong>
+                  <span>{movement.category}</span>
+                </td>
+                <td data-label="Facturado">{formatCurrency(movement.invoiceValue ?? movement.value)}</td>
+                <td data-label="Abonado">{formatCurrency(movement.paidValue ?? 0)}</td>
+                <td data-label="Saldo">{formatCurrency(movement.value)}</td>
+                <td data-label="Estado">
+                  <span className="status-text">{movement.status}</span>
+                </td>
+                <td data-label="Nota">{movement.note ?? 'Sin nota'}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SupportCell({ movement, onSupport }: { movement: FinanceMovement; onSupport: (movement: FinanceMovement) => void }) {
+  if (!movement.attachment && !movement.attachmentUrl) return <span className="muted-cell">Sin soporte</span>;
+
+  return (
+    <button className="support-button" onClick={() => onSupport(movement)} type="button">
+      <Eye size={16} />
+      {movement.attachment && movement.attachmentUrl ? 'Foto + link' : movement.attachment ? 'Ver foto' : 'Abrir link'}
+    </button>
   );
 }
 

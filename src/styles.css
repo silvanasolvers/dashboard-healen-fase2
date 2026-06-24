@@ -692,6 +692,15 @@ td span {
   table-layout: fixed;
 }
 
+.income-table {
+  min-width: 1020px;
+}
+
+.expense-table,
+.receivable-table {
+  min-width: 1220px;
+}
+
 .accounting-table th,
 .accounting-table td {
   vertical-align: top;
@@ -760,6 +769,33 @@ td span {
   color: var(--purple);
 }
 
+.overdue-text,
+.due-text,
+.muted-cell {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border-radius: 8px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.overdue-text {
+  background: #fff2f1;
+  color: #b8322c;
+}
+
+.due-text {
+  background: #f2fbf8;
+  color: #0b7a61;
+}
+
+.muted-cell {
+  background: #f6f3f8;
+  color: var(--muted);
+}
+
 .accounting-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -809,6 +845,14 @@ td span {
 .accounting-workspace {
   display: grid;
   gap: 16px;
+}
+
+.accounting-page-panel {
+  overflow: hidden;
+}
+
+.accounting-entry-layout {
+  grid-template-columns: 1fr;
 }
 
 .accounting-workspace-hero {
