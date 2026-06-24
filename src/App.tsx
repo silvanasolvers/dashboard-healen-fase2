@@ -16,6 +16,7 @@ import {
   Filter,
   LayoutDashboard,
   Layers3,
+  Link as LinkIcon,
   Menu,
   PackageCheck,
   Plus,
@@ -96,6 +97,7 @@ interface FinanceMovement {
   status: 'Recibido' | 'Pendiente' | 'Pagado' | 'Vencido';
   attachment?: string;
   attachmentPreview?: string;
+  attachmentUrl?: string;
 }
 
 const navItems: Array<{ id: View; label: string; icon: ElementType }> = [
@@ -223,6 +225,7 @@ const initialFinance: FinanceMovement[] = [
     scope: 'Empresa',
     status: 'Pagado',
     attachment: 'soporte-gasto.jpg',
+    attachmentUrl: 'https://drive.google.com/soporte-gasto-demo',
   },
   {
     id: 'MOV-003',
@@ -511,6 +514,7 @@ export function App() {
     if (kind === 'Ingreso' && paymentMethod === 'Pendiente') status = 'Pendiente';
     const attachmentFile = form.get('attachment');
     const hasAttachment = attachmentFile instanceof File && attachmentFile.size > 0;
+    const attachmentUrl = String(form.get('attachmentUrl') || '').trim();
     const newMovement: FinanceMovement = {
       id: `MOV-${String(finance.length + 1).padStart(3, '0')}`,
       kind,
@@ -525,6 +529,7 @@ export function App() {
       status,
       attachment: hasAttachment ? attachmentFile.name : undefined,
       attachmentPreview: hasAttachment ? URL.createObjectURL(attachmentFile) : undefined,
+      attachmentUrl: attachmentUrl || undefined,
     };
     setFinance((current) => [newMovement, ...current]);
     event.currentTarget.reset();
@@ -1393,8 +1398,12 @@ function AccountingView({
             </label>
             <label className="file-button">
               <Camera size={16} />
-              Soporte
+              Foto soporte
               <input name="attachment" type="file" accept="image/*" />
+            </label>
+            <label>
+              Link soporte
+              <input name="attachmentUrl" type="url" placeholder="Drive, banco, factura..." />
             </label>
             <button className="primary-action full" type="submit">
               <Plus size={18} />
@@ -1409,13 +1418,137 @@ function AccountingView({
             title={activeMeta.title}
             action={<Badge label={`${activeMeta.badge} · ${formatCurrency(activeTotal)}`} tone={activeTab === 'egresos' ? 'warning' : activeTab === 'cobrar' ? 'danger' : 'success'} />}
           />
-          <MovementTable movements={activeMovements} emptyText={activeMeta.empty} onSupport={setSelectedSupport} />
+          <AccountingTabPanel
+            tab={activeTab}
+            movements={activeMovements}
+            emptyText={activeMeta.empty}
+            onSupport={setSelectedSupport}
+          />
         </article>
       </section>
 
       {selectedSupport && (
         <SupportModal movement={selectedSupport} onClose={() => setSelectedSupport(null)} />
       )}
+    </div>
+  );
+}
+
+function AccountingTabPanel({
+  tab,
+  movements,
+  emptyText,
+  onSupport,
+}: {
+  tab: AccountingTab;
+  movements: FinanceMovement[];
+  emptyText: string;
+  onSupport: (movement: FinanceMovement) => void;
+}) {
+  const total = movements.reduce((sum, movement) => sum + movement.value, 0);
+  const byCategory = sumBy(movements, (movement) => movement.category, (movement) => movement.value);
+  const byPayment = sumBy(movements, (movement) => movement.paymentMethod, (movement) => movement.value);
+  const supported = movements.filter((movement) => movement.attachment || movement.attachmentUrl).length;
+  const overdue = movements.filter((movement) => movement.status === 'Vencido').reduce((sum, movement) => sum + movement.value, 0);
+  const operational = movements.filter((movement) => movement.scope === 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
+  const personal = movements.filter((movement) => movement.scope !== 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
+
+  const config = {
+    ingresos: {
+      className: 'income',
+      title: 'Panel de ingresos recibidos',
+      copy: 'Lectura de ventas efectivamente pagadas, separadas por medio de pago y categoria.',
+      firstLabel: 'Recibido total',
+      firstValue: formatCurrency(total),
+      secondLabel: 'Metodos activos',
+      secondValue: String(Object.keys(byPayment).length),
+      thirdLabel: 'Ticket promedio',
+      thirdValue: movements.length ? formatCurrency(total / movements.length) : formatCurrency(0),
+      tableTitle: 'Detalle de ingresos cobrados',
+    },
+    egresos: {
+      className: 'expense',
+      title: 'Control de egresos y soportes',
+      copy: 'Vista de gastos operativos, retiros y centros de costo con foto o link del comprobante.',
+      firstLabel: 'Egresos total',
+      firstValue: formatCurrency(total),
+      secondLabel: 'Soportes cargados',
+      secondValue: `${supported}/${movements.length}`,
+      thirdLabel: 'No empresa',
+      thirdValue: formatCurrency(personal),
+      tableTitle: 'Detalle de gastos y retiros',
+    },
+    cobrar: {
+      className: 'receivable',
+      title: 'Seguimiento de cartera',
+      copy: 'Pacientes con saldo pendiente, estado de recaudo y valor que todavia falta por cobrar.',
+      firstLabel: 'Por cobrar',
+      firstValue: formatCurrency(total),
+      secondLabel: 'Vencido',
+      secondValue: formatCurrency(overdue),
+      thirdLabel: 'Pendientes',
+      thirdValue: String(movements.length),
+      tableTitle: 'Detalle de cuentas por cobrar',
+    },
+  }[tab];
+
+  return (
+    <div className={`accounting-workspace ${config.className}`}>
+      <div className="accounting-workspace-hero">
+        <div>
+          <span>{config.title}</span>
+          <p>{config.copy}</p>
+        </div>
+        <strong>{formatCurrency(total)}</strong>
+      </div>
+
+      <div className="accounting-focus-grid">
+        <div>
+          <span>{config.firstLabel}</span>
+          <strong>{config.firstValue}</strong>
+        </div>
+        <div>
+          <span>{config.secondLabel}</span>
+          <strong>{config.secondValue}</strong>
+        </div>
+        <div>
+          <span>{config.thirdLabel}</span>
+          <strong>{config.thirdValue}</strong>
+        </div>
+        {tab === 'egresos' && (
+          <div>
+            <span>Operativo empresa</span>
+            <strong>{formatCurrency(operational)}</strong>
+          </div>
+        )}
+      </div>
+
+      <div className="accounting-breakdown">
+        <article>
+          <strong>{tab === 'cobrar' ? 'Estado de cartera' : 'Categorias'}</strong>
+          {Object.keys(byCategory).length > 0 ? (
+            Object.entries(byCategory).map(([category, value]) => (
+              <DetailLine key={category} label={category} value={formatCurrency(value)} />
+            ))
+          ) : (
+            <DetailLine label="Sin datos" value={formatCurrency(0)} />
+          )}
+        </article>
+        <article>
+          <strong>{tab === 'egresos' ? 'Metodo y soporte' : 'Medios de pago'}</strong>
+          {Object.keys(byPayment).length > 0 ? (
+            Object.entries(byPayment).map(([method, value]) => (
+              <DetailLine key={method} label={method} value={formatCurrency(value)} />
+            ))
+          ) : (
+            <DetailLine label="Sin datos" value={formatCurrency(0)} />
+          )}
+          {tab === 'egresos' && <DetailLine label="Con soporte" value={`${supported}/${movements.length}`} />}
+        </article>
+      </div>
+
+      <SectionHeader eyebrow="Detalle" title={config.tableTitle} />
+      <MovementTable movements={movements} emptyText={emptyText} onSupport={onSupport} />
     </div>
   );
 }
@@ -1475,7 +1608,7 @@ function MovementTable({
                   <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
                 </td>
                 <td data-label="Soporte">
-                  {movement.attachment ? (
+                  {movement.attachment || movement.attachmentUrl ? (
                     <button className="support-button" onClick={() => onSupport(movement)} type="button">
                       <Eye size={16} />
                       Ver soporte
@@ -1517,14 +1650,28 @@ function SupportModal({ movement, onClose }: { movement: FinanceMovement; onClos
         </header>
 
         {movement.attachmentPreview ? (
-          <img className="support-image" src={movement.attachmentPreview} alt={`Soporte de ${movement.concept}`} />
+          <>
+            <img className="support-image" src={movement.attachmentPreview} alt={`Soporte de ${movement.concept}`} />
+            {movement.attachmentUrl && (
+              <a className="support-link support-link-floating" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
+                <LinkIcon size={16} />
+                Abrir link del soporte
+              </a>
+            )}
+          </>
         ) : (
           <div className="support-receipt">
             <div className="receipt-mark">
               <FileText size={24} />
             </div>
-            <strong>Comprobante adjunto</strong>
-            <span>{movement.attachment}</span>
+            <strong>{movement.attachment ? 'Comprobante adjunto' : 'Soporte enlazado'}</strong>
+            <span>{movement.attachment ?? 'Link externo del gasto'}</span>
+            {movement.attachmentUrl && (
+              <a className="support-link" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
+                <LinkIcon size={16} />
+                Abrir link del soporte
+              </a>
+            )}
             <dl>
               <div>
                 <dt>Fecha</dt>

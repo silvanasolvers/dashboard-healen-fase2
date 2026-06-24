@@ -806,6 +806,112 @@ td span {
   white-space: normal;
 }
 
+.accounting-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.accounting-workspace-hero {
+  min-height: 126px;
+  border-radius: 8px;
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-end;
+  color: white;
+  overflow: hidden;
+}
+
+.accounting-workspace.income .accounting-workspace-hero {
+  background:
+    linear-gradient(135deg, rgba(72, 196, 163, 0.26), transparent 42%),
+    linear-gradient(135deg, #163f38, #265e72);
+}
+
+.accounting-workspace.expense .accounting-workspace-hero {
+  background:
+    linear-gradient(135deg, rgba(200, 135, 42, 0.28), transparent 42%),
+    linear-gradient(135deg, #4d2d23, #7a3e58);
+}
+
+.accounting-workspace.receivable .accounting-workspace-hero {
+  background:
+    linear-gradient(135deg, rgba(42, 168, 198, 0.28), transparent 42%),
+    linear-gradient(135deg, #352155, #5f3d82);
+}
+
+.accounting-workspace-hero span {
+  display: block;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.accounting-workspace-hero p {
+  max-width: 520px;
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.45;
+}
+
+.accounting-workspace-hero strong {
+  flex: 0 0 auto;
+  font-size: clamp(24px, 4vw, 38px);
+  line-height: 1;
+}
+
+.accounting-focus-grid,
+.accounting-breakdown {
+  display: grid;
+  gap: 12px;
+}
+
+.accounting-focus-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.accounting-focus-grid > div,
+.accounting-breakdown article {
+  border: 1px solid rgba(102, 51, 153, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(44, 24, 65, 0.05);
+}
+
+.accounting-focus-grid > div {
+  min-height: 82px;
+  padding: 13px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.accounting-focus-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.accounting-focus-grid strong {
+  font-size: clamp(19px, 2vw, 24px);
+}
+
+.accounting-breakdown {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.accounting-breakdown article {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.accounting-breakdown article > strong {
+  color: var(--purple);
+}
+
 @container (max-width: 1180px) {
   .accounting-table {
     min-width: 0;
@@ -984,6 +1090,31 @@ td span {
 .support-button:hover {
   border-color: var(--purple);
   background: #efe3f8;
+}
+
+.support-link {
+  min-height: 38px;
+  margin-top: 10px;
+  border: 1px solid rgba(102, 51, 153, 0.16);
+  border-radius: 8px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #f6eefb;
+  color: var(--purple);
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.support-link:hover {
+  border-color: var(--purple);
+  background: #efe3f8;
+}
+
+.support-link-floating {
+  margin: 0 18px 18px;
 }
 
 .full {
@@ -1274,8 +1405,13 @@ td span {
 @media (max-width: 1120px) {
   .stats-grid,
   .dashboard-grid,
-  .detail-grid {
+  .detail-grid,
+  .accounting-focus-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .accounting-breakdown {
+    grid-template-columns: 1fr;
   }
 
   .period-filter {
@@ -1427,8 +1563,14 @@ td span {
 
   .stats-grid,
   .dashboard-grid,
-  .detail-grid {
+  .detail-grid,
+  .accounting-focus-grid {
     grid-template-columns: 1fr;
+  }
+
+  .accounting-workspace-hero {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .accounting-tabs {
