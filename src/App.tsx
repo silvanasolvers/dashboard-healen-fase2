@@ -37,6 +37,7 @@ type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
 type MovementScope = 'Empresa' | 'Personal' | 'Retiro socio' | 'Reembolso';
 type MovementKind = 'Ingreso' | 'Gasto';
+type AccountingTab = 'ingresos' | 'egresos' | 'cobrar';
 
 interface DateFilter {
   from: string;
@@ -293,6 +294,16 @@ function matchesTreatmentFilter(patient: Patient, filter: DateFilter) {
   return matchesDateFilter(patient.startDate, filter) || matchesDateFilter(patient.endDate, filter);
 }
 
+function isReceivable(movement: FinanceMovement) {
+  return (
+    movement.kind === 'Ingreso' &&
+    (movement.status === 'Pendiente' ||
+      movement.status === 'Vencido' ||
+      movement.paymentMethod === 'Pendiente' ||
+      movement.category.toLowerCase().includes('cobrar'))
+  );
+}
+
 function sumBy<T>(items: T[], key: (item: T) => string, value: (item: T) => number) {
   return items.reduce<Record<string, number>>((acc, item) => {
     const group = key(item);
@@ -495,7 +506,9 @@ export function App() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const kind = String(form.get('kind') || 'Ingreso') as MovementKind;
-    const status = kind === 'Ingreso' ? 'Recibido' : 'Pagado';
+    const paymentMethod = String(form.get('paymentMethod') || 'Transferencia');
+    let status = String(form.get('status') || (kind === 'Ingreso' ? 'Recibido' : 'Pagado')) as FinanceMovement['status'];
+    if (kind === 'Ingreso' && paymentMethod === 'Pendiente') status = 'Pendiente';
     const attachmentFile = form.get('attachment');
     const hasAttachment = attachmentFile instanceof File && attachmentFile.size > 0;
     const newMovement: FinanceMovement = {
@@ -506,7 +519,7 @@ export function App() {
       concept: String(form.get('concept') || 'Movimiento'),
       category: String(form.get('category') || 'General'),
       value: Number(form.get('value')) || 0,
-      paymentMethod: String(form.get('paymentMethod') || 'Transferencia'),
+      paymentMethod,
       costCenter: String(form.get('costCenter') || 'Operacion'),
       scope: String(form.get('scope') || 'Empresa') as MovementScope,
       status,
@@ -882,6 +895,33 @@ function PeriodFilter({
   );
 }
 
+function CollapsiblePeriodFilter({
+  filter,
+  onChange,
+  label,
+  open,
+  onToggle,
+}: {
+  filter: DateFilter;
+  onChange: (filter: DateFilter) => void;
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const active = hasDateFilter(filter);
+
+  return (
+    <div className="filter-shell">
+      <button className={`secondary-action filter-toggle ${active ? 'active' : ''}`} onClick={onToggle} type="button">
+        <Filter size={16} />
+        Filtrar
+        {active && <span>Activo</span>}
+      </button>
+      {open && <PeriodFilter filter={filter} onChange={onChange} label={label} />}
+    </div>
+  );
+}
+
 function PatientsView({
   patients,
   patientSearch,
@@ -1119,39 +1159,75 @@ function AccountingView({
   addMovement: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [selectedSupport, setSelectedSupport] = useState<FinanceMovement | null>(null);
-  const companyMovements = finance.filter((movement) => movement.scope === 'Empresa');
-  const companyIncome = companyMovements
-    .filter((movement) => movement.kind === 'Ingreso' && movement.status !== 'Pendiente')
+  const [activeTab, setActiveTab] = useState<AccountingTab>('ingresos');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const incomeMovements = finance.filter(
+    (movement) => movement.kind === 'Ingreso' && movement.scope === 'Empresa' && !isReceivable(movement),
+  );
+  const receivableMovements = finance.filter(isReceivable);
+  const expenseMovements = finance.filter((movement) => movement.kind === 'Gasto');
+  const companyIncome = incomeMovements.reduce((total, movement) => total + movement.value, 0);
+  const pendingIncome = receivableMovements.reduce((total, movement) => total + movement.value, 0);
+  const companyExpenses = expenseMovements
+    .filter((movement) => movement.scope === 'Empresa')
     .reduce((total, movement) => total + movement.value, 0);
-  const pendingIncome = companyMovements
-    .filter((movement) => movement.kind === 'Ingreso' && movement.status === 'Pendiente')
-    .reduce((total, movement) => total + movement.value, 0);
-  const companyExpenses = companyMovements
-    .filter((movement) => movement.kind === 'Gasto')
-    .reduce((total, movement) => total + movement.value, 0);
-  const personalOut = finance
+  const personalOut = expenseMovements
     .filter((movement) => movement.scope !== 'Empresa')
     .reduce((total, movement) => total + movement.value, 0);
   const netProfit = companyIncome - companyExpenses;
   const incomeByCategory = sumBy(
-    finance.filter((movement) => movement.kind === 'Ingreso'),
+    incomeMovements,
     (movement) => movement.category,
     (movement) => movement.value,
   );
   const expensesByCenter = sumBy(
-    finance.filter((movement) => movement.kind === 'Gasto' && movement.scope === 'Empresa'),
+    expenseMovements,
     (movement) => movement.costCenter,
     (movement) => movement.value,
   );
   const personalByScope = sumBy(
-    finance.filter((movement) => movement.scope !== 'Empresa'),
+    expenseMovements.filter((movement) => movement.scope !== 'Empresa'),
     (movement) => movement.scope,
+    (movement) => movement.value,
+  );
+  const activeMovements =
+    activeTab === 'ingresos' ? incomeMovements : activeTab === 'egresos' ? expenseMovements : receivableMovements;
+  const activeTotal = activeMovements.reduce((total, movement) => total + movement.value, 0);
+  const activeMeta = {
+    ingresos: {
+      eyebrow: 'Ingresos',
+      title: 'Ingresos recibidos',
+      badge: `${incomeMovements.length} registros`,
+      empty: 'No hay ingresos recibidos en este periodo.',
+    },
+    egresos: {
+      eyebrow: 'Egresos',
+      title: 'Egresos y retiros',
+      badge: `${expenseMovements.length} registros`,
+      empty: 'No hay egresos en este periodo.',
+    },
+    cobrar: {
+      eyebrow: 'Cuentas por cobrar',
+      title: 'Cartera pendiente',
+      badge: `${receivableMovements.length} pendientes`,
+      empty: 'No hay cuentas por cobrar en este periodo.',
+    },
+  }[activeTab];
+  const paymentByMethod = sumBy(
+    activeMovements,
+    (movement) => movement.paymentMethod,
     (movement) => movement.value,
   );
 
   return (
     <div className="content-stack">
-      <PeriodFilter filter={financeFilter} onChange={setFinanceFilter} label="Filtrar contabilidad por fecha" />
+      <CollapsiblePeriodFilter
+        filter={financeFilter}
+        onChange={setFinanceFilter}
+        label="Calendario de busqueda"
+        open={filterOpen}
+        onToggle={() => setFilterOpen((current) => !current)}
+      />
       <section className="stats-grid">
         <StatCard label="Empresa" value={formatCurrency(companyIncome)} helper="Ingresos recibidos" icon={TrendingUp} tone="success" />
         <StatCard label="Gastos operativos" value={formatCurrency(companyExpenses)} helper="Sin personales" icon={CreditCard} tone="warning" />
@@ -1191,7 +1267,56 @@ function AccountingView({
             <DetailLine key={scope} label={scope} value={formatCurrency(value)} />
           ))}
         </article>
+        <article className="detail-card payment-methods-card">
+          <div className="detail-card-title">
+            <CreditCard size={18} />
+            <strong>Metodos de pago</strong>
+          </div>
+          {Object.keys(paymentByMethod).length > 0 ? (
+            Object.entries(paymentByMethod).map(([method, value]) => (
+              <DetailLine key={method} label={method} value={formatCurrency(value)} />
+            ))
+          ) : (
+            <DetailLine label="Sin movimientos" value={formatCurrency(0)} />
+          )}
+        </article>
       </section>
+
+      <div className="accounting-tabs" role="tablist" aria-label="Secciones de contabilidad">
+        <button
+          className={activeTab === 'ingresos' ? 'active' : ''}
+          onClick={() => setActiveTab('ingresos')}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'ingresos'}
+        >
+          <TrendingUp size={16} />
+          Ingresos
+          <span>{formatCurrency(companyIncome)}</span>
+        </button>
+        <button
+          className={activeTab === 'egresos' ? 'active' : ''}
+          onClick={() => setActiveTab('egresos')}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'egresos'}
+        >
+          <CreditCard size={16} />
+          Egresos
+          <span>{formatCurrency(companyExpenses + personalOut)}</span>
+        </button>
+        <button
+          className={activeTab === 'cobrar' ? 'active' : ''}
+          onClick={() => setActiveTab('cobrar')}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'cobrar'}
+        >
+          <CalendarClock size={16} />
+          Cuentas por cobrar
+          <span>{formatCurrency(pendingIncome)}</span>
+        </button>
+      </div>
 
       <section className="split-layout">
         <article className="panel">
@@ -1229,8 +1354,21 @@ function AccountingView({
               <select name="paymentMethod">
                 <option>Transferencia</option>
                 <option>Efectivo</option>
-                <option>Tarjeta</option>
+                <option>Tarjeta credito</option>
+                <option>Tarjeta debito</option>
+                <option>PSE</option>
+                <option>Nequi</option>
+                <option>Daviplata</option>
                 <option>Pendiente</option>
+              </select>
+            </label>
+            <label>
+              Estado
+              <select name="status">
+                <option>Recibido</option>
+                <option>Pendiente</option>
+                <option>Pagado</option>
+                <option>Vencido</option>
               </select>
             </label>
             <label>
@@ -1267,66 +1405,90 @@ function AccountingView({
 
         <article className="panel span-2">
           <SectionHeader
-            eyebrow="Caja"
-            title="Ingresos, gastos y retiros"
-            action={<Badge label={`Por cobrar ${formatCurrency(pendingIncome)}`} tone="warning" />}
+            eyebrow={activeMeta.eyebrow}
+            title={activeMeta.title}
+            action={<Badge label={`${activeMeta.badge} · ${formatCurrency(activeTotal)}`} tone={activeTab === 'egresos' ? 'warning' : activeTab === 'cobrar' ? 'danger' : 'success'} />}
           />
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Movimiento</th>
-                  <th>Fecha</th>
-                  <th>Cliente/proveedor</th>
-                  <th>Categoria / centro</th>
-                  <th>Pago / estado</th>
-                  <th>Valor</th>
-                  <th>Tipo</th>
-                  <th>Soporte</th>
-                </tr>
-              </thead>
-              <tbody>
-                {finance.map((movement) => (
-                  <tr key={movement.id}>
-                    <td>
-                      <strong>{movement.concept}</strong>
-                      <span>{movement.id} · {movement.kind}</span>
-                    </td>
-                    <td>{movement.date}</td>
-                    <td>{movement.person}</td>
-                    <td>
-                      <strong>{movement.category}</strong>
-                      <span>{movement.costCenter}</span>
-                    </td>
-                    <td>
-                      <strong>{movement.paymentMethod}</strong>
-                      <span>{movement.status}</span>
-                    </td>
-                    <td>{formatCurrency(movement.value)}</td>
-                    <td>
-                      <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
-                    </td>
-                    <td>
-                      {movement.attachment ? (
-                        <button className="support-button" onClick={() => setSelectedSupport(movement)} type="button">
-                          <Eye size={16} />
-                          Ver soporte
-                        </button>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MovementTable movements={activeMovements} emptyText={activeMeta.empty} onSupport={setSelectedSupport} />
         </article>
       </section>
 
       {selectedSupport && (
         <SupportModal movement={selectedSupport} onClose={() => setSelectedSupport(null)} />
       )}
+    </div>
+  );
+}
+
+function MovementTable({
+  movements,
+  emptyText,
+  onSupport,
+}: {
+  movements: FinanceMovement[];
+  emptyText: string;
+  onSupport: (movement: FinanceMovement) => void;
+}) {
+  return (
+    <div className="table-wrap accounting-table-wrap">
+      <table className="accounting-table">
+        <thead>
+          <tr>
+            <th>Movimiento</th>
+            <th>Fecha</th>
+            <th>Cliente/proveedor</th>
+            <th>Categoria</th>
+            <th>Centro</th>
+            <th>Metodo de pago</th>
+            <th>Estado</th>
+            <th>Valor</th>
+            <th>Tipo</th>
+            <th>Soporte</th>
+          </tr>
+        </thead>
+        <tbody>
+          {movements.length === 0 ? (
+            <tr>
+              <td className="empty-table" colSpan={10}>{emptyText}</td>
+            </tr>
+          ) : (
+            movements.map((movement) => (
+              <tr key={movement.id}>
+                <td data-label="Movimiento">
+                  <strong>{movement.concept}</strong>
+                  <span>{movement.id} · {movement.kind}</span>
+                </td>
+                <td data-label="Fecha">{movement.date}</td>
+                <td data-label="Cliente / prov.">{movement.person}</td>
+                <td data-label="Categoria">
+                  <strong>{movement.category}</strong>
+                </td>
+                <td data-label="Centro">{movement.costCenter}</td>
+                <td data-label="Metodo de pago">
+                  <strong className="payment-method">{movement.paymentMethod}</strong>
+                </td>
+                <td data-label="Estado">
+                  <span className="status-text">{movement.status}</span>
+                </td>
+                <td data-label="Valor">{formatCurrency(movement.value)}</td>
+                <td data-label="Tipo">
+                  <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
+                </td>
+                <td data-label="Soporte">
+                  {movement.attachment ? (
+                    <button className="support-button" onClick={() => onSupport(movement)} type="button">
+                      <Eye size={16} />
+                      Ver soporte
+                    </button>
+                  ) : (
+                    '-'
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
