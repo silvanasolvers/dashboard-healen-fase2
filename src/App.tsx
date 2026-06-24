@@ -616,32 +616,33 @@ export function App() {
 
     if (!itemId || quantity <= 0) return;
 
-    let movementRecord: InventoryMovement | null = null;
+    const selectedItem = inventory.find((item) => item.id === itemId);
+    if (!selectedItem) return;
+
+    const previousStock = selectedItem.stock;
+    const resultingStock =
+      kind === 'Entrada'
+        ? previousStock + quantity
+        : kind === 'Ajuste'
+          ? quantity
+          : Math.max(0, previousStock - quantity);
+
+    const movementRecord: InventoryMovement = {
+      id: `IMV-${String(inventoryMovements.length + 1).padStart(3, '0')}`,
+      itemId: selectedItem.id,
+      product: selectedItem.product,
+      kind,
+      date,
+      quantity,
+      previousStock,
+      resultingStock,
+      reason,
+      responsible,
+    };
 
     setInventory((current) =>
       current.map((item) => {
         if (item.id !== itemId) return item;
-
-        const previousStock = item.stock;
-        const resultingStock =
-          kind === 'Entrada'
-            ? previousStock + quantity
-            : kind === 'Ajuste'
-              ? quantity
-              : Math.max(0, previousStock - quantity);
-
-        movementRecord = {
-          id: `IMV-${String(inventoryMovements.length + 1).padStart(3, '0')}`,
-          itemId: item.id,
-          product: item.product,
-          kind,
-          date,
-          quantity,
-          previousStock,
-          resultingStock,
-          reason,
-          responsible,
-        };
 
         return {
           ...item,
@@ -651,9 +652,7 @@ export function App() {
       }),
     );
 
-    if (movementRecord) {
-      setInventoryMovements((current) => [movementRecord as InventoryMovement, ...current]);
-    }
+    setInventoryMovements((current) => [movementRecord, ...current]);
 
     event.currentTarget.reset();
   }
