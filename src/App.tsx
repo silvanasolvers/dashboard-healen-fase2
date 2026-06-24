@@ -13,10 +13,13 @@ import {
   Download,
   Eye,
   FileText,
+  Filter,
   LayoutDashboard,
+  Layers3,
   Menu,
   PackageCheck,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
@@ -34,6 +37,13 @@ type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
 type MovementScope = 'Empresa' | 'Personal' | 'Retiro socio' | 'Reembolso';
 type MovementKind = 'Ingreso' | 'Gasto';
+
+interface DateFilter {
+  from: string;
+  to: string;
+  month: string;
+  year: string;
+}
 
 interface PeptideLine {
   name: string;
@@ -258,6 +268,39 @@ function classifySale(value: number): PatientTier {
   return 'Basico';
 }
 
+const emptyDateFilter: DateFilter = {
+  from: '',
+  to: '',
+  month: '',
+  year: '',
+};
+
+function hasDateFilter(filter: DateFilter) {
+  return Boolean(filter.from || filter.to || filter.month || filter.year);
+}
+
+function matchesDateFilter(date: string, filter: DateFilter) {
+  if (!hasDateFilter(filter)) return true;
+  if (filter.from && date < filter.from) return false;
+  if (filter.to && date > filter.to) return false;
+  if (filter.month && !date.startsWith(filter.month)) return false;
+  if (filter.year && !date.startsWith(filter.year)) return false;
+  return true;
+}
+
+function matchesTreatmentFilter(patient: Patient, filter: DateFilter) {
+  if (!hasDateFilter(filter)) return true;
+  return matchesDateFilter(patient.startDate, filter) || matchesDateFilter(patient.endDate, filter);
+}
+
+function sumBy<T>(items: T[], key: (item: T) => string, value: (item: T) => number) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const group = key(item);
+    acc[group] = (acc[group] ?? 0) + value(item);
+    return acc;
+  }, {});
+}
+
 function statusClass(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes('vencer') || normalized.includes('finalizar') || normalized.includes('bajo')) return 'warning';
@@ -290,15 +333,19 @@ function StatCard({
   helper,
   icon: Icon,
   tone = 'neutral',
+  action,
+  onClick,
 }: {
   label: string;
   value: string;
   helper: string;
   icon: ElementType;
   tone?: 'neutral' | 'success' | 'warning' | 'danger';
+  action?: string;
+  onClick?: () => void;
 }) {
-  return (
-    <article className={`stat-card ${tone}`}>
+  const content = (
+    <>
       <div className="stat-icon">
         <Icon size={18} />
       </div>
@@ -306,7 +353,22 @@ function StatCard({
         <p>{label}</p>
         <strong>{value}</strong>
         <span>{helper}</span>
+        {action && <em>{action}</em>}
       </div>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button className={`stat-card ${tone} interactive-card`} onClick={onClick} type="button">
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <article className={`stat-card ${tone}`}>
+      {content}
     </article>
   );
 }
@@ -339,6 +401,10 @@ export function App() {
   const [inventory, setInventory] = useState(initialInventory);
   const [finance, setFinance] = useState(initialFinance);
   const [patientSearch, setPatientSearch] = useState('');
+  const [patientFilter, setPatientFilter] = useState<DateFilter>(emptyDateFilter);
+  const [inventoryFilter, setInventoryFilter] = useState<DateFilter>(emptyDateFilter);
+  const [financeFilter, setFinanceFilter] = useState<DateFilter>(emptyDateFilter);
+  const [reportFilter, setReportFilter] = useState<DateFilter>(emptyDateFilter);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setLoading(false), 2100);
@@ -365,8 +431,13 @@ export function App() {
 
   const filteredPatients = patients.filter((patient) => {
     const text = `${patient.id} ${patient.name} ${patient.plan} ${patient.tier}`.toLowerCase();
-    return text.includes(patientSearch.toLowerCase());
+    return text.includes(patientSearch.toLowerCase()) && matchesTreatmentFilter(patient, patientFilter);
   });
+  const filteredInventory = inventory.filter((item) => matchesDateFilter(item.expiration, inventoryFilter));
+  const filteredFinance = finance.filter((movement) => matchesDateFilter(movement.date, financeFilter));
+  const reportPatients = patients.filter((patient) => matchesTreatmentFilter(patient, reportFilter));
+  const reportInventory = inventory.filter((item) => matchesDateFilter(item.expiration, reportFilter));
+  const reportFinance = finance.filter((movement) => matchesDateFilter(movement.date, reportFilter));
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -496,10 +567,14 @@ export function App() {
             <h1>Hola, equipo Healen.</h1>
           </div>
           <div className="topbar-actions">
-            <button className="icon-button" type="button" aria-label="Buscar">
+            <button className="icon-button" onClick={() => setView('pacientes')} type="button" aria-label="Buscar pacientes">
               <Search size={18} />
             </button>
-            <button className="primary-action" type="button">
+            <button
+              className="primary-action"
+              onClick={() => setView(view === 'pacientes' || view === 'inventario' ? view : 'contabilidad')}
+              type="button"
+            >
               <Plus size={18} />
               Nuevo registro
             </button>
@@ -532,30 +607,34 @@ export function App() {
             patients={filteredPatients}
             patientSearch={patientSearch}
             setPatientSearch={setPatientSearch}
+            patientFilter={patientFilter}
+            setPatientFilter={setPatientFilter}
             addPatient={addPatient}
           />
         )}
-        {view === 'inventario' && <InventoryView inventory={inventory} addInventory={addInventory} />}
+        {view === 'inventario' && (
+          <InventoryView
+            inventory={filteredInventory}
+            inventoryFilter={inventoryFilter}
+            setInventoryFilter={setInventoryFilter}
+            addInventory={addInventory}
+          />
+        )}
         {view === 'contabilidad' && (
           <AccountingView
-            finance={finance}
+            finance={filteredFinance}
+            financeFilter={financeFilter}
+            setFinanceFilter={setFinanceFilter}
             addMovement={addMovement}
-            companyIncome={companyIncome}
-            companyExpenses={companyExpenses}
-            netProfit={netProfit}
-            pendingIncome={pendingIncome}
-            personalOut={personalOut}
           />
         )}
         {view === 'reportes' && (
           <ReportsView
-            patients={patients}
-            inventory={inventory}
-            finance={finance}
-            companyIncome={companyIncome}
-            companyExpenses={companyExpenses}
-            netProfit={netProfit}
-            personalOut={personalOut}
+            patients={reportPatients}
+            inventory={reportInventory}
+            finance={reportFinance}
+            reportFilter={reportFilter}
+            setReportFilter={setReportFilter}
           />
         )}
       </main>
@@ -592,11 +671,11 @@ function DashboardView({
     <div className="content-stack">
       <section className="welcome-band">
         <div>
-          <span className="demo-pill">Datos demo</span>
-          <h2>Control de pacientes, inventario y caja en un solo pulso.</h2>
+          <span className="demo-pill">Healen OS · Datos demo</span>
+          <h2>Un centro de mando para pacientes, inventario y rentabilidad real.</h2>
           <p>
             Hoy hay {patients.length} pacientes activos, {finishingTreatments} tratamientos por finalizar y {lowStock}{' '}
-            alertas de inventario.
+            alertas de inventario. Cada tarjeta abre su modulo para revisar el detalle.
           </p>
         </div>
         <div className="welcome-visual" aria-hidden="true">
@@ -607,25 +686,25 @@ function DashboardView({
       </section>
 
       <section className="stats-grid">
-        <StatCard label="Ingresos empresa" value={formatCurrency(companyIncome)} helper="Recibidos este mes" icon={TrendingUp} tone="success" />
-        <StatCard label="Gastos empresa" value={formatCurrency(companyExpenses)} helper="Operativos registrados" icon={CreditCard} tone="warning" />
-        <StatCard label="Utilidad real" value={formatCurrency(netProfit)} helper="Sin gastos personales" icon={CircleDollarSign} tone="success" />
-        <StatCard label="Por cobrar" value={formatCurrency(pendingIncome)} helper="Pendiente de recaudo" icon={CalendarClock} tone="warning" />
+        <StatCard label="Ingresos empresa" value={formatCurrency(companyIncome)} helper="Recibidos este mes" icon={TrendingUp} tone="success" action="Abrir caja" onClick={() => setView('contabilidad')} />
+        <StatCard label="Gastos empresa" value={formatCurrency(companyExpenses)} helper="Operativos registrados" icon={CreditCard} tone="warning" action="Ver desglose" onClick={() => setView('contabilidad')} />
+        <StatCard label="Utilidad real" value={formatCurrency(netProfit)} helper="Sin gastos personales" icon={CircleDollarSign} tone="success" action="Ver reportes" onClick={() => setView('reportes')} />
+        <StatCard label="Por cobrar" value={formatCurrency(pendingIncome)} helper="Pendiente de recaudo" icon={CalendarClock} tone="warning" action="Revisar cartera" onClick={() => setView('contabilidad')} />
       </section>
 
       <section className="dashboard-grid">
         <article className="panel span-2">
           <SectionHeader eyebrow="Alertas" title="Prioridades de hoy" />
           <div className="alert-list">
-            <AlertItem icon={Dna} title={`${finishingTreatments} tratamientos por finalizar`} text="Revisar dosis, cierre y siguiente compra." tone="warning" />
-            <AlertItem icon={Syringe} title={`${serumCount} sueros semanales activos`} text="Validar agenda y disponibilidad de insumos." tone="success" />
-            <AlertItem icon={PackageCheck} title={`${lowStock} productos requieren revision`} text="Bajo stock o vencimiento cercano." tone="danger" />
-            <AlertItem icon={WalletCards} title={formatCurrency(personalOut)} text="Movimientos personales separados de empresa." tone="neutral" />
+            <AlertItem icon={Dna} title={`${finishingTreatments} tratamientos por finalizar`} text="Abrir pacientes y revisar dosis, cierre y siguiente compra." tone="warning" onClick={() => setView('pacientes')} />
+            <AlertItem icon={Syringe} title={`${serumCount} sueros semanales activos`} text="Abrir seguimiento de pacientes con agenda semanal." tone="success" onClick={() => setView('pacientes')} />
+            <AlertItem icon={PackageCheck} title={`${lowStock} productos requieren revision`} text="Abrir inventario para bajo stock o vencimiento cercano." tone="danger" onClick={() => setView('inventario')} />
+            <AlertItem icon={WalletCards} title={formatCurrency(personalOut)} text="Abrir caja personal separada de empresa." tone="neutral" onClick={() => setView('contabilidad')} />
           </div>
         </article>
 
         <article className="panel">
-          <SectionHeader eyebrow="Accesos" title="Registro rapido" />
+          <SectionHeader eyebrow="Accesos" title="Registro inteligente" />
           <div className="quick-actions">
             <button onClick={() => setView('pacientes')} type="button">
               <UserRound size={18} />
@@ -640,6 +719,11 @@ function DashboardView({
             <button onClick={() => setView('contabilidad')} type="button">
               <WalletCards size={18} />
               Movimiento
+              <ChevronRight size={16} />
+            </button>
+            <button onClick={() => setView('reportes')} type="button">
+              <BarChart3 size={18} />
+              Reportes
               <ChevronRight size={16} />
             </button>
           </div>
@@ -704,19 +788,35 @@ function AlertItem({
   title,
   text,
   tone,
+  onClick,
 }: {
   icon: ElementType;
   title: string;
   text: string;
   tone: 'neutral' | 'success' | 'warning' | 'danger';
+  onClick?: () => void;
 }) {
-  return (
-    <div className={`alert-item ${tone}`}>
+  const content = (
+    <>
       <Icon size={18} />
       <div>
         <strong>{title}</strong>
         <span>{text}</span>
       </div>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button className={`alert-item ${tone} interactive-alert`} onClick={onClick} type="button">
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`alert-item ${tone}`}>
+      {content}
     </div>
   );
 }
@@ -725,15 +825,76 @@ function Badge({ label, tone }: { label: string; tone: 'neutral' | 'success' | '
   return <span className={`badge ${tone}`}>{label}</span>;
 }
 
+function PeriodFilter({
+  filter,
+  onChange,
+  label = 'Periodo',
+}: {
+  filter: DateFilter;
+  onChange: (filter: DateFilter) => void;
+  label?: string;
+}) {
+  return (
+    <div className="period-filter">
+      <div className="filter-title">
+        <Filter size={16} />
+        <span>{label}</span>
+      </div>
+      <label>
+        Desde
+        <input
+          type="date"
+          value={filter.from}
+          onChange={(event) => onChange({ ...filter, from: event.target.value })}
+        />
+      </label>
+      <label>
+        Hasta
+        <input
+          type="date"
+          value={filter.to}
+          onChange={(event) => onChange({ ...filter, to: event.target.value })}
+        />
+      </label>
+      <label>
+        Mes
+        <input
+          type="month"
+          value={filter.month}
+          onChange={(event) => onChange({ ...filter, month: event.target.value })}
+        />
+      </label>
+      <label>
+        Año
+        <input
+          type="number"
+          min="2024"
+          max="2032"
+          placeholder="2026"
+          value={filter.year}
+          onChange={(event) => onChange({ ...filter, year: event.target.value })}
+        />
+      </label>
+      <button className="icon-button soft" onClick={() => onChange(emptyDateFilter)} type="button" aria-label="Limpiar filtros">
+        <RefreshCw size={16} />
+      </button>
+    </div>
+  );
+}
+
 function PatientsView({
   patients,
   patientSearch,
   setPatientSearch,
+  patientFilter,
+  setPatientFilter,
   addPatient,
 }: {
   patients: Patient[];
   patientSearch: string;
   setPatientSearch: (value: string) => void;
+  patientFilter: DateFilter;
+  setPatientFilter: (filter: DateFilter) => void;
   addPatient: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
@@ -748,6 +909,7 @@ function PatientsView({
           </div>
         }
       />
+      <PeriodFilter filter={patientFilter} onChange={setPatientFilter} label="Filtrar por inicio o finalizacion" />
 
       <section className="split-layout">
         <article className="panel">
@@ -801,7 +963,7 @@ function PatientsView({
         </article>
 
         <article className="panel span-2">
-          <SectionHeader eyebrow="Activos" title="Pacientes demo" />
+          <SectionHeader eyebrow="Activos" title={`${patients.length} pacientes en vista`} />
           <div className="patient-list">
             {patients.map((patient) => (
               <div className="patient-row" key={patient.id}>
@@ -839,14 +1001,19 @@ function PatientsView({
 
 function InventoryView({
   inventory,
+  inventoryFilter,
+  setInventoryFilter,
   addInventory,
 }: {
   inventory: InventoryItem[];
+  inventoryFilter: DateFilter;
+  setInventoryFilter: (filter: DateFilter) => void;
   addInventory: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <div className="content-stack">
       <SectionHeader eyebrow="Inventario" title="Peptidos, sueros e insumos" />
+      <PeriodFilter filter={inventoryFilter} onChange={setInventoryFilter} label="Filtrar por vencimiento" />
       <section className="split-layout">
         <article className="panel">
           <SectionHeader eyebrow="Nuevo" title="Producto" />
@@ -900,7 +1067,7 @@ function InventoryView({
         </article>
 
         <article className="panel span-2">
-          <SectionHeader eyebrow="Stock" title="Control de productos" />
+          <SectionHeader eyebrow="Stock" title={`${inventory.length} productos en vista`} />
           <div className="table-wrap">
             <table>
               <thead>
@@ -942,30 +1109,88 @@ function InventoryView({
 
 function AccountingView({
   finance,
+  financeFilter,
+  setFinanceFilter,
   addMovement,
-  companyIncome,
-  companyExpenses,
-  netProfit,
-  pendingIncome,
-  personalOut,
 }: {
   finance: FinanceMovement[];
+  financeFilter: DateFilter;
+  setFinanceFilter: (filter: DateFilter) => void;
   addMovement: (event: FormEvent<HTMLFormElement>) => void;
-  companyIncome: number;
-  companyExpenses: number;
-  netProfit: number;
-  pendingIncome: number;
-  personalOut: number;
 }) {
   const [selectedSupport, setSelectedSupport] = useState<FinanceMovement | null>(null);
+  const companyMovements = finance.filter((movement) => movement.scope === 'Empresa');
+  const companyIncome = companyMovements
+    .filter((movement) => movement.kind === 'Ingreso' && movement.status !== 'Pendiente')
+    .reduce((total, movement) => total + movement.value, 0);
+  const pendingIncome = companyMovements
+    .filter((movement) => movement.kind === 'Ingreso' && movement.status === 'Pendiente')
+    .reduce((total, movement) => total + movement.value, 0);
+  const companyExpenses = companyMovements
+    .filter((movement) => movement.kind === 'Gasto')
+    .reduce((total, movement) => total + movement.value, 0);
+  const personalOut = finance
+    .filter((movement) => movement.scope !== 'Empresa')
+    .reduce((total, movement) => total + movement.value, 0);
+  const netProfit = companyIncome - companyExpenses;
+  const incomeByCategory = sumBy(
+    finance.filter((movement) => movement.kind === 'Ingreso'),
+    (movement) => movement.category,
+    (movement) => movement.value,
+  );
+  const expensesByCenter = sumBy(
+    finance.filter((movement) => movement.kind === 'Gasto' && movement.scope === 'Empresa'),
+    (movement) => movement.costCenter,
+    (movement) => movement.value,
+  );
+  const personalByScope = sumBy(
+    finance.filter((movement) => movement.scope !== 'Empresa'),
+    (movement) => movement.scope,
+    (movement) => movement.value,
+  );
 
   return (
     <div className="content-stack">
+      <PeriodFilter filter={financeFilter} onChange={setFinanceFilter} label="Filtrar contabilidad por fecha" />
       <section className="stats-grid">
         <StatCard label="Empresa" value={formatCurrency(companyIncome)} helper="Ingresos recibidos" icon={TrendingUp} tone="success" />
         <StatCard label="Gastos operativos" value={formatCurrency(companyExpenses)} helper="Sin personales" icon={CreditCard} tone="warning" />
         <StatCard label="Utilidad" value={formatCurrency(netProfit)} helper="Caja empresa" icon={CircleDollarSign} tone="success" />
         <StatCard label="Personal/retiros" value={formatCurrency(personalOut)} helper="Vista separada" icon={WalletCards} tone="neutral" />
+      </section>
+
+      <section className="detail-grid">
+        <article className="detail-card">
+          <div className="detail-card-title">
+            <TrendingUp size={18} />
+            <strong>Ingresos empresa</strong>
+          </div>
+          <DetailLine label="Recibido" value={formatCurrency(companyIncome)} />
+          <DetailLine label="Por cobrar" value={formatCurrency(pendingIncome)} />
+          {Object.entries(incomeByCategory).map(([category, value]) => (
+            <DetailLine key={category} label={category} value={formatCurrency(value)} />
+          ))}
+        </article>
+        <article className="detail-card">
+          <div className="detail-card-title">
+            <Layers3 size={18} />
+            <strong>Gastos por centro</strong>
+          </div>
+          <DetailLine label="Total operativo" value={formatCurrency(companyExpenses)} />
+          {Object.entries(expensesByCenter).map(([center, value]) => (
+            <DetailLine key={center} label={center} value={formatCurrency(value)} />
+          ))}
+        </article>
+        <article className="detail-card">
+          <div className="detail-card-title">
+            <WalletCards size={18} />
+            <strong>Personal separado</strong>
+          </div>
+          <DetailLine label="Total no empresa" value={formatCurrency(personalOut)} />
+          {Object.entries(personalByScope).map(([scope, value]) => (
+            <DetailLine key={scope} label={scope} value={formatCurrency(value)} />
+          ))}
+        </article>
       </section>
 
       <section className="split-layout">
@@ -1051,9 +1276,11 @@ function AccountingView({
               <thead>
                 <tr>
                   <th>Movimiento</th>
-                  <th>Categoria</th>
+                  <th>Fecha</th>
+                  <th>Cliente/proveedor</th>
+                  <th>Categoria / centro</th>
+                  <th>Pago / estado</th>
                   <th>Valor</th>
-                  <th>Centro</th>
                   <th>Tipo</th>
                   <th>Soporte</th>
                 </tr>
@@ -1063,13 +1290,19 @@ function AccountingView({
                   <tr key={movement.id}>
                     <td>
                       <strong>{movement.concept}</strong>
-                      <span>
-                        {movement.date} · {movement.person}
-                      </span>
+                      <span>{movement.id} · {movement.kind}</span>
                     </td>
-                    <td>{movement.category}</td>
+                    <td>{movement.date}</td>
+                    <td>{movement.person}</td>
+                    <td>
+                      <strong>{movement.category}</strong>
+                      <span>{movement.costCenter}</span>
+                    </td>
+                    <td>
+                      <strong>{movement.paymentMethod}</strong>
+                      <span>{movement.status}</span>
+                    </td>
                     <td>{formatCurrency(movement.value)}</td>
-                    <td>{movement.costCenter}</td>
                     <td>
                       <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
                     </td>
@@ -1094,6 +1327,15 @@ function AccountingView({
       {selectedSupport && (
         <SupportModal movement={selectedSupport} onClose={() => setSelectedSupport(null)} />
       )}
+    </div>
+  );
+}
+
+function DetailLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detail-line">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -1154,19 +1396,26 @@ function ReportsView({
   patients,
   inventory,
   finance,
-  companyIncome,
-  companyExpenses,
-  netProfit,
-  personalOut,
+  reportFilter,
+  setReportFilter,
 }: {
   patients: Patient[];
   inventory: InventoryItem[];
   finance: FinanceMovement[];
-  companyIncome: number;
-  companyExpenses: number;
-  netProfit: number;
-  personalOut: number;
+  reportFilter: DateFilter;
+  setReportFilter: (filter: DateFilter) => void;
 }) {
+  const companyMovements = finance.filter((movement) => movement.scope === 'Empresa');
+  const companyIncome = companyMovements
+    .filter((movement) => movement.kind === 'Ingreso' && movement.status !== 'Pendiente')
+    .reduce((total, movement) => total + movement.value, 0);
+  const companyExpenses = companyMovements
+    .filter((movement) => movement.kind === 'Gasto')
+    .reduce((total, movement) => total + movement.value, 0);
+  const personalOut = finance
+    .filter((movement) => movement.scope !== 'Empresa')
+    .reduce((total, movement) => total + movement.value, 0);
+  const netProfit = companyIncome - companyExpenses;
   const vipPatients = patients.filter((patient) => patient.tier === 'VIP').length;
   const companyRatio = companyIncome > 0 ? Math.round((netProfit / companyIncome) * 100) : 0;
   const stockValue = inventory.reduce((total, item) => total + item.stock * item.unitCost, 0);
@@ -1181,14 +1430,15 @@ function ReportsView({
     <div className="content-stack">
       <SectionHeader
         eyebrow="Reportes"
-        title="Resumen mensual demo"
+        title="Resumen dinamico"
         action={
-          <button className="secondary-action" type="button">
+          <button className="secondary-action" onClick={() => window.print()} type="button">
             <Download size={16} />
             Exportar
           </button>
         }
       />
+      <PeriodFilter filter={reportFilter} onChange={setReportFilter} label="Filtrar reportes por periodo" />
       <section className="stats-grid">
         <StatCard label="Margen empresa" value={`${companyRatio}%`} helper="Ingresos vs utilidad" icon={Activity} tone="success" />
         <StatCard label="Pacientes VIP" value={String(vipPatients)} helper="Por valor de venta" icon={Sparkles} tone="success" />
