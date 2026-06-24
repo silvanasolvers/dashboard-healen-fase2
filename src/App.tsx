@@ -36,6 +36,7 @@ type View = 'inicio' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
 type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
 type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
+type InventoryMovementKind = 'Entrada' | 'Salida' | 'Venta' | 'Ajuste';
 type MovementScope = 'Empresa' | 'Personal' | 'Retiro socio' | 'Reembolso';
 type MovementKind = 'Ingreso' | 'Gasto';
 type AccountingTab = 'ingresos' | 'egresos' | 'cobrar';
@@ -81,6 +82,19 @@ interface InventoryItem {
   supplier: string;
   unitCost: number;
   status: InventoryStatus;
+}
+
+interface InventoryMovement {
+  id: string;
+  itemId: string;
+  product: string;
+  kind: InventoryMovementKind;
+  date: string;
+  quantity: number;
+  previousStock: number;
+  resultingStock: number;
+  reason: string;
+  responsible: string;
 }
 
 interface FinanceMovement {
@@ -202,6 +216,33 @@ const initialInventory: InventoryItem[] = [
   },
 ];
 
+const initialInventoryMovements: InventoryMovement[] = [
+  {
+    id: 'IMV-001',
+    itemId: 'INV-001',
+    product: 'NAD+',
+    kind: 'Salida',
+    date: '2026-06-22',
+    quantity: 3,
+    previousStock: 12,
+    resultingStock: 9,
+    reason: 'Uso en tratamiento regenerativo',
+    responsible: 'Equipo Healen',
+  },
+  {
+    id: 'IMV-002',
+    itemId: 'INV-002',
+    product: 'Suero revitalizante',
+    kind: 'Venta',
+    date: '2026-06-21',
+    quantity: 2,
+    previousStock: 28,
+    resultingStock: 26,
+    reason: 'Venta de kit semanal',
+    responsible: 'Recepcion',
+  },
+];
+
 const initialFinance: FinanceMovement[] = [
   {
     id: 'MOV-001',
@@ -309,6 +350,17 @@ function dueLabel(movement: FinanceMovement) {
   if (days > 0) return `${days} dias en mora`;
   if (days === 0) return 'Vence hoy';
   return `Vence en ${Math.abs(days)} dias`;
+}
+
+function inventoryStatus(stock: number, minimum: number, expiration: string): InventoryStatus {
+  if (stock <= 0) return 'Agotado';
+  if (stock <= minimum) return 'Bajo stock';
+  const expirationDate = new Date(`${expiration}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysToExpire = Math.ceil((expirationDate.getTime() - today.getTime()) / 86400000);
+  if (daysToExpire <= 30) return 'Proximo a vencer';
+  return 'Disponible';
 }
 
 function classifySale(value: number): PatientTier {
@@ -459,6 +511,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [patients, setPatients] = useState(initialPatients);
   const [inventory, setInventory] = useState(initialInventory);
+  const [inventoryMovements, setInventoryMovements] = useState(initialInventoryMovements);
   const [finance, setFinance] = useState(initialFinance);
   const [patientSearch, setPatientSearch] = useState('');
   const [patientFilter, setPatientFilter] = useState<DateFilter>(emptyDateFilter);
@@ -548,6 +601,60 @@ export function App() {
       status,
     };
     setInventory((current) => [newItem, ...current]);
+    event.currentTarget.reset();
+  }
+
+  function registerInventoryMovement(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const itemId = String(form.get('itemId') || '');
+    const kind = String(form.get('kind') || 'Salida') as InventoryMovementKind;
+    const quantity = Math.max(0, Number(form.get('quantity')) || 0);
+    const reason = String(form.get('reason') || 'Movimiento de inventario');
+    const responsible = String(form.get('responsible') || 'Equipo Healen');
+    const date = String(form.get('date') || '2026-06-23');
+
+    if (!itemId || quantity <= 0) return;
+
+    let movementRecord: InventoryMovement | null = null;
+
+    setInventory((current) =>
+      current.map((item) => {
+        if (item.id !== itemId) return item;
+
+        const previousStock = item.stock;
+        const resultingStock =
+          kind === 'Entrada'
+            ? previousStock + quantity
+            : kind === 'Ajuste'
+              ? quantity
+              : Math.max(0, previousStock - quantity);
+
+        movementRecord = {
+          id: `IMV-${String(inventoryMovements.length + 1).padStart(3, '0')}`,
+          itemId: item.id,
+          product: item.product,
+          kind,
+          date,
+          quantity,
+          previousStock,
+          resultingStock,
+          reason,
+          responsible,
+        };
+
+        return {
+          ...item,
+          stock: resultingStock,
+          status: inventoryStatus(resultingStock, item.minimum, item.expiration),
+        };
+      }),
+    );
+
+    if (movementRecord) {
+      setInventoryMovements((current) => [movementRecord as InventoryMovement, ...current]);
+    }
+
     event.currentTarget.reset();
   }
 
@@ -684,14 +791,17 @@ export function App() {
             addPatient={addPatient}
           />
         )}
-        {view === 'inventario' && (
-          <InventoryView
-            inventory={filteredInventory}
-            inventoryFilter={inventoryFilter}
-            setInventoryFilter={setInventoryFilter}
-            addInventory={addInventory}
-          />
-        )}
+          {view === 'inventario' && (
+            <InventoryView
+              inventory={filteredInventory}
+              allInventory={inventory}
+              inventoryMovements={inventoryMovements}
+              inventoryFilter={inventoryFilter}
+              setInventoryFilter={setInventoryFilter}
+              addInventory={addInventory}
+              registerInventoryMovement={registerInventoryMovement}
+            />
+          )}
         {view === 'contabilidad' && (
           <AccountingView
             finance={filteredFinance}
@@ -1100,19 +1210,44 @@ function PatientsView({
 
 function InventoryView({
   inventory,
+  allInventory,
+  inventoryMovements,
   inventoryFilter,
   setInventoryFilter,
   addInventory,
+  registerInventoryMovement,
 }: {
   inventory: InventoryItem[];
+  allInventory: InventoryItem[];
+  inventoryMovements: InventoryMovement[];
   inventoryFilter: DateFilter;
   setInventoryFilter: (filter: DateFilter) => void;
   addInventory: (event: FormEvent<HTMLFormElement>) => void;
+  registerInventoryMovement: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const unitsInStock = inventory.reduce((total, item) => total + item.stock, 0);
+  const lowStock = inventory.filter((item) => item.stock <= item.minimum).length;
+  const stockValue = inventory.reduce((total, item) => total + item.stock * item.unitCost, 0);
+  const outgoingToday = inventoryMovements
+    .filter((movement) => movement.kind === 'Salida' || movement.kind === 'Venta')
+    .reduce((total, movement) => total + movement.quantity, 0);
+  const movementByProduct = inventoryMovements.reduce<Record<string, InventoryMovement>>((acc, movement) => {
+    if (!acc[movement.itemId]) acc[movement.itemId] = movement;
+    return acc;
+  }, {});
+
   return (
     <div className="content-stack">
       <SectionHeader eyebrow="Inventario" title="Peptidos, sueros e insumos" />
       <PeriodFilter filter={inventoryFilter} onChange={setInventoryFilter} label="Filtrar por vencimiento" />
+
+      <section className="stats-grid">
+        <StatCard label="Unidades disponibles" value={String(unitsInStock)} helper="Stock total filtrado" icon={PackageCheck} tone="success" />
+        <StatCard label="Bajo minimo" value={String(lowStock)} helper="Requieren reposicion" icon={AlertTriangle} tone="warning" />
+        <StatCard label="Valor inventario" value={formatCurrency(stockValue)} helper="Costo estimado" icon={CircleDollarSign} tone="neutral" />
+        <StatCard label="Salidas registradas" value={String(outgoingToday)} helper="Uso o ventas" icon={RefreshCw} tone="danger" />
+      </section>
+
       <section className="split-layout">
         <article className="panel">
           <SectionHeader eyebrow="Nuevo" title="Producto" />
@@ -1166,39 +1301,129 @@ function InventoryView({
         </article>
 
         <article className="panel span-2">
+          <SectionHeader eyebrow="Actualizar" title="Movimiento de stock" />
+          <form className="form-grid inventory-movement-form" onSubmit={registerInventoryMovement}>
+            <label>
+              Producto
+              <select name="itemId" required>
+                <option value="">Seleccionar producto</option>
+                {allInventory.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.product} · quedan {item.stock} {item.unit}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Movimiento
+              <select name="kind">
+                <option>Salida</option>
+                <option>Venta</option>
+                <option>Entrada</option>
+                <option>Ajuste</option>
+              </select>
+            </label>
+            <label>
+              Cantidad
+              <input name="quantity" type="number" min="0" step="1" placeholder="Unidades" required />
+            </label>
+            <label>
+              Fecha
+              <input name="date" type="date" />
+            </label>
+            <label>
+              Responsable
+              <input name="responsible" placeholder="Quien registra" />
+            </label>
+            <label>
+              Motivo
+              <input name="reason" placeholder="Paciente, venta, ajuste..." />
+            </label>
+            <button className="primary-action full" type="submit">
+              <RefreshCw size={18} />
+              Actualizar restante
+            </button>
+          </form>
+        </article>
+      </section>
+
+      <section className="split-layout inventory-detail-layout">
+        <article className="panel">
           <SectionHeader eyebrow="Stock" title={`${inventory.length} productos en vista`} />
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap inventory-table-wrap">
+            <table className="inventory-table">
               <thead>
                 <tr>
                   <th>Producto</th>
                   <th>Tipo</th>
-                  <th>Stock</th>
+                  <th>Restante</th>
+                  <th>Minimo</th>
                   <th>Lote</th>
                   <th>Vence</th>
+                  <th>Ultimo movimiento</th>
                   <th>Estado</th>
                 </tr>
               </thead>
               <tbody>
-                {inventory.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <strong>{item.product}</strong>
-                      <span>{formatCurrency(item.unitCost)} unidad</span>
-                    </td>
-                    <td>{item.type}</td>
-                    <td>
-                      {item.stock} / min {item.minimum} {item.unit}
-                    </td>
-                    <td>{item.lot}</td>
-                    <td>{item.expiration}</td>
-                    <td>
-                      <Badge label={item.status} tone={statusClass(item.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
-                    </td>
-                  </tr>
-                ))}
+                {inventory.map((item) => {
+                  const lastMovement = movementByProduct[item.id];
+
+                  return (
+                    <tr key={item.id}>
+                      <td data-label="Producto">
+                        <strong>{item.product}</strong>
+                        <span>{formatCurrency(item.unitCost)} unidad</span>
+                      </td>
+                      <td data-label="Tipo">{item.type}</td>
+                      <td data-label="Restante">
+                        <strong className="stock-restant">{item.stock} {item.unit}</strong>
+                      </td>
+                      <td data-label="Minimo">min {item.minimum} {item.unit}</td>
+                      <td data-label="Lote">{item.lot}</td>
+                      <td data-label="Vence">{item.expiration}</td>
+                      <td data-label="Ultimo movimiento">
+                        {lastMovement ? (
+                          <>
+                            <strong>{lastMovement.kind} de {lastMovement.quantity}</strong>
+                            <span>Quedo en {lastMovement.resultingStock} · {lastMovement.date}</span>
+                          </>
+                        ) : (
+                          <span className="muted-cell">Sin movimientos</span>
+                        )}
+                      </td>
+                      <td data-label="Estado">
+                        <Badge label={item.status} tone={statusClass(item.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+        </article>
+
+        <article className="panel">
+          <SectionHeader eyebrow="Historial" title="Ultimos movimientos" />
+          <div className="inventory-movement-list">
+            {inventoryMovements.length === 0 ? (
+              <p className="empty-state">Todavia no hay movimientos de inventario.</p>
+            ) : (
+              inventoryMovements.slice(0, 6).map((movement) => (
+                <article key={movement.id} className="inventory-movement-card">
+                  <div>
+                    <strong>{movement.product}</strong>
+                    <span>{movement.kind} · {movement.date}</span>
+                  </div>
+                  <p>{movement.reason}</p>
+                  <div className="movement-stock-line">
+                    <span>{movement.previousStock}</span>
+                    <ChevronRight size={15} />
+                    <strong>{movement.resultingStock}</strong>
+                  </div>
+                  <small>{movement.quantity} unidades · {movement.responsible}</small>
+                </article>
+              ))
+            )}
           </div>
         </article>
       </section>
