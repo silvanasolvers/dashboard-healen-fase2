@@ -70,6 +70,13 @@ interface Patient {
   peptides: PeptideLine[];
 }
 
+interface PatientHistoryItem {
+  date: string;
+  title: string;
+  detail: string;
+  tone: 'neutral' | 'success' | 'warning';
+}
+
 interface InventoryItem {
   id: string;
   product: string;
@@ -1105,6 +1112,8 @@ function PatientsView({
   setPatientFilter: (filter: DateFilter) => void;
   addPatient: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+
   return (
     <div className="content-stack">
       <SectionHeader
@@ -1174,7 +1183,7 @@ function PatientsView({
           <SectionHeader eyebrow="Activos" title={`${patients.length} pacientes en vista`} />
           <div className="patient-list">
             {patients.map((patient) => (
-              <div className="patient-row" key={patient.id}>
+              <button className="patient-row" key={patient.id} onClick={() => setSelectedPatient(patient)} type="button">
                 <div className="patient-main">
                   <div className="avatar">{patient.name.slice(-1)}</div>
                   <div>
@@ -1190,6 +1199,10 @@ function PatientsView({
                   <span>{formatCurrency(patient.saleValue)}</span>
                   <span>{patient.daysLeft} dias</span>
                   <span>{patient.weeklySerum ? `Suero ${patient.serumDay}` : 'Sin suero'}</span>
+                  <span className="patient-history-chip">
+                    <Eye size={14} />
+                    Ver historial
+                  </span>
                 </div>
                 <div className="peptide-list">
                   {patient.peptides.map((peptide) => (
@@ -1198,11 +1211,140 @@ function PatientsView({
                     </span>
                   ))}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </article>
       </section>
+
+      {selectedPatient && (
+        <PatientHistoryModal patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
+      )}
+    </div>
+  );
+}
+
+function patientHistory(patient: Patient): PatientHistoryItem[] {
+  return [
+    {
+      date: patient.startDate,
+      title: 'Inicio del tratamiento',
+      detail: `${patient.plan} registrado con valor de ${formatCurrency(patient.saleValue)}.`,
+      tone: 'success',
+    },
+    ...patient.peptides.map((peptide) => ({
+      date: patient.startDate,
+      title: `Peptido: ${peptide.name}`,
+      detail: `${peptide.dose}. Estado: ${peptide.status}. Restan ${peptide.endsInDays} dias.`,
+      tone: peptide.status === 'Por finalizar' ? 'warning' : 'neutral',
+    }) satisfies PatientHistoryItem),
+    {
+      date: patient.weeklySerum ? patient.serumDay : '-',
+      title: patient.weeklySerum ? 'Suero semanal activo' : 'Sin suero semanal',
+      detail: patient.weeklySerum
+        ? `Paciente agendado para suero semanal los ${patient.serumDay}.`
+        : 'No tiene suero semanal marcado para este tratamiento.',
+      tone: patient.weeklySerum ? 'success' : 'neutral',
+    },
+    {
+      date: patient.endDate,
+      title: patient.daysLeft <= 10 ? 'Cierre proximo' : 'Finalizacion estimada',
+      detail: patient.daysLeft <= 10
+        ? `Quedan ${patient.daysLeft} dias. Revisar cierre, recompra o continuidad.`
+        : `Finalizacion estimada en ${patient.daysLeft} dias.`,
+      tone: patient.daysLeft <= 10 ? 'warning' : 'neutral',
+    },
+  ];
+}
+
+function PatientHistoryModal({ patient, onClose }: { patient: Patient; onClose: () => void }) {
+  const history = patientHistory(patient);
+  const totalPeptides = patient.peptides.length;
+  const endingSoon = patient.peptides.filter((peptide) => peptide.endsInDays <= 10).length;
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Historial de ${patient.name}`}>
+      <article className="patient-history-modal">
+        <header className="support-modal-header">
+          <div>
+            <span>Historial del paciente</span>
+            <h3>{patient.name}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar historial">
+            <X size={18} />
+          </button>
+        </header>
+
+        <section className="patient-history-hero">
+          <div>
+            <span>{patient.id}</span>
+            <strong>{patient.plan}</strong>
+            <p>{patient.status} · {patient.tier} · {formatCurrency(patient.saleValue)}</p>
+          </div>
+          <Badge label={`${patient.daysLeft} dias restantes`} tone={patient.daysLeft <= 10 ? 'warning' : 'success'} />
+        </section>
+
+        <section className="patient-history-grid">
+          <article>
+            <span>Inicio</span>
+            <strong>{patient.startDate}</strong>
+          </article>
+          <article>
+            <span>Final estimado</span>
+            <strong>{patient.endDate}</strong>
+          </article>
+          <article>
+            <span>Peptidos</span>
+            <strong>{totalPeptides}</strong>
+          </article>
+          <article>
+            <span>Por finalizar</span>
+            <strong>{endingSoon}</strong>
+          </article>
+        </section>
+
+        <section className="patient-history-section">
+          <div className="detail-card-title">
+            <Syringe size={18} />
+            <strong>Tratamiento activo</strong>
+          </div>
+          <div className="patient-treatment-list">
+            {patient.peptides.map((peptide) => (
+              <article key={`${patient.id}-history-${peptide.name}`}>
+                <div>
+                  <strong>{peptide.name}</strong>
+                  <Badge label={peptide.status} tone={statusClass(peptide.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
+                </div>
+                <span>{peptide.dose}</span>
+                <small>{peptide.endsInDays} dias restantes</small>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="patient-history-section">
+          <div className="detail-card-title">
+            <ClipboardList size={18} />
+            <strong>Linea de tiempo</strong>
+          </div>
+          <div className="patient-timeline">
+            {history.map((item) => (
+              <article className={`patient-timeline-item ${item.tone}`} key={`${item.date}-${item.title}`}>
+                <span>{item.date}</span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.detail}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="patient-next-steps">
+          <strong>Proximos pasos</strong>
+          <span>{patient.daysLeft <= 10 ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.' : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}</span>
+        </section>
+      </article>
     </div>
   );
 }

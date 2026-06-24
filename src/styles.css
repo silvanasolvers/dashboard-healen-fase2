@@ -1302,6 +1302,19 @@ td span {
   padding: 12px;
   display: grid;
   gap: 10px;
+  background: white;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.patient-row:hover,
+.patient-row:focus-visible {
+  border-color: rgba(102, 51, 153, 0.34);
+  box-shadow: 0 14px 32px rgba(44, 24, 65, 0.1);
+  transform: translateY(-1px);
+  outline: 0;
 }
 
 .patient-main {
@@ -1330,6 +1343,172 @@ td span {
   background: var(--soft);
   color: var(--muted);
   font-size: 12px;
+}
+
+.patient-history-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--purple) !important;
+  font-weight: 900;
+}
+
+.patient-history-chip svg {
+  width: 14px;
+  height: 14px;
+}
+
+.patient-history-modal {
+  width: min(860px, 100%);
+  max-height: min(820px, 92vh);
+  overflow: auto;
+  border: 1px solid rgba(102, 51, 153, 0.16);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 24px 70px rgba(23, 17, 31, 0.24);
+}
+
+.patient-history-hero {
+  margin: 18px;
+  border-radius: 8px;
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-end;
+  background:
+    linear-gradient(135deg, rgba(72, 196, 163, 0.18), transparent 48%),
+    linear-gradient(135deg, #352155, #6f3fa0);
+  color: white;
+}
+
+.patient-history-hero span {
+  display: block;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.patient-history-hero strong {
+  display: block;
+  margin-top: 4px;
+  font-size: clamp(22px, 4vw, 34px);
+  line-height: 1.05;
+}
+
+.patient-history-hero p {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.patient-history-grid {
+  margin: 0 18px 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.patient-history-grid article,
+.patient-history-section,
+.patient-next-steps {
+  border: 1px solid rgba(102, 51, 153, 0.12);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.patient-history-grid article {
+  min-height: 78px;
+  padding: 12px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+.patient-history-grid span,
+.patient-treatment-list span,
+.patient-treatment-list small,
+.patient-timeline-item span,
+.patient-timeline-item p,
+.patient-next-steps span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.patient-history-grid strong {
+  font-size: 18px;
+}
+
+.patient-history-section,
+.patient-next-steps {
+  margin: 0 18px 18px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.patient-treatment-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.patient-treatment-list article {
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+  background: var(--soft);
+}
+
+.patient-treatment-list article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.patient-timeline {
+  display: grid;
+  gap: 10px;
+}
+
+.patient-timeline-item {
+  position: relative;
+  border-radius: 8px;
+  padding: 12px 12px 12px 42px;
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  background: var(--soft);
+}
+
+.patient-timeline-item::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--purple);
+}
+
+.patient-timeline-item.success::before {
+  background: #0b7a61;
+}
+
+.patient-timeline-item.warning::before {
+  background: #a86a16;
+}
+
+.patient-timeline-item p {
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.patient-next-steps {
+  background: linear-gradient(135deg, rgba(242, 251, 248, 0.92), rgba(248, 243, 251, 0.9));
 }
 
 .detail-grid {
@@ -1580,7 +1759,8 @@ td span {
   .stats-grid,
   .dashboard-grid,
   .detail-grid,
-  .accounting-focus-grid {
+  .accounting-focus-grid,
+  .patient-history-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1790,7 +1970,9 @@ td span {
   .stats-grid,
   .dashboard-grid,
   .detail-grid,
-  .accounting-focus-grid {
+  .accounting-focus-grid,
+  .patient-history-grid,
+  .patient-treatment-list {
     grid-template-columns: 1fr;
   }
 
@@ -1814,6 +1996,16 @@ td span {
   .section-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .patient-history-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .patient-timeline-item {
+    grid-template-columns: 1fr;
+    gap: 5px;
   }
 
   .search-box,
