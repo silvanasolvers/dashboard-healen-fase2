@@ -11,6 +11,8 @@ import {
   CreditCard,
   Dna,
   Download,
+  Eye,
+  FileText,
   LayoutDashboard,
   Menu,
   PackageCheck,
@@ -82,6 +84,7 @@ interface FinanceMovement {
   scope: MovementScope;
   status: 'Recibido' | 'Pendiente' | 'Pagado' | 'Vencido';
   attachment?: string;
+  attachmentPreview?: string;
 }
 
 const navItems: Array<{ id: View; label: string; icon: ElementType }> = [
@@ -422,6 +425,8 @@ export function App() {
     const form = new FormData(event.currentTarget);
     const kind = String(form.get('kind') || 'Ingreso') as MovementKind;
     const status = kind === 'Ingreso' ? 'Recibido' : 'Pagado';
+    const attachmentFile = form.get('attachment');
+    const hasAttachment = attachmentFile instanceof File && attachmentFile.size > 0;
     const newMovement: FinanceMovement = {
       id: `MOV-${String(finance.length + 1).padStart(3, '0')}`,
       kind,
@@ -434,7 +439,8 @@ export function App() {
       costCenter: String(form.get('costCenter') || 'Operacion'),
       scope: String(form.get('scope') || 'Empresa') as MovementScope,
       status,
-      attachment: form.get('attachment') ? 'soporte-adjunto.jpg' : undefined,
+      attachment: hasAttachment ? attachmentFile.name : undefined,
+      attachmentPreview: hasAttachment ? URL.createObjectURL(attachmentFile) : undefined,
     };
     setFinance((current) => [newMovement, ...current]);
     event.currentTarget.reset();
@@ -951,6 +957,8 @@ function AccountingView({
   pendingIncome: number;
   personalOut: number;
 }) {
+  const [selectedSupport, setSelectedSupport] = useState<FinanceMovement | null>(null);
+
   return (
     <div className="content-stack">
       <section className="stats-grid">
@@ -1065,7 +1073,16 @@ function AccountingView({
                     <td>
                       <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
                     </td>
-                    <td>{movement.attachment ? <Check size={18} /> : '-'}</td>
+                    <td>
+                      {movement.attachment ? (
+                        <button className="support-button" onClick={() => setSelectedSupport(movement)} type="button">
+                          <Eye size={16} />
+                          Ver soporte
+                        </button>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1073,6 +1090,62 @@ function AccountingView({
           </div>
         </article>
       </section>
+
+      {selectedSupport && (
+        <SupportModal movement={selectedSupport} onClose={() => setSelectedSupport(null)} />
+      )}
+    </div>
+  );
+}
+
+function SupportModal({ movement, onClose }: { movement: FinanceMovement; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Soporte del movimiento">
+      <article className="support-modal">
+        <header className="support-modal-header">
+          <div>
+            <span>Soporte</span>
+            <h3>{movement.concept}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar soporte">
+            <X size={18} />
+          </button>
+        </header>
+
+        {movement.attachmentPreview ? (
+          <img className="support-image" src={movement.attachmentPreview} alt={`Soporte de ${movement.concept}`} />
+        ) : (
+          <div className="support-receipt">
+            <div className="receipt-mark">
+              <FileText size={24} />
+            </div>
+            <strong>Comprobante adjunto</strong>
+            <span>{movement.attachment}</span>
+            <dl>
+              <div>
+                <dt>Fecha</dt>
+                <dd>{movement.date}</dd>
+              </div>
+              <div>
+                <dt>Proveedor / cliente</dt>
+                <dd>{movement.person}</dd>
+              </div>
+              <div>
+                <dt>Valor</dt>
+                <dd>{formatCurrency(movement.value)}</dd>
+              </div>
+              <div>
+                <dt>Centro de costo</dt>
+                <dd>{movement.costCenter}</dd>
+              </div>
+              <div>
+                <dt>Medio de pago</dt>
+                <dd>{movement.paymentMethod}</dd>
+              </div>
+            </dl>
+          </div>
+        )}
+      </article>
     </div>
   );
 }
