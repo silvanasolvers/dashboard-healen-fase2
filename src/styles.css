@@ -839,6 +839,45 @@ td span {
   font-weight: 900;
 }
 
+.patient-subtabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.patient-subtabs button {
+  min-height: 72px;
+  border: 1px solid rgba(102, 51, 153, 0.13);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(44, 24, 65, 0.06);
+}
+
+.patient-subtabs button:hover,
+.patient-subtabs button.active {
+  border-color: rgba(102, 51, 153, 0.36);
+  background: linear-gradient(135deg, rgba(102, 51, 153, 0.11), rgba(72, 196, 163, 0.11));
+  color: var(--purple);
+}
+
+.patient-subtabs svg {
+  grid-row: span 2;
+}
+
+.patient-subtabs span {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .empty-table {
   height: 96px;
   color: var(--muted);
@@ -1358,6 +1397,205 @@ td span {
   height: 14px;
 }
 
+.patient-alert-workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.patient-alert-hero {
+  min-height: 142px;
+  border-radius: 8px;
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-end;
+  color: white;
+  background:
+    linear-gradient(135deg, rgba(72, 196, 163, 0.2), transparent 42%),
+    linear-gradient(135deg, #213f42, #603785);
+  box-shadow: var(--shadow);
+}
+
+.patient-alert-hero span {
+  display: block;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.patient-alert-hero h3 {
+  max-width: 720px;
+  margin: 7px 0 8px;
+  font-size: clamp(24px, 4vw, 40px);
+  line-height: 1.04;
+}
+
+.patient-alert-hero p {
+  max-width: 620px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.45;
+}
+
+.patient-alert-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.patient-alert-card {
+  min-width: 0;
+  border: 1px solid rgba(102, 51, 153, 0.13);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  background: white;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(44, 24, 65, 0.05);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.patient-alert-card:hover,
+.patient-alert-card:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(102, 51, 153, 0.34);
+  box-shadow: 0 14px 34px rgba(44, 24, 65, 0.11);
+  outline: 0;
+}
+
+.patient-alert-card.success {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 251, 248, 0.92));
+}
+
+.patient-alert-card.warning {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 248, 237, 0.9));
+}
+
+.patient-alert-card.danger {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 242, 241, 0.9));
+}
+
+.patient-alert-card-head,
+.patient-alert-product {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.patient-alert-card-head strong,
+.patient-alert-card-head span,
+.patient-alert-product strong,
+.patient-alert-product span {
+  display: block;
+}
+
+.patient-alert-card-head span,
+.patient-alert-product span,
+.patient-alert-card p,
+.patient-alert-metrics span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.patient-alert-product {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.patient-alert-product svg {
+  flex: 0 0 auto;
+  color: var(--purple);
+}
+
+.patient-alert-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.patient-alert-metrics span {
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: var(--soft);
+  font-weight: 800;
+}
+
+.patient-alert-card p {
+  margin: 0;
+}
+
+.patient-alert-history-preview {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 0 10px;
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 7px;
+  background: #f6eefb;
+  color: var(--purple);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.patient-alert-detail-hero {
+  margin: 18px;
+  border-radius: 8px;
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-end;
+  color: white;
+}
+
+.patient-alert-detail-hero.success {
+  background:
+    linear-gradient(135deg, rgba(72, 196, 163, 0.24), transparent 46%),
+    linear-gradient(135deg, #163f38, #287663);
+}
+
+.patient-alert-detail-hero.warning {
+  background:
+    linear-gradient(135deg, rgba(200, 135, 42, 0.26), transparent 46%),
+    linear-gradient(135deg, #54351c, #8c5e21);
+}
+
+.patient-alert-detail-hero.danger {
+  background:
+    linear-gradient(135deg, rgba(200, 76, 98, 0.26), transparent 46%),
+    linear-gradient(135deg, #4b2432, #8a2f45);
+}
+
+.patient-alert-detail-hero span {
+  display: block;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.patient-alert-detail-hero strong {
+  display: block;
+  margin-top: 4px;
+  font-size: clamp(24px, 4vw, 36px);
+  line-height: 1.05;
+}
+
+.patient-alert-detail-hero p {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+}
+
 .patient-history-modal {
   width: min(860px, 100%);
   max-height: min(820px, 92vh);
@@ -1760,7 +1998,8 @@ td span {
   .dashboard-grid,
   .detail-grid,
   .accounting-focus-grid,
-  .patient-history-grid {
+  .patient-history-grid,
+  .patient-alert-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1972,11 +2211,19 @@ td span {
   .detail-grid,
   .accounting-focus-grid,
   .patient-history-grid,
-  .patient-treatment-list {
+  .patient-treatment-list,
+  .patient-alert-list,
+  .patient-subtabs {
     grid-template-columns: 1fr;
   }
 
   .accounting-workspace-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .patient-alert-hero,
+  .patient-alert-detail-hero {
     align-items: flex-start;
     flex-direction: column;
   }

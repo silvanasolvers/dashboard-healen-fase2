@@ -40,6 +40,8 @@ type InventoryMovementKind = 'Entrada' | 'Salida' | 'Venta' | 'Ajuste';
 type MovementScope = 'Empresa' | 'Personal' | 'Retiro socio' | 'Reembolso';
 type MovementKind = 'Ingreso' | 'Gasto';
 type AccountingTab = 'ingresos' | 'egresos' | 'cobrar';
+type PatientSubView = 'pacientes' | 'alertas';
+type PatientAlertTone = 'success' | 'warning' | 'danger';
 
 interface DateFilter {
   from: string;
@@ -75,6 +77,24 @@ interface PatientHistoryItem {
   title: string;
   detail: string;
   tone: 'neutral' | 'success' | 'warning';
+}
+
+interface PatientProductAlert {
+  id: string;
+  patientId: string;
+  patientName: string;
+  plan: string;
+  product: string;
+  dose: string;
+  daysLeft: number;
+  inventoryStock: number | null;
+  inventoryUnit: string;
+  inventoryMinimum: number | null;
+  state: 'Verde' | 'Naranja' | 'Rojo';
+  tone: PatientAlertTone;
+  statusText: string;
+  nextAction: string;
+  history: PatientHistoryItem[];
 }
 
 interface InventoryItem {
@@ -409,6 +429,106 @@ function isReceivable(movement: FinanceMovement) {
       movement.status === 'Vencido' ||
       movement.paymentMethod === 'Pendiente' ||
       movement.category.toLowerCase().includes('cobrar'))
+  );
+}
+
+function normalizeKey(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function alertToneLabel(tone: PatientAlertTone) {
+  if (tone === 'danger') return 'Rojo';
+  if (tone === 'warning') return 'Naranja';
+  return 'Verde';
+}
+
+function buildPatientProductAlerts(patients: Patient[], inventory: InventoryItem[]): PatientProductAlert[] {
+  const inventoryByProduct = inventory.reduce<Record<string, InventoryItem>>((acc, item) => {
+    acc[normalizeKey(item.product)] = item;
+    return acc;
+  }, {});
+
+  return patients.flatMap((patient) =>
+    patient.peptides.map((peptide) => {
+      const inventoryItem = inventoryByProduct[normalizeKey(peptide.name)];
+      const stock = inventoryItem?.stock ?? null;
+      const minimum = inventoryItem?.minimum ?? null;
+      const hasCriticalStock = stock !== null && stock <= 0;
+      const hasLowStock = stock !== null && minimum !== null && stock <= minimum;
+      const tone: PatientAlertTone =
+        peptide.endsInDays <= 2 || hasCriticalStock
+          ? 'danger'
+          : peptide.endsInDays <= 5 || hasLowStock
+            ? 'warning'
+            : 'success';
+      const state = alertToneLabel(tone);
+      const statusText =
+        tone === 'danger'
+          ? 'Reposicion inmediata'
+          : peptide.endsInDays <= 5
+            ? 'Alerta 5 dias'
+            : hasLowStock
+              ? 'Bajo stock'
+              : tone === 'warning'
+                ? 'Revision preventiva'
+            : 'Tratamiento estable';
+      const nextAction =
+        tone === 'danger'
+          ? 'Separar producto hoy, contactar al paciente y confirmar continuidad.'
+          : peptide.endsInDays <= 5
+            ? 'Revisar inventario, avisar al paciente y programar recompra antes del cierre.'
+            : hasLowStock
+              ? 'Reponer o separar stock antes de la siguiente entrega del paciente.'
+            : 'Mantener seguimiento normal y volver a revisar en la proxima actualizacion.';
+      const stockCopy =
+        stock === null
+          ? 'Producto sin inventario asociado.'
+          : `Inventario actual: ${stock} ${inventoryItem?.unit ?? 'unidades'}; minimo sugerido: ${minimum}.`;
+
+      return {
+        id: `${patient.id}-${normalizeKey(peptide.name)}`,
+        patientId: patient.id,
+        patientName: patient.name,
+        plan: patient.plan,
+        product: peptide.name,
+        dose: peptide.dose,
+        daysLeft: peptide.endsInDays,
+        inventoryStock: stock,
+        inventoryUnit: inventoryItem?.unit ?? 'unidades',
+        inventoryMinimum: minimum,
+        state,
+        tone,
+        statusText,
+        nextAction,
+        history: [
+          {
+            date: patient.startDate,
+            title: 'Producto asignado',
+            detail: `${peptide.name} quedo asociado al tratamiento ${patient.plan}.`,
+            tone: 'success',
+          },
+          {
+            date: peptide.endsInDays <= 5 ? 'Hoy' : patient.endDate,
+            title: peptide.endsInDays <= 5 ? 'Alerta previa al cierre' : 'Seguimiento programado',
+            detail:
+              peptide.endsInDays <= 5
+                ? `Quedan ${peptide.endsInDays} dias de producto. Debe revisarse antes de que se acabe.`
+                : `Quedan ${peptide.endsInDays} dias; todavia no requiere alerta critica.`,
+            tone: peptide.endsInDays <= 5 ? 'warning' : 'neutral',
+          },
+          {
+            date: 'Inventario',
+            title: state,
+            detail: `${statusText}. ${stockCopy}`,
+            tone: tone === 'success' ? 'success' : 'warning',
+          },
+        ],
+      };
+    }),
   );
 }
 
@@ -790,6 +910,7 @@ export function App() {
         {view === 'pacientes' && (
           <PatientsView
             patients={filteredPatients}
+            inventory={inventory}
             patientSearch={patientSearch}
             setPatientSearch={setPatientSearch}
             patientFilter={patientFilter}
@@ -1099,6 +1220,7 @@ function CollapsiblePeriodFilter({
 
 function PatientsView({
   patients,
+  inventory,
   patientSearch,
   setPatientSearch,
   patientFilter,
@@ -1106,6 +1228,7 @@ function PatientsView({
   addPatient,
 }: {
   patients: Patient[];
+  inventory: InventoryItem[];
   patientSearch: string;
   setPatientSearch: (value: string) => void;
   patientFilter: DateFilter;
@@ -1113,6 +1236,12 @@ function PatientsView({
   addPatient: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [selectedAlert, setSelectedAlert] = useState<PatientProductAlert | null>(null);
+  const [activeSubView, setActiveSubView] = useState<PatientSubView>('pacientes');
+  const patientAlerts = buildPatientProductAlerts(patients, inventory);
+  const orangeAlerts = patientAlerts.filter((alert) => alert.tone === 'warning').length;
+  const redAlerts = patientAlerts.filter((alert) => alert.tone === 'danger').length;
+  const greenAlerts = patientAlerts.filter((alert) => alert.tone === 'success').length;
 
   return (
     <div className="content-stack">
@@ -1128,99 +1257,219 @@ function PatientsView({
       />
       <PeriodFilter filter={patientFilter} onChange={setPatientFilter} label="Filtrar por inicio o finalizacion" />
 
-      <section className="split-layout">
-        <article className="panel">
-          <SectionHeader eyebrow="Nuevo" title="Paciente" />
-          <form className="form-grid" onSubmit={addPatient}>
-            <label>
-              Nombre
-              <input name="name" placeholder="Paciente" />
-            </label>
-            <label>
-              Plan
-              <input name="plan" placeholder="Plan de peptidos" />
-            </label>
-            <label>
-              Valor venta
-              <input name="saleValue" type="number" placeholder="0" />
-            </label>
-            <label>
-              Peptido
-              <input name="peptide" placeholder="NAD+, BPC..." />
-            </label>
-            <label>
-              Dosis
-              <input name="dose" placeholder="Dosis" />
-            </label>
-            <label>
-              Dias restantes
-              <input name="daysLeft" type="number" placeholder="30" />
-            </label>
-            <label>
-              Fecha inicio
-              <input name="startDate" type="date" />
-            </label>
-            <label>
-              Fecha final
-              <input name="endDate" type="date" />
-            </label>
-            <label>
-              Dia suero
-              <input name="serumDay" placeholder="Lunes" />
-            </label>
-            <label className="check-row">
-              <input name="weeklySerum" type="checkbox" />
-              Suero semanal
-            </label>
-            <button className="primary-action full" type="submit">
-              <Plus size={18} />
-              Agregar paciente
-            </button>
-          </form>
-        </article>
+      <div className="patient-subtabs" role="tablist" aria-label="Subventanas de pacientes">
+        <button
+          className={activeSubView === 'pacientes' ? 'active' : ''}
+          onClick={() => setActiveSubView('pacientes')}
+          type="button"
+          role="tab"
+          aria-selected={activeSubView === 'pacientes'}
+        >
+          <UserRound size={16} />
+          Pacientes
+          <span>{patients.length} historiales</span>
+        </button>
+        <button
+          className={activeSubView === 'alertas' ? 'active' : ''}
+          onClick={() => setActiveSubView('alertas')}
+          type="button"
+          role="tab"
+          aria-selected={activeSubView === 'alertas'}
+        >
+          <AlertTriangle size={16} />
+          Alertas
+          <span>{redAlerts} rojas · {orangeAlerts} naranjas</span>
+        </button>
+      </div>
 
-        <article className="panel span-2">
-          <SectionHeader eyebrow="Activos" title={`${patients.length} pacientes en vista`} />
-          <div className="patient-list">
-            {patients.map((patient) => (
-              <button className="patient-row" key={patient.id} onClick={() => setSelectedPatient(patient)} type="button">
-                <div className="patient-main">
-                  <div className="avatar">{patient.name.slice(-1)}</div>
-                  <div>
-                    <strong>{patient.name}</strong>
-                    <span>
-                      {patient.id} · {patient.plan}
+      {activeSubView === 'pacientes' && (
+        <section className="split-layout">
+          <article className="panel">
+            <SectionHeader eyebrow="Nuevo" title="Paciente" />
+            <form className="form-grid" onSubmit={addPatient}>
+              <label>
+                Nombre
+                <input name="name" placeholder="Paciente" />
+              </label>
+              <label>
+                Plan
+                <input name="plan" placeholder="Plan de peptidos" />
+              </label>
+              <label>
+                Valor venta
+                <input name="saleValue" type="number" placeholder="0" />
+              </label>
+              <label>
+                Peptido
+                <input name="peptide" placeholder="NAD+, BPC..." />
+              </label>
+              <label>
+                Dosis
+                <input name="dose" placeholder="Dosis" />
+              </label>
+              <label>
+                Dias restantes
+                <input name="daysLeft" type="number" placeholder="30" />
+              </label>
+              <label>
+                Fecha inicio
+                <input name="startDate" type="date" />
+              </label>
+              <label>
+                Fecha final
+                <input name="endDate" type="date" />
+              </label>
+              <label>
+                Dia suero
+                <input name="serumDay" placeholder="Lunes" />
+              </label>
+              <label className="check-row">
+                <input name="weeklySerum" type="checkbox" />
+                Suero semanal
+              </label>
+              <button className="primary-action full" type="submit">
+                <Plus size={18} />
+                Agregar paciente
+              </button>
+            </form>
+          </article>
+
+          <article className="panel span-2">
+            <SectionHeader eyebrow="Activos" title={`${patients.length} pacientes en vista`} />
+            <div className="patient-list">
+              {patients.map((patient) => (
+                <button className="patient-row" key={patient.id} onClick={() => setSelectedPatient(patient)} type="button">
+                  <div className="patient-main">
+                    <div className="avatar">{patient.name.slice(-1)}</div>
+                    <div>
+                      <strong>{patient.name}</strong>
+                      <span>
+                        {patient.id} · {patient.plan}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="patient-meta">
+                    <Badge label={patient.tier} tone={patient.tier === 'VIP' ? 'success' : 'neutral'} />
+                    <Badge label={patient.status} tone={statusClass(patient.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
+                    <span>{formatCurrency(patient.saleValue)}</span>
+                    <span>{patient.daysLeft} dias</span>
+                    <span>{patient.weeklySerum ? `Suero ${patient.serumDay}` : 'Sin suero'}</span>
+                    <span className="patient-history-chip">
+                      <Eye size={14} />
+                      Ver historial
                     </span>
                   </div>
-                </div>
-                <div className="patient-meta">
-                  <Badge label={patient.tier} tone={patient.tier === 'VIP' ? 'success' : 'neutral'} />
-                  <Badge label={patient.status} tone={statusClass(patient.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
-                  <span>{formatCurrency(patient.saleValue)}</span>
-                  <span>{patient.daysLeft} dias</span>
-                  <span>{patient.weeklySerum ? `Suero ${patient.serumDay}` : 'Sin suero'}</span>
-                  <span className="patient-history-chip">
-                    <Eye size={14} />
-                    Ver historial
-                  </span>
-                </div>
-                <div className="peptide-list">
-                  {patient.peptides.map((peptide) => (
-                    <span key={`${patient.id}-${peptide.name}`}>
-                      {peptide.name} · {peptide.dose} · {peptide.endsInDays} dias
-                    </span>
-                  ))}
-                </div>
-              </button>
-            ))}
-          </div>
-        </article>
-      </section>
+                  <div className="peptide-list">
+                    {patient.peptides.map((peptide) => (
+                      <span key={`${patient.id}-${peptide.name}`}>
+                        {peptide.name} · {peptide.dose} · {peptide.endsInDays} dias
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </article>
+        </section>
+      )}
+
+      {activeSubView === 'alertas' && (
+        <PatientAlertsPanel
+          alerts={patientAlerts}
+          greenAlerts={greenAlerts}
+          orangeAlerts={orangeAlerts}
+          redAlerts={redAlerts}
+          onSelectAlert={setSelectedAlert}
+        />
+      )}
 
       {selectedPatient && (
         <PatientHistoryModal patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
       )}
+      {selectedAlert && <PatientAlertModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}
     </div>
+  );
+}
+
+function PatientAlertsPanel({
+  alerts,
+  greenAlerts,
+  orangeAlerts,
+  redAlerts,
+  onSelectAlert,
+}: {
+  alerts: PatientProductAlert[];
+  greenAlerts: number;
+  orangeAlerts: number;
+  redAlerts: number;
+  onSelectAlert: (alert: PatientProductAlert) => void;
+}) {
+  const sortedAlerts = [...alerts].sort((a, b) => {
+    const priority = { danger: 0, warning: 1, success: 2 };
+    return priority[a.tone] - priority[b.tone] || a.daysLeft - b.daysLeft;
+  });
+
+  return (
+    <section className="patient-alert-workspace">
+      <div className="patient-alert-hero">
+        <div>
+          <span>Alertas de productos</span>
+          <h3>Seguimiento 5 dias antes de que se acabe cada producto.</h3>
+          <p>Estados por paciente y peptido para anticipar reposicion, recompra o continuidad del tratamiento.</p>
+        </div>
+        <Badge label={`${alerts.length} alertas activas`} tone={redAlerts > 0 ? 'danger' : orangeAlerts > 0 ? 'warning' : 'success'} />
+      </div>
+
+      <div className="stats-grid patient-alert-stats">
+        <StatCard label="Verde" value={String(greenAlerts)} helper="Tratamientos estables" icon={Check} tone="success" />
+        <StatCard label="Naranja" value={String(orangeAlerts)} helper="5 dias o bajo stock" icon={CalendarClock} tone="warning" />
+        <StatCard label="Rojo" value={String(redAlerts)} helper="Critico o agotado" icon={AlertTriangle} tone="danger" />
+        <StatCard label="Productos" value={String(alerts.length)} helper="Pacientes con seguimiento" icon={PackageCheck} tone="neutral" />
+      </div>
+
+      <article className="panel">
+        <SectionHeader eyebrow="Historico" title="Alertas por paciente y producto" />
+        <div className="patient-alert-list">
+          {sortedAlerts.map((alert) => (
+            <button
+              className={`patient-alert-card ${alert.tone}`}
+              key={alert.id}
+              onClick={() => onSelectAlert(alert)}
+              type="button"
+            >
+              <div className="patient-alert-card-head">
+                <div>
+                  <strong>{alert.patientName}</strong>
+                  <span>{alert.patientId} · {alert.plan}</span>
+                </div>
+                <Badge label={alert.state} tone={alert.tone} />
+              </div>
+              <div className="patient-alert-product">
+                <Dna size={18} />
+                <div>
+                  <strong>{alert.product}</strong>
+                  <span>{alert.dose}</span>
+                </div>
+              </div>
+              <div className="patient-alert-metrics">
+                <span>{alert.daysLeft} dias restantes</span>
+                <span>
+                  {alert.inventoryStock === null
+                    ? 'Sin inventario vinculado'
+                    : `${alert.inventoryStock} ${alert.inventoryUnit} en stock`}
+                </span>
+                <span>{alert.statusText}</span>
+              </div>
+              <p>{alert.nextAction}</p>
+              <div className="patient-alert-history-preview">
+                <ClipboardList size={15} />
+                Ver historico de alerta
+              </div>
+            </button>
+          ))}
+        </div>
+      </article>
+    </section>
   );
 }
 
@@ -1343,6 +1592,75 @@ function PatientHistoryModal({ patient, onClose }: { patient: Patient; onClose: 
         <section className="patient-next-steps">
           <strong>Proximos pasos</strong>
           <span>{patient.daysLeft <= 10 ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.' : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}</span>
+        </section>
+      </article>
+    </div>
+  );
+}
+
+function PatientAlertModal({ alert, onClose }: { alert: PatientProductAlert; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Alerta de ${alert.patientName}`}>
+      <article className="patient-history-modal patient-alert-modal">
+        <header className="support-modal-header">
+          <div>
+            <span>Historico de alerta</span>
+            <h3>{alert.patientName}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar alerta">
+            <X size={18} />
+          </button>
+        </header>
+
+        <section className={`patient-alert-detail-hero ${alert.tone}`}>
+          <div>
+            <span>{alert.patientId} · {alert.plan}</span>
+            <strong>{alert.product}</strong>
+            <p>{alert.dose}</p>
+          </div>
+          <Badge label={alert.state} tone={alert.tone} />
+        </section>
+
+        <section className="patient-history-grid">
+          <article>
+            <span>Dias restantes</span>
+            <strong>{alert.daysLeft}</strong>
+          </article>
+          <article>
+            <span>Estado</span>
+            <strong>{alert.statusText}</strong>
+          </article>
+          <article>
+            <span>Stock</span>
+            <strong>{alert.inventoryStock === null ? '-' : alert.inventoryStock}</strong>
+          </article>
+          <article>
+            <span>Minimo</span>
+            <strong>{alert.inventoryMinimum === null ? '-' : alert.inventoryMinimum}</strong>
+          </article>
+        </section>
+
+        <section className="patient-history-section">
+          <div className="detail-card-title">
+            <ClipboardList size={18} />
+            <strong>Historico</strong>
+          </div>
+          <div className="patient-timeline">
+            {alert.history.map((item) => (
+              <article className={`patient-timeline-item ${item.tone}`} key={`${alert.id}-${item.date}-${item.title}`}>
+                <span>{item.date}</span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.detail}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="patient-next-steps">
+          <strong>Accion sugerida</strong>
+          <span>{alert.nextAction}</span>
         </section>
       </article>
     </div>
