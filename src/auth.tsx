@@ -42,11 +42,7 @@ export function Login() {
     <div className="login">
       <div className="login__panel">
         <span className="brandmark login__mark">
-          <svg width="22" height="22" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.8" />
-            <circle cx="10" cy="10" r="2.6" fill="currentColor" />
-            <circle cx="14.5" cy="6.5" r="1.3" fill="currentColor" opacity="0.8" />
-          </svg>
+          <img src="/healen-logo.png" alt="Healen" />
         </span>
         <div className="login__lead">
           <span className="eyebrow">Healen OS</span>

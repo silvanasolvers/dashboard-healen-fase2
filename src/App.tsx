@@ -1,4 +1,13 @@
-import { ElementType, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  ElementType,
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import gsap from 'gsap';
 import {
   Activity,
@@ -100,6 +109,52 @@ const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
 /* ============================================================
    Animación: revelado de vista + utilidades
    ============================================================ */
+/** Reveal por scroll (estilo Apple): cada [data-reveal] aparece al entrar al
+ *  viewport. Visible por defecto si no hay JS / reduced-motion. */
+function useScrollReveal(dep: unknown) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const items = Array.from(root.querySelectorAll<HTMLElement>('[data-reveal]'));
+    if (!items.length) return;
+    if (REDUCED) {
+      items.forEach((el) => el.classList.add('in'));
+      return;
+    }
+    document.documentElement.classList.add('js-scroll');
+    // Basado en scroll + rAF (no IntersectionObserver, que no dispara para
+    // elementos ya visibles en renderers headless y dejaría todo oculto).
+    function check() {
+      const vh = window.innerHeight;
+      let pending = false;
+      for (const el of items) {
+        if (el.classList.contains('in')) continue;
+        if (el.getBoundingClientRect().top < vh * 0.9) el.classList.add('in');
+        else pending = true;
+      }
+      return pending;
+    }
+    // setTimeout (no rAF: se throttlea en headless) para el revelado inicial
+    // con transición; el scroll revela lo de abajo del fold.
+    const t = window.setTimeout(check, 60);
+    function onScroll() {
+      if (!check()) cleanup();
+    }
+    function cleanup() {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.clearTimeout(t);
+      cleanup();
+    };
+  }, [dep]);
+  return ref;
+}
+
 /** true tras el primer frame — para animar anchos de barras/gauges desde 0. */
 function useGrow() {
   const [grown, setGrown] = useState(REDUCED);
@@ -245,6 +300,22 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [loadError, setLoadError] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(null);
   const [prescribe, setPrescribe] = useState<Patient | null>(null);
+  const [rail, setRail] = useState<boolean>(
+    () => typeof localStorage !== 'undefined' && localStorage.getItem('healen_rail') === '1',
+  );
+
+  // El ☰ contrae/expande el rail en desktop; abre el drawer en móvil.
+  function toggleMenu() {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 960px)').matches) {
+      setDrawer(true);
+    } else {
+      setRail((c) => {
+        const next = !c;
+        if (typeof localStorage !== 'undefined') localStorage.setItem('healen_rail', next ? '1' : '0');
+        return next;
+      });
+    }
+  }
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -364,6 +435,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   }
 
   const lead = VIEW_LEAD[view];
+  // dep incluye loading: la .view solo existe tras cargar, y key={view} la remonta.
+  const scrollRef = useScrollReveal(loading ? '__loading' : view);
 
   if (loading) return <Loader />;
   if (loadError) return <ErrorScreen onRetry={retry} onSignOut={onSignOut} />;
@@ -372,12 +445,13 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
     <>
       <canvas ref={auroraRef} className="aurora" />
       <div className="aurora-veil" />
-      <div className="app">
+      <div className={`app${rail ? ' is-rail' : ''}`}>
         {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
         <Sidebar
           view={view}
           go={go}
           open={drawer}
+          rail={rail}
           counts={{ pacientes: patients.length, alertas: lowStock }}
           userLabel={userLabel}
           onSignOut={onSignOut}
@@ -385,7 +459,11 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
 
         <main className="main">
           <header className="topbar">
-            <button className="btn btn--icon menu-btn" onClick={() => setDrawer(true)} aria-label="Abrir menú">
+            <button
+              className="btn btn--icon menu-btn"
+              onClick={toggleMenu}
+              aria-label={rail ? 'Expandir menú' : 'Contraer menú'}
+            >
               <Menu size={20} />
             </button>
             <div className="topbar__lead">
@@ -401,7 +479,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
             </div>
           </header>
 
-          <div className="view" key={view}>
+          <div className="view" key={view} ref={scrollRef}>
             {view === 'inicio' && (
               <InicioView
                 patients={patients}
@@ -494,6 +572,7 @@ function Sidebar({
   view,
   go,
   open,
+  rail,
   counts,
   userLabel,
   onSignOut,
@@ -501,6 +580,7 @@ function Sidebar({
   view: View;
   go: (v: View) => void;
   open: boolean;
+  rail: boolean;
   counts: { pacientes: number; alertas: number };
   userLabel: string;
   onSignOut: () => void;
@@ -509,7 +589,7 @@ function Sidebar({
     <aside className={`sidebar${open ? ' is-open' : ''}`}>
       <div className="brand">
         <span className="brandmark">
-          <CellMark />
+          <img src="/healen-logo.png" alt="Healen" />
         </span>
         <span className="brand__name">
           <strong>HEALEN</strong>
@@ -522,9 +602,10 @@ function Sidebar({
             key={item.id}
             className={`nav__item${view === item.id ? ' is-active' : ''}`}
             onClick={() => go(item.id)}
+            title={rail ? item.label : undefined}
           >
             <item.icon size={19} />
-            {item.label}
+            <span className="nav__label">{item.label}</span>
             {item.id === 'pacientes' && <span className="nav__count">{counts.pacientes}</span>}
             {item.id === 'inventario' && counts.alertas > 0 && (
               <span className="nav__count">{counts.alertas}</span>
@@ -586,7 +667,7 @@ function Loader() {
       <div className="loader__mark">
         <span className="loader__ring" />
         <span className="loader__ring loader__ring--2" />
-        <span className="loader__core" />
+        <img className="loader__core" src="/healen-logo.png" alt="Healen" />
       </div>
       <div className="loader__copy">
         <strong>HEALEN</strong>
@@ -930,8 +1011,8 @@ function PacientesView({
                     )}
                   </div>
                   <div className="peptide-chips">
-                    {p.peptides.map((pep) => (
-                      <span key={pep.name} className="peptide">
+                    {p.peptides.map((pep, i) => (
+                      <span key={`${pep.name}-${i}`} className="peptide">
                         <span className={`dot dot--${treatmentSignal(pep.endsInDays)}`} />
                         {pep.name} · {pep.endsInDays}d
                       </span>
@@ -1808,8 +1889,8 @@ function PatientSheet({
           <Syringe size={17} /> Tratamiento activo
         </div>
         <div className="treatment-list">
-          {patient.peptides.map((p) => (
-            <article key={p.name}>
+          {patient.peptides.map((p, i) => (
+            <article key={`${p.name}-${i}`}>
               <span className={`dot dot--${treatmentSignal(p.endsInDays)}`} />
               <div>
                 <strong>{p.name}</strong>

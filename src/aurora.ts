@@ -28,10 +28,10 @@ void main() {
   // Lienzo: blanco con tinte violeta muy leve.
   vec3 col = vec3(0.984, 0.976, 0.996);
 
-  // Paleta Healen.
-  vec3 violet = vec3(0.486, 0.298, 0.882);
-  vec3 lilac  = vec3(0.733, 0.604, 0.969);
-  vec3 mint   = vec3(0.612, 0.847, 0.745);
+  // Paleta Healen (púrpura magenta del logo #7A1F9B).
+  vec3 violet = vec3(0.560, 0.230, 0.680);
+  vec3 lilac  = vec3(0.800, 0.610, 0.860);
+  vec3 mint   = vec3(0.640, 0.840, 0.760);
 
   // Tres blooms que derivan en órbitas lentas y desfasadas.
   vec2 c1 = vec2(ar * (0.30 + 0.06 * sin(t * 0.13)), 0.28 + 0.05 * cos(t * 0.11));
