@@ -14,7 +14,9 @@ import type {
   PatientDossier,
   PatientSummary,
   Payee,
+  ProductPayload,
   RevenuePoint,
+  StockMovePayload,
   TimelineEvent,
 } from './data';
 
@@ -242,27 +244,27 @@ export function createPatient(f: FormData) {
   });
 }
 
-export function upsertProduct(f: FormData) {
+export function upsertProduct(p: ProductPayload) {
   return rpc('dash_upsert_product', {
-    p_name: String(f.get('product') || ''),
-    p_type: String(f.get('type') || 'peptido'),
-    p_stock: Number(f.get('stock')) || 0,
-    p_minimum: Number(f.get('minimum')) || 0,
-    p_unit: String(f.get('unit') || 'unidades'),
-    p_lot: String(f.get('lot') || ''),
-    p_expiration: String(f.get('expiration') || '') || null,
-    p_supplier: String(f.get('supplier') || ''),
-    p_unit_cost: Number(f.get('unitCost')) || 0,
+    p_name: p.product,
+    p_type: p.type || 'peptido',
+    p_stock: p.stock || 0,
+    p_minimum: p.minimum || 0,
+    p_unit: p.unit || 'unidades',
+    p_lot: p.lot || '',
+    p_expiration: p.expiration || null,
+    p_supplier: p.supplier || '',
+    p_unit_cost: p.unitCost || 0,
   });
 }
 
-export function inventoryMovement(f: FormData) {
+export function inventoryMovement(p: StockMovePayload) {
   return rpc('dash_inventory_movement', {
-    p_product: String(f.get('itemId') || ''),
-    p_kind: String(f.get('kind') || 'Salida'),
-    p_quantity: Number(f.get('quantity')) || 0,
-    p_reason: String(f.get('reason') || ''),
-    p_date: String(f.get('date') || '') || new Date().toISOString().slice(0, 10),
+    p_product: p.productId,
+    p_kind: p.kind || 'Salida',
+    p_quantity: p.quantity || 0,
+    p_reason: p.reason || '',
+    p_date: p.date || new Date().toISOString().slice(0, 10),
   });
 }
 

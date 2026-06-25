@@ -90,6 +90,7 @@ import {
   patientSignalCounts,
   PatientSummary,
   Payee,
+  ProductPayload,
   RANGE_PRESETS,
   rangeForPreset,
   rangeLabel,
@@ -99,6 +100,8 @@ import {
   signalLabel,
   statusTone,
   stockSignal,
+  STOCK_REASONS,
+  StockMovePayload,
   Tone,
   treatmentSignal,
   verdictPhrase,
@@ -125,6 +128,7 @@ import {
   upsertProduct,
 } from './api';
 import { downloadCsv, downloadPdf } from './lib/export';
+import { DatePicker } from './components/DatePicker';
 import { Login, useSession } from './auth';
 
 const ROUTES = ['subcutanea', 'intramuscular', 'intravenosa', 'oral', 'sublingual', 'topica', 'nasal'];
@@ -483,16 +487,34 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
     runMutation(() => createPatient(new FormData(form)), form, 'Paciente registrado');
   }
 
-  function addInventory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    runMutation(() => upsertProduct(new FormData(form)), form, 'Producto agregado');
+  async function addInventory(p: ProductPayload): Promise<boolean> {
+    setSaving(true);
+    try {
+      await upsertProduct(p);
+      await reload();
+      notify('Producto guardado');
+      return true;
+    } catch (e) {
+      notify((e as Error).message || 'No se pudo guardar el producto.', true);
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function registerInventoryMovement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    runMutation(() => inventoryMovement(new FormData(form)), form, 'Movimiento registrado');
+  async function registerInventoryMovement(p: StockMovePayload): Promise<boolean> {
+    setSaving(true);
+    try {
+      await inventoryMovement(p);
+      await reload();
+      notify('Movimiento registrado');
+      return true;
+    } catch (e) {
+      notify((e as Error).message || 'No se pudo registrar el movimiento.', true);
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function addMovement(payload: MovementPayload): Promise<boolean> {
@@ -1197,11 +1219,14 @@ function InventarioView({
   inventory: InventoryItem[];
   allInventory: InventoryItem[];
   movements: MovementRow[];
-  addInventory: (e: FormEvent<HTMLFormElement>) => void;
-  registerMovement: (e: FormEvent<HTMLFormElement>) => void;
+  addInventory: (p: ProductPayload) => Promise<boolean>;
+  registerMovement: (p: StockMovePayload) => Promise<boolean>;
 }) {
-  const [formOpen, setFormOpen] = useState<null | 'producto' | 'movimiento'>(null);
+  const [productOpen, setProductOpen] = useState(false);
+  const [move, setMove] = useState<{ item: InventoryItem | null; kind: 'Entrada' | 'Salida' } | null>(null);
   const grown = useGrow();
+  const reveal = useScrollReveal(`${productOpen}`);
+
   const units = inventory.reduce((t, i) => t + i.stock, 0);
   const low = inventory.filter((i) => i.stock <= i.minimum).length;
   const value = inventory.reduce((t, i) => t + i.stock * i.unitCost, 0);
@@ -1214,7 +1239,7 @@ function InventarioView({
   }, {});
 
   return (
-    <>
+    <div className="view-wrap" ref={reveal}>
       <section className="kpi-grid" data-reveal>
         <SignalKpi icon={Package} tone="ok" label="Unidades" value={units} hint="Stock total" />
         <SignalKpi icon={AlertTriangle} tone="warn" label="Bajo mínimo" value={low} hint="A reponer" />
@@ -1223,107 +1248,15 @@ function InventarioView({
       </section>
 
       <div className="toolbar" data-reveal>
-        <button className="btn btn--soft" onClick={() => setFormOpen(formOpen === 'producto' ? null : 'producto')}>
-          <Plus size={17} /> Nuevo producto
+        <button className="btn btn--soft" onClick={() => setProductOpen((o) => !o)}>
+          <Plus size={17} /> {productOpen ? 'Cerrar' : 'Nuevo producto'}
         </button>
-        <button className="btn btn--soft" onClick={() => setFormOpen(formOpen === 'movimiento' ? null : 'movimiento')}>
+        <button className="btn btn--soft" onClick={() => setMove({ item: null, kind: 'Salida' })}>
           <RefreshCw size={17} /> Registrar movimiento
         </button>
       </div>
 
-      {formOpen === 'producto' && (
-        <article className="panel" data-reveal>
-          <div className="panel__head">
-            <div>
-              <span className="eyebrow">Nuevo</span>
-              <h2>Producto</h2>
-            </div>
-          </div>
-          <form className="form" onSubmit={addInventory}>
-            <Field label="Producto">
-              <input name="product" placeholder="Nombre" required />
-            </Field>
-            <Field label="Tipo">
-              <select name="type">
-                <option>Peptido</option>
-                <option>Suero</option>
-                <option>Insumo medico</option>
-                <option>Suplemento</option>
-              </select>
-            </Field>
-            <Field label="Stock actual">
-              <input name="stock" type="number" placeholder="0" />
-            </Field>
-            <Field label="Stock mínimo">
-              <input name="minimum" type="number" placeholder="0" />
-            </Field>
-            <Field label="Unidad">
-              <input name="unit" placeholder="viales, kits…" />
-            </Field>
-            <Field label="Lote">
-              <input name="lot" placeholder="Lote" />
-            </Field>
-            <Field label="Vencimiento">
-              <input name="expiration" type="date" />
-            </Field>
-            <Field label="Proveedor">
-              <input name="supplier" placeholder="Proveedor" />
-            </Field>
-            <Field label="Costo unitario" full>
-              <input name="unitCost" type="number" placeholder="0" />
-            </Field>
-            <button className="btn btn--primary field--full" type="submit">
-              <Plus size={18} /> Agregar producto
-            </button>
-          </form>
-        </article>
-      )}
-
-      {formOpen === 'movimiento' && (
-        <article className="panel" data-reveal>
-          <div className="panel__head">
-            <div>
-              <span className="eyebrow">Actualizar</span>
-              <h2>Movimiento de stock</h2>
-            </div>
-          </div>
-          <form className="form" onSubmit={registerMovement}>
-            <Field label="Producto" full>
-              <select name="itemId" required>
-                <option value="">Seleccionar producto</option>
-                {allInventory.map((i) => (
-                  <option key={i.id} value={i.productId}>
-                    {i.product} · quedan {i.stock} {i.unit}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Movimiento">
-              <select name="kind">
-                <option>Salida</option>
-                <option>Venta</option>
-                <option>Entrada</option>
-                <option>Ajuste</option>
-              </select>
-            </Field>
-            <Field label="Cantidad">
-              <input name="quantity" type="number" min="0" step="1" placeholder="Unidades" required />
-            </Field>
-            <Field label="Fecha">
-              <input name="date" type="date" />
-            </Field>
-            <Field label="Responsable">
-              <input name="responsible" placeholder="Quién registra" />
-            </Field>
-            <Field label="Motivo" full>
-              <input name="reason" placeholder="Paciente, venta, ajuste…" />
-            </Field>
-            <button className="btn btn--primary field--full" type="submit">
-              <RefreshCw size={18} /> Actualizar restante
-            </button>
-          </form>
-        </article>
-      )}
+      {productOpen && <ProductForm onSubmit={addInventory} onClose={() => setProductOpen(false)} />}
 
       <section className="grid-2">
         <article className="panel" data-reveal>
@@ -1334,6 +1267,7 @@ function InventarioView({
             </div>
           </div>
           <div className="inv-list">
+            {inventory.length === 0 && <p className="muted-line">Sin productos. Agrega el primero con “Nuevo producto”.</p>}
             {inventory.map((item) => {
               const signal = stockSignal(item);
               const pct = grown ? Math.min(100, (item.stock / Math.max(item.minimum * 1.6, 1)) * 100) : 0;
@@ -1341,23 +1275,42 @@ function InventarioView({
               return (
                 <div key={item.id} className="inv-row">
                   <div className="inv-row__id">
-                    <strong>{item.product}</strong>
-                    <span>
-                      {item.type} · {formatCurrency(item.unitCost)}
-                    </span>
+                    <span className={`dot dot--${signal}`} />
+                    <div>
+                      <strong>{item.product}</strong>
+                      <span>
+                        {item.type} · {formatCurrency(item.unitCost)} ·{' '}
+                        {item.expiration ? `vence ${formatDate(item.expiration)}` : 's/v'}
+                      </span>
+                    </div>
                   </div>
                   <div className="inv-row__gauge">
                     <span className="gauge">
                       <span className={`gauge__fill gauge__fill--${signal}`} style={{ width: `${pct}%` }} />
                     </span>
                     <small>
-                      {item.stock} {item.unit} · mín {item.minimum} · vence {item.expiration ? formatDate(item.expiration) : 's/v'}
+                      <strong>{item.stock}</strong> {item.unit} · mín {item.minimum}
+                      {last ? ` · últ. ${last.kind} ${last.quantity}` : ''}
                     </small>
                   </div>
-                  <span className="inv-row__meta">
-                    {last ? `${last.kind} ${last.quantity} → ${last.resultingStock}` : 'Sin movimientos'}
-                  </span>
-                  <Badge label={item.status} tone={statusTone(item.status)} />
+                  <div className="inv-row__actions">
+                    <button
+                      className="inv-qbtn inv-qbtn--in"
+                      onClick={() => setMove({ item, kind: 'Entrada' })}
+                      title="Entrada · llegó inventario"
+                      aria-label="Registrar entrada"
+                    >
+                      <Plus size={16} />
+                    </button>
+                    <button
+                      className="inv-qbtn inv-qbtn--out"
+                      onClick={() => setMove({ item, kind: 'Salida' })}
+                      title="Salida · uso, daño, regalo…"
+                      aria-label="Registrar salida"
+                    >
+                      <Minus size={16} />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -1373,29 +1326,279 @@ function InventarioView({
           </div>
           <div className="movements">
             {movements.length === 0 ? (
-              <p style={{ color: 'var(--muted)' }}>Todavía no hay movimientos.</p>
+              <p className="muted-line">Todavía no hay movimientos.</p>
             ) : (
-              movements.slice(0, 6).map((m) => (
-                <div key={m.id} className="movement">
-                  <span className="movement__kind">
-                    <RefreshCw size={16} />
-                  </span>
-                  <div className="movement__body">
-                    <strong>{m.product}</strong>
-                    <span>
-                      {m.kind} · {formatDate(m.date)} · {m.reason}
+              movements.slice(0, 8).map((m) => {
+                const tone = m.kind === 'Entrada' ? 'in' : 'out';
+                return (
+                  <div key={m.id} className="movement">
+                    <span className={`movement__kind movement__kind--${tone}`}>
+                      {m.kind === 'Entrada' ? <Plus size={15} /> : <Minus size={15} />}
+                    </span>
+                    <div className="movement__body">
+                      <strong>{m.product}</strong>
+                      <span>
+                        {m.kind} · {m.reason || '—'} · {formatDate(m.date)}
+                      </span>
+                    </div>
+                    <span className="movement__delta">
+                      {m.previousStock} <ChevronRight size={14} /> <b>{m.resultingStock}</b>
                     </span>
                   </div>
-                  <span className="movement__delta">
-                    {m.previousStock} <ChevronRight size={14} /> <b>{m.resultingStock}</b>
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </article>
       </section>
-    </>
+
+      {move && (
+        <StockMoveSheet products={allInventory} preset={move} onSubmit={registerMovement} onClose={() => setMove(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ---- Alta de producto (controlado, estilo luxury) ---- */
+function ProductForm({
+  onSubmit,
+  onClose,
+}: {
+  onSubmit: (p: ProductPayload) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [product, setProduct] = useState('');
+  const [type, setType] = useState('Peptido');
+  const [stock, setStock] = useState('');
+  const [minimum, setMinimum] = useState('');
+  const [unit, setUnit] = useState('');
+  const [lot, setLot] = useState('');
+  const [expiration, setExpiration] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [unitCost, setUnitCost] = useState('');
+  const [saving, setSaving] = useState(false);
+  const canSubmit = product.trim() !== '' && !saving;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    const ok = await onSubmit({
+      product: product.trim(),
+      type,
+      stock: Number(stock) || 0,
+      minimum: Number(minimum) || 0,
+      unit: unit.trim() || 'unidades',
+      lot: lot.trim(),
+      expiration: expiration || null,
+      supplier: supplier.trim(),
+      unitCost: Number(unitCost) || 0,
+    });
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <article className="panel mv" data-reveal>
+      <div className="panel__head">
+        <div>
+          <span className="eyebrow">Nuevo</span>
+          <h2>Producto</h2>
+        </div>
+      </div>
+      <form className="mv__form" onSubmit={submit}>
+        <div className="mv__field">
+          <label className="mv__label">Producto</label>
+          <input className="mv__input" value={product} onChange={(e) => setProduct(e.target.value)} placeholder="Nombre del producto" required autoFocus />
+        </div>
+        <div className="mv__field">
+          <label className="mv__label">Tipo</label>
+          <div className="mv__chips">
+            {['Peptido', 'Suero', 'Insumo medico', 'Suplemento'].map((t) => (
+              <button type="button" key={t} className={`mv__chip${type === t ? ' is-active' : ''}`} onClick={() => setType(t)}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mv__row3">
+          <div className="mv__field">
+            <label className="mv__label">Stock</label>
+            <input className="mv__input" type="number" min="0" value={stock} onChange={(e) => setStock(e.target.value)} placeholder="0" />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Mínimo</label>
+            <input className="mv__input" type="number" min="0" value={minimum} onChange={(e) => setMinimum(e.target.value)} placeholder="0" />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Unidad</label>
+            <input className="mv__input" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="viales, kits…" />
+          </div>
+        </div>
+        <div className="mv__row">
+          <div className="mv__field">
+            <label className="mv__label">Costo unitario</label>
+            <input className="mv__input" type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Proveedor</label>
+            <input className="mv__input" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Proveedor" />
+          </div>
+        </div>
+        <div className="mv__row">
+          <div className="mv__field">
+            <label className="mv__label">Lote</label>
+            <input className="mv__input" value={lot} onChange={(e) => setLot(e.target.value)} placeholder="Lote" />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Vencimiento</label>
+            <DatePicker value={expiration} onChange={setExpiration} placeholder="Sin vencimiento" />
+          </div>
+        </div>
+        <div className="mv__actions">
+          <button type="button" className="btn btn--soft" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn btn--primary mv__submit" type="submit" disabled={!canSubmit}>
+            {saving ? <span className="spinner spinner--sm" /> : <Plus size={18} />} Guardar producto
+          </button>
+        </div>
+      </form>
+    </article>
+  );
+}
+
+/* ---- Movimiento rápido de stock (entrada/salida + motivo) ---- */
+function StockMoveSheet({
+  products,
+  preset,
+  onSubmit,
+  onClose,
+}: {
+  products: InventoryItem[];
+  preset: { item: InventoryItem | null; kind: 'Entrada' | 'Salida' };
+  onSubmit: (p: StockMovePayload) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [productId, setProductId] = useState(preset.item?.productId ?? '');
+  const [kind, setKind] = useState<'Entrada' | 'Salida'>(preset.kind);
+  const [qty, setQty] = useState(1);
+  const [reason, setReason] = useState('');
+  const [date, setDate] = useState(todayISO);
+  const [saving, setSaving] = useState(false);
+
+  const item = products.find((p) => p.productId === productId) ?? null;
+  const reasons = STOCK_REASONS[kind];
+  const overOut = kind === 'Salida' && item != null && qty > item.stock;
+  const canSubmit = !!productId && qty > 0 && !overOut && !saving;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function confirm() {
+    if (!canSubmit) return;
+    setSaving(true);
+    const ok = await onSubmit({ productId, kind, quantity: qty, reason: reason || kind, date });
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <div className="scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label="Movimiento de stock">
+      <article className="sheet sheet--quick" onClick={(e) => e.stopPropagation()}>
+        <header className="sheet__head">
+          <div>
+            <span className="eyebrow">Movimiento rápido</span>
+            <h3>{item ? item.product : 'Movimiento de stock'}</h3>
+          </div>
+          <button className="btn btn--icon" onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </header>
+
+        {!preset.item && (
+          <div className="mv__field">
+            <label className="mv__label">Producto</label>
+            <select className="mv__input" value={productId} onChange={(e) => setProductId(e.target.value)}>
+              <option value="">Seleccionar producto…</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.productId}>
+                  {p.product} · {p.stock} {p.unit}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="mv__type">
+          <button
+            type="button"
+            className={`mv__type-btn mv__type-btn--in${kind === 'Entrada' ? ' is-active' : ''}`}
+            onClick={() => {
+              setKind('Entrada');
+              setReason('');
+            }}
+          >
+            <Plus size={16} /> Entrada
+          </button>
+          <button
+            type="button"
+            className={`mv__type-btn mv__type-btn--out${kind === 'Salida' ? ' is-active' : ''}`}
+            onClick={() => {
+              setKind('Salida');
+              setReason('');
+            }}
+          >
+            <Minus size={16} /> Salida
+          </button>
+        </div>
+
+        <div className="qmove__qty">
+          <button type="button" onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="Menos">
+            <Minus size={18} />
+          </button>
+          <input type="number" min="1" value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} />
+          <button type="button" onClick={() => setQty((q) => q + 1)} aria-label="Más">
+            <Plus size={18} />
+          </button>
+          {item && (
+            <span className="qmove__stock">
+              {item.stock} {item.unit} en stock
+            </span>
+          )}
+        </div>
+        {overOut && <p className="qmove__warn">No puedes sacar más de {item?.stock} en stock.</p>}
+
+        <div className="mv__field">
+          <label className="mv__label">Motivo</label>
+          <div className="mv__chips">
+            {reasons.map((r) => (
+              <button type="button" key={r} className={`mv__chip${reason === r ? ' is-active' : ''}`} onClick={() => setReason(r)}>
+                {r}
+              </button>
+            ))}
+            <input
+              className="mv__chip-input"
+              value={reasons.includes(reason) ? '' : reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Otro…"
+            />
+          </div>
+        </div>
+
+        <button
+          className={`btn btn--primary btn--block qmove__cta qmove__cta--${kind === 'Entrada' ? 'in' : 'out'}`}
+          onClick={confirm}
+          disabled={!canSubmit}
+        >
+          {saving ? <span className="spinner spinner--sm" /> : kind === 'Entrada' ? <Plus size={18} /> : <Minus size={18} />}
+          {kind === 'Entrada' ? 'Registrar entrada' : 'Registrar salida'} · {qty}
+        </button>
+      </article>
+    </div>
   );
 }
 
@@ -1456,20 +1659,18 @@ function DateRangeBar({
         ))}
       </div>
       <div className="range-custom">
-        <input
-          type="date"
+        <DatePicker
           value={range.from}
           max={range.to || undefined}
-          onChange={(e) => onChange({ from: e.target.value, to: range.to, preset: 'custom' })}
-          aria-label="Desde"
+          onChange={(v) => onChange({ from: v, to: range.to, preset: 'custom' })}
+          placeholder="Desde"
         />
         <span className="range-sep">→</span>
-        <input
-          type="date"
+        <DatePicker
           value={range.to}
           min={range.from || undefined}
-          onChange={(e) => onChange({ from: range.from, to: e.target.value, preset: 'custom' })}
-          aria-label="Hasta"
+          onChange={(v) => onChange({ from: range.from, to: v, preset: 'custom' })}
+          placeholder="Hasta"
         />
       </div>
       <div className="range-actions">
@@ -1952,7 +2153,7 @@ function MovementForm({
         <div className="mv__row">
           <div className="mv__field">
             <label className="mv__label">Fecha</label>
-            <input className="mv__input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <DatePicker value={date} onChange={setDate} placeholder="Hoy" />
           </div>
           <div className="mv__field">
             <label className="mv__label">Medio de pago</label>

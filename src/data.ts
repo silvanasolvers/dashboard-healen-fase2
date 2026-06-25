@@ -981,3 +981,31 @@ export interface MovementPayload {
   attachmentUrl: string | null;
   note: string | null;
 }
+
+/** Alta/edición de producto de inventario. */
+export interface ProductPayload {
+  product: string;
+  type: string;
+  stock: number;
+  minimum: number;
+  unit: string;
+  lot: string;
+  expiration: string | null;
+  supplier: string;
+  unitCost: number;
+}
+
+/** Movimiento de stock (entrada/salida/ajuste con motivo). */
+export interface StockMovePayload {
+  productId: string;
+  kind: string; // Entrada | Salida | Ajuste
+  quantity: number;
+  reason: string;
+  date: string;
+}
+
+/** Motivos rápidos por tipo de movimiento de stock. */
+export const STOCK_REASONS: Record<'Entrada' | 'Salida', string[]> = {
+  Entrada: ['Llegó pedido', 'Devolución', 'Reposición', 'Ajuste'],
+  Salida: ['Uso paciente', 'Venta', 'Daño', 'Regalo', 'Vencido', 'Ajuste'],
+};
