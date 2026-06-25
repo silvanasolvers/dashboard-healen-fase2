@@ -1,3 +1,5 @@
+import { ElementType, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import gsap from 'gsap';
 import {
   Activity,
   AlertTriangle,
@@ -6,2046 +8,1390 @@ import {
   Camera,
   Check,
   ChevronRight,
-  CircleDollarSign,
   ClipboardList,
   CreditCard,
   Dna,
   Download,
   Eye,
-  FileText,
-  Filter,
   LayoutDashboard,
-  Layers3,
   Link as LinkIcon,
+  LogOut,
   Menu,
-  PackageCheck,
+  Package,
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
   Sparkles,
   Syringe,
   TrendingUp,
-  UserRound,
-  WalletCards,
+  Users,
+  Wallet,
   X,
 } from 'lucide-react';
-import { ElementType, FormEvent, useEffect, useState } from 'react';
+import { startAurora } from './aurora';
+import {
+  AccountingTab,
+  DateFilter,
+  emptyDateFilter,
+  FinanceMovement,
+  buildPatientProductAlerts,
+  formatCompact,
+  formatCurrency,
+  formatDate,
+  InventoryItem,
+  isReceivable,
+  matchesDateFilter,
+  matchesTreatmentFilter,
+  Patient,
+  patientHistory,
+  PatientProductAlert,
+  signalLabel,
+  statusTone,
+  stockSignal,
+  sumBy,
+  Tone,
+  treatmentSignal,
+  View,
+} from './data';
+import {
+  createPatient,
+  fetchAll,
+  financeEntry,
+  inventoryMovement,
+  MovementRow,
+  upsertProduct,
+} from './api';
+import { Login, useSession } from './auth';
 
-type View = 'inicio' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
-type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
-type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
-type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
-type InventoryMovementKind = 'Entrada' | 'Salida' | 'Venta' | 'Ajuste';
-type MovementScope = 'Empresa' | 'Personal' | 'Retiro socio' | 'Reembolso';
-type MovementKind = 'Ingreso' | 'Gasto';
-type AccountingTab = 'ingresos' | 'egresos' | 'cobrar';
-type PatientSubView = 'pacientes' | 'alertas';
-type PatientAlertTone = 'success' | 'warning' | 'danger';
+const REDUCED =
+  typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-interface DateFilter {
-  from: string;
-  to: string;
-  month: string;
-  year: string;
-}
-
-interface PeptideLine {
-  name: string;
-  dose: string;
-  endsInDays: number;
-  status: PatientStatus;
-}
-
-interface Patient {
-  id: string;
-  name: string;
-  plan: string;
-  saleValue: number;
-  tier: PatientTier;
-  startDate: string;
-  endDate: string;
-  daysLeft: number;
-  weeklySerum: boolean;
-  serumDay: string;
-  status: PatientStatus;
-  peptides: PeptideLine[];
-}
-
-interface PatientHistoryItem {
-  date: string;
-  title: string;
-  detail: string;
-  tone: 'neutral' | 'success' | 'warning';
-}
-
-interface PatientProductAlert {
-  id: string;
-  patientId: string;
-  patientName: string;
-  plan: string;
-  product: string;
-  dose: string;
-  daysLeft: number;
-  inventoryStock: number | null;
-  inventoryUnit: string;
-  inventoryMinimum: number | null;
-  state: 'Verde' | 'Naranja' | 'Rojo';
-  tone: PatientAlertTone;
-  statusText: string;
-  nextAction: string;
-  history: PatientHistoryItem[];
-}
-
-interface InventoryItem {
-  id: string;
-  product: string;
-  type: string;
-  stock: number;
-  minimum: number;
-  unit: string;
-  lot: string;
-  expiration: string;
-  supplier: string;
-  unitCost: number;
-  status: InventoryStatus;
-}
-
-interface InventoryMovement {
-  id: string;
-  itemId: string;
-  product: string;
-  kind: InventoryMovementKind;
-  date: string;
-  quantity: number;
-  previousStock: number;
-  resultingStock: number;
-  reason: string;
-  responsible: string;
-}
-
-interface FinanceMovement {
-  id: string;
-  kind: MovementKind;
-  date: string;
-  person: string;
-  concept: string;
-  category: string;
-  value: number;
-  invoiceValue?: number;
-  paidValue?: number;
-  dueDate?: string;
-  paymentMethod: string;
-  costCenter: string;
-  scope: MovementScope;
-  status: 'Recibido' | 'Pendiente' | 'Pagado' | 'Vencido';
-  attachment?: string;
-  attachmentPreview?: string;
-  attachmentUrl?: string;
-  note?: string;
-}
-
-const navItems: Array<{ id: View; label: string; icon: ElementType }> = [
-  { id: 'inicio', label: 'Inicio', icon: LayoutDashboard },
-  { id: 'pacientes', label: 'Pacientes', icon: UserRound },
-  { id: 'inventario', label: 'Inventario', icon: PackageCheck },
-  { id: 'contabilidad', label: 'Contabilidad', icon: WalletCards },
-  { id: 'reportes', label: 'Reportes', icon: BarChart3 },
+const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> = [
+  { id: 'inicio', label: 'Inicio', short: 'Hoy', icon: LayoutDashboard },
+  { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
+  { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
+  { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
+  { id: 'reportes', label: 'Reportes', short: 'Reportes', icon: BarChart3 },
 ];
 
-const initialPatients: Patient[] = [
-  {
-    id: 'HLN-001',
-    name: 'Paciente demo 1',
-    plan: 'Regeneracion celular',
-    saleValue: 7200000,
-    tier: 'VIP',
-    startDate: '2026-06-10',
-    endDate: '2026-07-22',
-    daysLeft: 29,
-    weeklySerum: true,
-    serumDay: 'Miercoles',
-    status: 'Activo',
-    peptides: [
-      { name: 'NAD+', dose: '250 mg semanal', endsInDays: 18, status: 'Activo' },
-      { name: 'BPC-157', dose: '500 mcg diario', endsInDays: 6, status: 'Por finalizar' },
-    ],
-  },
-  {
-    id: 'HLN-002',
-    name: 'Paciente demo 2',
-    plan: 'Anti-inflamatorio',
-    saleValue: 3800000,
-    tier: 'Alto',
-    startDate: '2026-06-03',
-    endDate: '2026-07-01',
-    daysLeft: 8,
-    weeklySerum: false,
-    serumDay: '-',
-    status: 'Por finalizar',
-    peptides: [{ name: 'Thymosin Alpha', dose: '1 vial semanal', endsInDays: 8, status: 'Por finalizar' }],
-  },
-  {
-    id: 'HLN-003',
-    name: 'Paciente demo 3',
-    plan: 'Energia y metabolismo',
-    saleValue: 1900000,
-    tier: 'Medio',
-    startDate: '2026-06-15',
-    endDate: '2026-08-03',
-    daysLeft: 41,
-    weeklySerum: true,
-    serumDay: 'Viernes',
-    status: 'Activo',
-    peptides: [{ name: 'Semaglutida', dose: '0.25 mg semanal', endsInDays: 41, status: 'Activo' }],
-  },
-];
-
-const initialInventory: InventoryItem[] = [
-  {
-    id: 'INV-001',
-    product: 'NAD+',
-    type: 'Peptido',
-    stock: 9,
-    minimum: 12,
-    unit: 'viales',
-    lot: 'NAD-2606',
-    expiration: '2026-08-18',
-    supplier: 'Proveedor demo',
-    unitCost: 180000,
-    status: 'Bajo stock',
-  },
-  {
-    id: 'INV-002',
-    product: 'Suero revitalizante',
-    type: 'Suero',
-    stock: 26,
-    minimum: 10,
-    unit: 'kits',
-    lot: 'SRV-2306',
-    expiration: '2026-11-02',
-    supplier: 'Proveedor demo',
-    unitCost: 92000,
-    status: 'Disponible',
-  },
-  {
-    id: 'INV-003',
-    product: 'BPC-157',
-    type: 'Peptido',
-    stock: 4,
-    minimum: 8,
-    unit: 'viales',
-    lot: 'BPC-1906',
-    expiration: '2026-07-14',
-    supplier: 'Proveedor demo',
-    unitCost: 145000,
-    status: 'Proximo a vencer',
-  },
-];
-
-const initialInventoryMovements: InventoryMovement[] = [
-  {
-    id: 'IMV-001',
-    itemId: 'INV-001',
-    product: 'NAD+',
-    kind: 'Salida',
-    date: '2026-06-22',
-    quantity: 3,
-    previousStock: 12,
-    resultingStock: 9,
-    reason: 'Uso en tratamiento regenerativo',
-    responsible: 'Equipo Healen',
-  },
-  {
-    id: 'IMV-002',
-    itemId: 'INV-002',
-    product: 'Suero revitalizante',
-    kind: 'Venta',
-    date: '2026-06-21',
-    quantity: 2,
-    previousStock: 28,
-    resultingStock: 26,
-    reason: 'Venta de kit semanal',
-    responsible: 'Recepcion',
-  },
-];
-
-const initialFinance: FinanceMovement[] = [
-  {
-    id: 'MOV-001',
-    kind: 'Ingreso',
-    date: '2026-06-20',
-    person: 'Paciente demo 1',
-    concept: 'Plan regenerativo',
-    category: 'Tratamientos',
-    value: 3600000,
-    invoiceValue: 7200000,
-    paidValue: 3600000,
-    paymentMethod: 'Transferencia',
-    costCenter: 'Operacion',
-    scope: 'Empresa',
-    status: 'Recibido',
-  },
-  {
-    id: 'MOV-002',
-    kind: 'Gasto',
-    date: '2026-06-21',
-    person: 'Proveedor demo',
-    concept: 'Compra de insumos',
-    category: 'Inventario',
-    value: 820000,
-    paidValue: 820000,
-    paymentMethod: 'Tarjeta',
-    costCenter: 'Inventario',
-    scope: 'Empresa',
-    status: 'Pagado',
-    attachment: 'soporte-gasto.jpg',
-    attachmentUrl: 'https://drive.google.com/soporte-gasto-demo',
-  },
-  {
-    id: 'MOV-003',
-    kind: 'Gasto',
-    date: '2026-06-22',
-    person: 'Socio',
-    concept: 'Retiro personal',
-    category: 'Personal',
-    value: 450000,
-    paidValue: 450000,
-    paymentMethod: 'Efectivo',
-    costCenter: 'Personal',
-    scope: 'Retiro socio',
-    status: 'Pagado',
-  },
-  {
-    id: 'MOV-004',
-    kind: 'Ingreso',
-    date: '2026-06-03',
-    person: 'Paciente demo 2',
-    concept: 'Plan anti-inflamatorio',
-    category: 'Cuentas por cobrar',
-    value: 1100000,
-    invoiceValue: 3800000,
-    paidValue: 2700000,
-    dueDate: '2026-06-16',
-    paymentMethod: 'Pendiente',
-    costCenter: 'Operacion',
-    scope: 'Empresa',
-    status: 'Vencido',
-    note: 'Saldo de cierre de tratamiento pendiente por recaudo.',
-  },
-  {
-    id: 'MOV-005',
-    kind: 'Ingreso',
-    date: '2026-06-15',
-    person: 'Paciente demo 3',
-    concept: 'Plan energia y metabolismo',
-    category: 'Cuentas por cobrar',
-    value: 1000000,
-    invoiceValue: 1900000,
-    paidValue: 900000,
-    dueDate: '2026-06-28',
-    paymentMethod: 'Pendiente',
-    costCenter: 'Operacion',
-    scope: 'Empresa',
-    status: 'Pendiente',
-    note: 'Pendiente antes de la siguiente entrega de peptidos.',
-  },
-];
-
-const currency = new Intl.NumberFormat('es-CO', {
-  style: 'currency',
-  currency: 'COP',
-  maximumFractionDigits: 0,
-});
-
-function formatCurrency(value: number) {
-  return currency.format(value);
-}
-
-function daysFromDueDate(dueDate?: string) {
-  if (!dueDate) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const due = new Date(`${dueDate}T00:00:00`);
-  const diff = today.getTime() - due.getTime();
-  return Math.ceil(diff / 86400000);
-}
-
-function dueLabel(movement: FinanceMovement) {
-  const days = daysFromDueDate(movement.dueDate);
-  if (days === null) return movement.status === 'Vencido' ? 'Sin fecha limite' : 'Sin fecha';
-  if (days > 0) return `${days} dias en mora`;
-  if (days === 0) return 'Vence hoy';
-  return `Vence en ${Math.abs(days)} dias`;
-}
-
-function inventoryStatus(stock: number, minimum: number, expiration: string): InventoryStatus {
-  if (stock <= 0) return 'Agotado';
-  if (stock <= minimum) return 'Bajo stock';
-  const expirationDate = new Date(`${expiration}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const daysToExpire = Math.ceil((expirationDate.getTime() - today.getTime()) / 86400000);
-  if (daysToExpire <= 30) return 'Proximo a vencer';
-  return 'Disponible';
-}
-
-function classifySale(value: number): PatientTier {
-  if (value >= 6000000) return 'VIP';
-  if (value >= 3500000) return 'Alto';
-  if (value >= 1500000) return 'Medio';
-  return 'Basico';
-}
-
-const emptyDateFilter: DateFilter = {
-  from: '',
-  to: '',
-  month: '',
-  year: '',
+const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
+  inicio: { eyebrow: 'Healen OS', title: 'Hoy en el centro' },
+  pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
+  inventario: { eyebrow: 'Insumos', title: 'Inventario' },
+  contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
+  reportes: { eyebrow: 'Analitica', title: 'Reportes' },
 };
 
-function hasDateFilter(filter: DateFilter) {
-  return Boolean(filter.from || filter.to || filter.month || filter.year);
+/* ============================================================
+   Animación: revelado de vista + utilidades
+   ============================================================ */
+/** true tras el primer frame — para animar anchos de barras/gauges desde 0. */
+function useGrow() {
+  const [grown, setGrown] = useState(REDUCED);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return grown;
 }
 
-function matchesDateFilter(date: string, filter: DateFilter) {
-  if (!hasDateFilter(filter)) return true;
-  if (filter.from && date < filter.from) return false;
-  if (filter.to && date > filter.to) return false;
-  if (filter.month && !date.startsWith(filter.month)) return false;
-  if (filter.year && !date.startsWith(filter.year)) return false;
-  return true;
-}
-
-function matchesTreatmentFilter(patient: Patient, filter: DateFilter) {
-  if (!hasDateFilter(filter)) return true;
-  return matchesDateFilter(patient.startDate, filter) || matchesDateFilter(patient.endDate, filter);
-}
-
-function isReceivable(movement: FinanceMovement) {
+function CountUp({ value, format = formatCompact }: { value: number; format?: (n: number) => string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (REDUCED) {
+      el.textContent = format(value);
+      return;
+    }
+    const obj = { v: 0 };
+    const tw = gsap.to(obj, {
+      v: value,
+      duration: 1,
+      ease: 'power2.out',
+      onUpdate: () => {
+        el.textContent = format(Math.round(obj.v));
+      },
+    });
+    return () => {
+      tw.kill();
+    };
+  }, [value, format]);
   return (
-    movement.kind === 'Ingreso' &&
-    (movement.status === 'Pendiente' ||
-      movement.status === 'Vencido' ||
-      movement.paymentMethod === 'Pendiente' ||
-      movement.category.toLowerCase().includes('cobrar'))
+    <span ref={ref} className="tnum">
+      {format(value)}
+    </span>
   );
 }
 
-function normalizeKey(value: string) {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-}
+/* ============================================================
+   Anillo de tratamiento — el semáforo (elemento de firma)
+   ============================================================ */
+function TreatmentRing({
+  daysLeft,
+  totalDays = 30,
+  size = 64,
+  stroke = 6,
+  showUnit = true,
+}: {
+  daysLeft: number;
+  totalDays?: number;
+  size?: number;
+  stroke?: number;
+  showUnit?: boolean;
+}) {
+  const signal = treatmentSignal(daysLeft);
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const frac = Math.max(0.02, Math.min(1, daysLeft / Math.max(totalDays, 1)));
+  const offset = circ * (1 - frac);
+  const barRef = useRef<SVGCircleElement>(null);
 
-function alertToneLabel(tone: PatientAlertTone) {
-  if (tone === 'danger') return 'Rojo';
-  if (tone === 'warning') return 'Naranja';
-  return 'Verde';
-}
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    if (REDUCED) {
+      el.style.strokeDashoffset = String(offset);
+      return;
+    }
+    const tw = gsap.fromTo(
+      el,
+      { strokeDashoffset: circ },
+      { strokeDashoffset: offset, duration: 1.15, ease: 'power3.out' },
+    );
+    return () => {
+      tw.kill();
+    };
+  }, [offset, circ]);
 
-function buildPatientProductAlerts(patients: Patient[], inventory: InventoryItem[]): PatientProductAlert[] {
-  const inventoryByProduct = inventory.reduce<Record<string, InventoryItem>>((acc, item) => {
-    acc[normalizeKey(item.product)] = item;
-    return acc;
-  }, {});
-
-  return patients.flatMap((patient) =>
-    patient.peptides.map((peptide) => {
-      const inventoryItem = inventoryByProduct[normalizeKey(peptide.name)];
-      const stock = inventoryItem?.stock ?? null;
-      const minimum = inventoryItem?.minimum ?? null;
-      const hasCriticalStock = stock !== null && stock <= 0;
-      const hasLowStock = stock !== null && minimum !== null && stock <= minimum;
-      const tone: PatientAlertTone =
-        peptide.endsInDays <= 2 || hasCriticalStock
-          ? 'danger'
-          : peptide.endsInDays <= 5 || hasLowStock
-            ? 'warning'
-            : 'success';
-      const state = alertToneLabel(tone);
-      const statusText =
-        tone === 'danger'
-          ? 'Reposicion inmediata'
-          : peptide.endsInDays <= 5
-            ? 'Alerta 5 dias'
-            : hasLowStock
-              ? 'Bajo stock'
-              : tone === 'warning'
-                ? 'Revision preventiva'
-            : 'Tratamiento estable';
-      const nextAction =
-        tone === 'danger'
-          ? 'Separar producto hoy, contactar al paciente y confirmar continuidad.'
-          : peptide.endsInDays <= 5
-            ? 'Revisar inventario, avisar al paciente y programar recompra antes del cierre.'
-            : hasLowStock
-              ? 'Reponer o separar stock antes de la siguiente entrega del paciente.'
-            : 'Mantener seguimiento normal y volver a revisar en la proxima actualizacion.';
-      const stockCopy =
-        stock === null
-          ? 'Producto sin inventario asociado.'
-          : `Inventario actual: ${stock} ${inventoryItem?.unit ?? 'unidades'}; minimo sugerido: ${minimum}.`;
-
-      return {
-        id: `${patient.id}-${normalizeKey(peptide.name)}`,
-        patientId: patient.id,
-        patientName: patient.name,
-        plan: patient.plan,
-        product: peptide.name,
-        dose: peptide.dose,
-        daysLeft: peptide.endsInDays,
-        inventoryStock: stock,
-        inventoryUnit: inventoryItem?.unit ?? 'unidades',
-        inventoryMinimum: minimum,
-        state,
-        tone,
-        statusText,
-        nextAction,
-        history: [
-          {
-            date: patient.startDate,
-            title: 'Producto asignado',
-            detail: `${peptide.name} quedo asociado al tratamiento ${patient.plan}.`,
-            tone: 'success',
-          },
-          {
-            date: peptide.endsInDays <= 5 ? 'Hoy' : patient.endDate,
-            title: peptide.endsInDays <= 5 ? 'Alerta previa al cierre' : 'Seguimiento programado',
-            detail:
-              peptide.endsInDays <= 5
-                ? `Quedan ${peptide.endsInDays} dias de producto. Debe revisarse antes de que se acabe.`
-                : `Quedan ${peptide.endsInDays} dias; todavia no requiere alerta critica.`,
-            tone: peptide.endsInDays <= 5 ? 'warning' : 'neutral',
-          },
-          {
-            date: 'Inventario',
-            title: state,
-            detail: `${statusText}. ${stockCopy}`,
-            tone: tone === 'success' ? 'success' : 'warning',
-          },
-        ],
-      };
-    }),
-  );
-}
-
-function sumBy<T>(items: T[], key: (item: T) => string, value: (item: T) => number) {
-  return items.reduce<Record<string, number>>((acc, item) => {
-    const group = key(item);
-    acc[group] = (acc[group] ?? 0) + value(item);
-    return acc;
-  }, {});
-}
-
-function statusClass(status: string) {
-  const normalized = status.toLowerCase();
-  if (normalized.includes('vencer') || normalized.includes('finalizar') || normalized.includes('bajo')) return 'warning';
-  if (normalized.includes('agotado') || normalized.includes('vencido')) return 'danger';
-  if (normalized.includes('vip') || normalized.includes('recibido') || normalized.includes('pagado')) return 'success';
-  return 'neutral';
-}
-
-function Loader() {
+  const center = size / 2;
   return (
-    <div className="loader-screen" aria-label="Cargando dashboard Healen">
-      <div className="cell-loader">
-        <span className="cell cell-a" />
-        <span className="cell cell-b" />
-        <span className="cell cell-c" />
-        <span className="cell cell-d" />
-        <span className="cell cell-core" />
-      </div>
-      <div className="loader-copy">
-        <strong>HEALEN</strong>
-        <span>Bienvenido. Sincronizando pacientes, inventario y flujo financiero.</span>
-      </div>
-    </div>
+    <span className={`ring ring--${signal}`} style={{ width: size, height: size }} aria-hidden="true">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle className="ring__track" cx={center} cy={center} r={r} strokeWidth={stroke} />
+        <circle
+          ref={barRef}
+          className="ring__bar"
+          cx={center}
+          cy={center}
+          r={r}
+          strokeWidth={stroke}
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <span className="ring__face">
+        <span className="ring__num" style={{ fontSize: size * 0.34 }}>
+          {daysLeft}
+        </span>
+        {showUnit && <span className="ring__unit">días</span>}
+      </span>
+    </span>
   );
 }
 
-function StatCard({
+function Badge({ label, tone }: { label: string; tone: Tone }) {
+  return <span className={`badge badge--${tone}`}>{label}</span>;
+}
+
+function Field({
   label,
-  value,
-  helper,
-  icon: Icon,
-  tone = 'neutral',
-  action,
-  onClick,
+  children,
+  full,
 }: {
   label: string;
-  value: string;
-  helper: string;
-  icon: ElementType;
-  tone?: 'neutral' | 'success' | 'warning' | 'danger';
-  action?: string;
-  onClick?: () => void;
+  children: ReactNode;
+  full?: boolean;
 }) {
-  const content = (
-    <>
-      <div className="stat-icon">
-        <Icon size={18} />
-      </div>
-      <div>
-        <p>{label}</p>
-        <strong>{value}</strong>
-        <span>{helper}</span>
-        {action && <em>{action}</em>}
-      </div>
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <button className={`stat-card ${tone} interactive-card`} onClick={onClick} type="button">
-        {content}
-      </button>
-    );
-  }
-
   return (
-    <article className={`stat-card ${tone}`}>
-      {content}
-    </article>
+    <label className={`field${full ? ' field--full' : ''}`}>
+      <span>{label}</span>
+      {children}
+    </label>
   );
 }
 
-function SectionHeader({
-  eyebrow,
-  title,
-  action,
-}: {
-  eyebrow: string;
-  title: string;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="section-header">
-      <div>
-        <span>{eyebrow}</span>
-        <h2>{title}</h2>
-      </div>
-      {action}
-    </div>
-  );
-}
-
+/* ============================================================
+   App shell
+   ============================================================ */
 export function App() {
+  const { session, loading: authLoading, signOut } = useSession();
+  if (authLoading) return <Loader />;
+  if (!session) return <Login />;
+  const meta = (session.user.user_metadata ?? {}) as { full_name?: string };
+  return <Dashboard userLabel={meta.full_name || session.user.email || 'Healen'} onSignOut={signOut} />;
+}
+
+function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () => void }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('inicio');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [patients, setPatients] = useState(initialPatients);
-  const [inventory, setInventory] = useState(initialInventory);
-  const [inventoryMovements, setInventoryMovements] = useState(initialInventoryMovements);
-  const [finance, setFinance] = useState(initialFinance);
+  const [drawer, setDrawer] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(null);
+
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [inventoryMovements, setInventoryMovements] = useState<MovementRow[]>([]);
+  const [finance, setFinance] = useState<FinanceMovement[]>([]);
+
   const [patientSearch, setPatientSearch] = useState('');
   const [patientFilter, setPatientFilter] = useState<DateFilter>(emptyDateFilter);
   const [inventoryFilter, setInventoryFilter] = useState<DateFilter>(emptyDateFilter);
   const [financeFilter, setFinanceFilter] = useState<DateFilter>(emptyDateFilter);
   const [reportFilter, setReportFilter] = useState<DateFilter>(emptyDateFilter);
 
+  const auroraRef = useRef<HTMLCanvasElement>(null);
+
+  async function reload() {
+    try {
+      const data = await fetchAll();
+      setPatients(data.patients);
+      setInventory(data.inventory);
+      setFinance(data.finance);
+      setInventoryMovements(data.movements);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+      setToast({ msg: 'No se pudieron cargar los datos.', error: true });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function retry() {
+    setLoading(true);
+    setLoadError(false);
+    reload();
+  }
+
   useEffect(() => {
-    const timer = window.setTimeout(() => setLoading(false), 2100);
-    return () => window.clearTimeout(timer);
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const companyMovements = finance.filter((movement) => movement.scope === 'Empresa');
-  const companyIncome = companyMovements
-    .filter((movement) => movement.kind === 'Ingreso' && movement.status !== 'Pendiente')
-    .reduce((total, movement) => total + movement.value, 0);
-  const pendingIncome = companyMovements
-    .filter((movement) => movement.kind === 'Ingreso' && movement.status === 'Pendiente')
-    .reduce((total, movement) => total + movement.value, 0);
-  const companyExpenses = companyMovements
-    .filter((movement) => movement.kind === 'Gasto')
-    .reduce((total, movement) => total + movement.value, 0);
-  const personalOut = finance
-    .filter((movement) => movement.scope !== 'Empresa')
-    .reduce((total, movement) => total + movement.value, 0);
-  const netProfit = companyIncome - companyExpenses;
-  const lowStock = inventory.filter((item) => item.stock <= item.minimum || item.status !== 'Disponible').length;
-  const serumCount = patients.filter((patient) => patient.weeklySerum && patient.status !== 'Finalizado').length;
-  const finishingTreatments = patients.filter((patient) => patient.daysLeft <= 10 && patient.status !== 'Finalizado').length;
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 2800);
+    return () => window.clearTimeout(t);
+  }, [toast]);
 
-  const filteredPatients = patients.filter((patient) => {
-    const text = `${patient.id} ${patient.name} ${patient.plan} ${patient.tier}`.toLowerCase();
-    return text.includes(patientSearch.toLowerCase()) && matchesTreatmentFilter(patient, patientFilter);
+  useEffect(() => {
+    if (!auroraRef.current) return;
+    return startAurora(auroraRef.current);
+  }, []);
+
+  async function runMutation(action: () => Promise<unknown>, form: HTMLFormElement, okMsg: string) {
+    setSaving(true);
+    try {
+      await action();
+      await reload();
+      form.reset();
+      setToast({ msg: okMsg });
+    } catch (e) {
+      setToast({ msg: (e as Error).message || 'No se pudo guardar.', error: true });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Derivados de empresa (base de caja: el ingreso es lo efectivamente cobrado).
+  const companyMovements = finance.filter((m) => m.scope === 'Empresa');
+  const companyIncome = companyMovements
+    .filter((m) => m.kind === 'Ingreso')
+    .reduce((t, m) => t + (m.paidValue ?? m.value), 0);
+  const pendingIncome = finance
+    .filter(isReceivable)
+    .reduce((t, m) => t + ((m.invoiceValue ?? m.value) - (m.paidValue ?? 0)), 0);
+  const companyExpenses = companyMovements
+    .filter((m) => m.kind === 'Gasto')
+    .reduce((t, m) => t + m.value, 0);
+  const personalOut = finance.filter((m) => m.scope !== 'Empresa').reduce((t, m) => t + m.value, 0);
+  const netProfit = companyIncome - companyExpenses;
+  const lowStock = inventory.filter((i) => i.stock <= i.minimum || i.status !== 'Disponible').length;
+  const serumCount = patients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
+  const finishingTreatments = patients.filter((p) => p.daysLeft <= 12 && p.status !== 'Finalizado').length;
+
+  const filteredPatients = patients.filter((p) => {
+    const text = `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase();
+    return text.includes(patientSearch.toLowerCase()) && matchesTreatmentFilter(p, patientFilter);
   });
-  const filteredInventory = inventory.filter((item) => matchesDateFilter(item.expiration, inventoryFilter));
-  const filteredFinance = finance.filter((movement) => matchesDateFilter(movement.date, financeFilter));
-  const reportPatients = patients.filter((patient) => matchesTreatmentFilter(patient, reportFilter));
-  const reportInventory = inventory.filter((item) => matchesDateFilter(item.expiration, reportFilter));
-  const reportFinance = finance.filter((movement) => matchesDateFilter(movement.date, reportFilter));
+  const filteredInventory = inventory.filter((i) => matchesDateFilter(i.expiration ?? '', inventoryFilter));
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const saleValue = Number(form.get('saleValue')) || 0;
-    const newPatient: Patient = {
-      id: `HLN-${String(patients.length + 1).padStart(3, '0')}`,
-      name: String(form.get('name') || 'Paciente nuevo'),
-      plan: String(form.get('plan') || 'Plan personalizado'),
-      saleValue,
-      tier: classifySale(saleValue),
-      startDate: String(form.get('startDate') || '2026-06-23'),
-      endDate: String(form.get('endDate') || '2026-07-23'),
-      daysLeft: Number(form.get('daysLeft')) || 30,
-      weeklySerum: form.get('weeklySerum') === 'on',
-      serumDay: String(form.get('serumDay') || '-'),
-      status: 'Activo',
-      peptides: [
-        {
-          name: String(form.get('peptide') || 'Peptido personalizado'),
-          dose: String(form.get('dose') || 'Dosis por definir'),
-          endsInDays: Number(form.get('daysLeft')) || 30,
-          status: 'Activo',
-        },
-      ],
-    };
-    setPatients((current) => [newPatient, ...current]);
-    event.currentTarget.reset();
+    const form = event.currentTarget;
+    runMutation(() => createPatient(new FormData(form)), form, 'Paciente registrado');
   }
 
   function addInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const stock = Number(form.get('stock')) || 0;
-    const minimum = Number(form.get('minimum')) || 0;
-    const status: InventoryStatus = stock === 0 ? 'Agotado' : stock <= minimum ? 'Bajo stock' : 'Disponible';
-    const newItem: InventoryItem = {
-      id: `INV-${String(inventory.length + 1).padStart(3, '0')}`,
-      product: String(form.get('product') || 'Producto nuevo'),
-      type: String(form.get('type') || 'Insumo'),
-      stock,
-      minimum,
-      unit: String(form.get('unit') || 'unidades'),
-      lot: String(form.get('lot') || 'Sin lote'),
-      expiration: String(form.get('expiration') || '2026-12-31'),
-      supplier: String(form.get('supplier') || 'Proveedor'),
-      unitCost: Number(form.get('unitCost')) || 0,
-      status,
-    };
-    setInventory((current) => [newItem, ...current]);
-    event.currentTarget.reset();
+    const form = event.currentTarget;
+    runMutation(() => upsertProduct(new FormData(form)), form, 'Producto agregado');
   }
 
   function registerInventoryMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const itemId = String(form.get('itemId') || '');
-    const kind = String(form.get('kind') || 'Salida') as InventoryMovementKind;
-    const quantity = Math.max(0, Number(form.get('quantity')) || 0);
-    const reason = String(form.get('reason') || 'Movimiento de inventario');
-    const responsible = String(form.get('responsible') || 'Equipo Healen');
-    const date = String(form.get('date') || '2026-06-23');
-
-    if (!itemId || quantity <= 0) return;
-
-    const selectedItem = inventory.find((item) => item.id === itemId);
-    if (!selectedItem) return;
-
-    const previousStock = selectedItem.stock;
-    const resultingStock =
-      kind === 'Entrada'
-        ? previousStock + quantity
-        : kind === 'Ajuste'
-          ? quantity
-          : Math.max(0, previousStock - quantity);
-
-    const movementRecord: InventoryMovement = {
-      id: `IMV-${String(inventoryMovements.length + 1).padStart(3, '0')}`,
-      itemId: selectedItem.id,
-      product: selectedItem.product,
-      kind,
-      date,
-      quantity,
-      previousStock,
-      resultingStock,
-      reason,
-      responsible,
-    };
-
-    setInventory((current) =>
-      current.map((item) => {
-        if (item.id !== itemId) return item;
-
-        return {
-          ...item,
-          stock: resultingStock,
-          status: inventoryStatus(resultingStock, item.minimum, item.expiration),
-        };
-      }),
-    );
-
-    setInventoryMovements((current) => [movementRecord, ...current]);
-
-    event.currentTarget.reset();
+    const form = event.currentTarget;
+    runMutation(() => inventoryMovement(new FormData(form)), form, 'Movimiento registrado');
   }
 
   function addMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const kind = String(form.get('kind') || 'Ingreso') as MovementKind;
-    const paymentMethod = String(form.get('paymentMethod') || 'Transferencia');
-    let status = String(form.get('status') || (kind === 'Ingreso' ? 'Recibido' : 'Pagado')) as FinanceMovement['status'];
-    if (kind === 'Ingreso' && paymentMethod === 'Pendiente') status = 'Pendiente';
-    const attachmentFile = form.get('attachment');
-    const hasAttachment = attachmentFile instanceof File && attachmentFile.size > 0;
-    const attachmentUrl = String(form.get('attachmentUrl') || '').trim();
-    const paidValue = Number(form.get('paidValue')) || 0;
-    const invoiceValue = Number(form.get('invoiceValue')) || 0;
-    const dueDate = String(form.get('dueDate') || '').trim();
-    const note = String(form.get('note') || '').trim();
-    const newMovement: FinanceMovement = {
-      id: `MOV-${String(finance.length + 1).padStart(3, '0')}`,
-      kind,
-      date: String(form.get('date') || '2026-06-23'),
-      person: String(form.get('person') || 'Sin nombre'),
-      concept: String(form.get('concept') || 'Movimiento'),
-      category: String(form.get('category') || 'General'),
-      value: Number(form.get('value')) || 0,
-      invoiceValue: invoiceValue || undefined,
-      paidValue: paidValue || undefined,
-      dueDate: dueDate || undefined,
-      paymentMethod,
-      costCenter: String(form.get('costCenter') || 'Operacion'),
-      scope: String(form.get('scope') || 'Empresa') as MovementScope,
-      status,
-      attachment: hasAttachment ? attachmentFile.name : undefined,
-      attachmentPreview: hasAttachment ? URL.createObjectURL(attachmentFile) : undefined,
-      attachmentUrl: attachmentUrl || undefined,
-      note: note || undefined,
-    };
-    setFinance((current) => [newMovement, ...current]);
-    event.currentTarget.reset();
+    const form = event.currentTarget;
+    runMutation(() => financeEntry(new FormData(form)), form, 'Movimiento registrado');
   }
 
-  const activeLabel = navItems.find((item) => item.id === view)?.label ?? 'Inicio';
+  function go(next: View) {
+    setView(next);
+    setDrawer(false);
+  }
+
+  const lead = VIEW_LEAD[view];
+
+  if (loading) return <Loader />;
+  if (loadError) return <ErrorScreen onRetry={retry} onSignOut={onSignOut} />;
 
   return (
-    <div className="app-shell">
-      {loading && <Loader />}
-      <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
-        <div className="brand">
-          <div className="brand-mark">
-            <Dna size={20} />
-          </div>
-          <div>
-            <strong>Healen</strong>
-            <span>Control Center</span>
-          </div>
-        </div>
-        <nav>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                className={view === item.id ? 'active' : ''}
-                onClick={() => {
-                  setView(item.id);
-                  setMenuOpen(false);
-                }}
-                type="button"
-              >
-                <Icon size={18} />
-                {item.label}
+    <>
+      <canvas ref={auroraRef} className="aurora" />
+      <div className="aurora-veil" />
+      <div className="app">
+        {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
+        <Sidebar
+          view={view}
+          go={go}
+          open={drawer}
+          counts={{ pacientes: patients.length, alertas: lowStock }}
+          userLabel={userLabel}
+          onSignOut={onSignOut}
+        />
+
+        <main className="main">
+          <header className="topbar">
+            <button className="btn btn--icon menu-btn" onClick={() => setDrawer(true)} aria-label="Abrir menú">
+              <Menu size={20} />
+            </button>
+            <div className="topbar__lead">
+              <span className="eyebrow">{lead.eyebrow}</span>
+              <h1 className="topbar__title">{lead.title}</h1>
+            </div>
+            <div className="topbar__actions">
+              {saving && <span className="spinner" aria-label="Guardando" />}
+              <button className="btn btn--primary" onClick={() => go('pacientes')}>
+                <Plus size={18} />
+                Nuevo
               </button>
-            );
-          })}
-        </nav>
-        <div className="sidebar-footer">
-          <ShieldCheck size={18} />
-          <span>Prototipo demo</span>
-        </div>
-      </aside>
+            </div>
+          </header>
 
-      <main className="main-area">
-        <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setMenuOpen(true)} type="button">
-            <Menu size={20} />
-          </button>
-          <div>
-            <span>{activeLabel}</span>
-            <h1>Hola, equipo Healen.</h1>
+          <div className="view" key={view}>
+            {view === 'inicio' && (
+              <InicioView
+                patients={patients}
+                inventory={inventory}
+                companyIncome={companyIncome}
+                netProfit={netProfit}
+                pendingIncome={pendingIncome}
+                lowStock={lowStock}
+                serumCount={serumCount}
+                finishingTreatments={finishingTreatments}
+                go={go}
+              />
+            )}
+            {view === 'pacientes' && (
+              <PacientesView
+                patients={filteredPatients}
+                allPatients={patients}
+                inventory={inventory}
+                search={patientSearch}
+                setSearch={setPatientSearch}
+                addPatient={addPatient}
+              />
+            )}
+            {view === 'inventario' && (
+              <InventarioView
+                inventory={filteredInventory}
+                allInventory={inventory}
+                movements={inventoryMovements}
+                addInventory={addInventory}
+                registerMovement={registerInventoryMovement}
+              />
+            )}
+            {view === 'contabilidad' && (
+              <ContabilidadView
+                finance={finance}
+                companyIncome={companyIncome}
+                companyExpenses={companyExpenses}
+                pendingIncome={pendingIncome}
+                personalOut={personalOut}
+                addMovement={addMovement}
+              />
+            )}
+            {view === 'reportes' && (
+              <ReportesView
+                patients={patients}
+                inventory={inventory}
+                finance={finance}
+                companyIncome={companyIncome}
+                companyExpenses={companyExpenses}
+                personalOut={personalOut}
+                netProfit={netProfit}
+              />
+            )}
           </div>
-          <div className="topbar-actions">
-            <button className="icon-button" onClick={() => setView('pacientes')} type="button" aria-label="Buscar pacientes">
-              <Search size={18} />
-            </button>
+        </main>
+
+        <nav className="tabbar" aria-label="Navegación principal">
+          {NAV.map((item) => (
             <button
-              className="primary-action"
-              onClick={() => setView(view === 'pacientes' || view === 'inventario' ? view : 'contabilidad')}
-              type="button"
+              key={item.id}
+              className={`tabbar__item${view === item.id ? ' is-active' : ''}`}
+              onClick={() => go(item.id)}
             >
-              <Plus size={18} />
-              Nuevo registro
+              <item.icon size={20} />
+              {item.short}
             </button>
-          </div>
-        </header>
+          ))}
+        </nav>
+      </div>
+      {toast && <div className={`toast${toast.error ? ' toast--error' : ''}`}>{toast.msg}</div>}
+    </>
+  );
+}
 
-        {menuOpen && (
-          <button className="scrim" onClick={() => setMenuOpen(false)} type="button" aria-label="Cerrar menu">
-            <X size={22} />
+function Sidebar({
+  view,
+  go,
+  open,
+  counts,
+  userLabel,
+  onSignOut,
+}: {
+  view: View;
+  go: (v: View) => void;
+  open: boolean;
+  counts: { pacientes: number; alertas: number };
+  userLabel: string;
+  onSignOut: () => void;
+}) {
+  return (
+    <aside className={`sidebar${open ? ' is-open' : ''}`}>
+      <div className="brand">
+        <span className="brandmark">
+          <CellMark />
+        </span>
+        <span className="brand__name">
+          <strong>HEALEN</strong>
+          <span>Regenerativa</span>
+        </span>
+      </div>
+      <nav className="nav">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            className={`nav__item${view === item.id ? ' is-active' : ''}`}
+            onClick={() => go(item.id)}
+          >
+            <item.icon size={19} />
+            {item.label}
+            {item.id === 'pacientes' && <span className="nav__count">{counts.pacientes}</span>}
+            {item.id === 'inventario' && counts.alertas > 0 && (
+              <span className="nav__count">{counts.alertas}</span>
+            )}
           </button>
-        )}
+        ))}
+      </nav>
+      <div className="sidebar__foot">
+        <span className="demo-pill">Conectado · en vivo</span>
+        <button className="session" onClick={onSignOut} title="Cerrar sesión">
+          <span className="session__avatar">{userLabel.slice(0, 1).toUpperCase()}</span>
+          <span className="session__body">
+            <strong>{userLabel}</strong>
+            <span>Cerrar sesión</span>
+          </span>
+          <LogOut size={16} />
+        </button>
+      </div>
+    </aside>
+  );
+}
 
-        {view === 'inicio' && (
-          <DashboardView
-            companyIncome={companyIncome}
-            companyExpenses={companyExpenses}
-            netProfit={netProfit}
-            pendingIncome={pendingIncome}
-            personalOut={personalOut}
-            patients={patients}
-            inventory={inventory}
-            lowStock={lowStock}
-            serumCount={serumCount}
-            finishingTreatments={finishingTreatments}
-            setView={setView}
-          />
-        )}
-        {view === 'pacientes' && (
-          <PatientsView
-            patients={filteredPatients}
-            inventory={inventory}
-            patientSearch={patientSearch}
-            setPatientSearch={setPatientSearch}
-            patientFilter={patientFilter}
-            setPatientFilter={setPatientFilter}
-            addPatient={addPatient}
-          />
-        )}
-          {view === 'inventario' && (
-            <InventoryView
-              inventory={filteredInventory}
-              allInventory={inventory}
-              inventoryMovements={inventoryMovements}
-              inventoryFilter={inventoryFilter}
-              setInventoryFilter={setInventoryFilter}
-              addInventory={addInventory}
-              registerInventoryMovement={registerInventoryMovement}
-            />
-          )}
-        {view === 'contabilidad' && (
-          <AccountingView
-            finance={filteredFinance}
-            financeFilter={financeFilter}
-            setFinanceFilter={setFinanceFilter}
-            addMovement={addMovement}
-          />
-        )}
-        {view === 'reportes' && (
-          <ReportsView
-            patients={reportPatients}
-            inventory={reportInventory}
-            finance={reportFinance}
-            reportFilter={reportFilter}
-            setReportFilter={setReportFilter}
-          />
-        )}
-      </main>
+function CellMark() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="10" cy="10" r="2.6" fill="currentColor" />
+      <circle cx="14.5" cy="6.5" r="1.3" fill="currentColor" opacity="0.8" />
+    </svg>
+  );
+}
+
+function ErrorScreen({ onRetry, onSignOut }: { onRetry: () => void; onSignOut: () => void }) {
+  return (
+    <div className="login">
+      <div className="login__panel">
+        <span className="kpi__icon kpi__icon--danger" style={{ width: 48, height: 48, borderRadius: 14 }}>
+          <AlertTriangle size={22} />
+        </span>
+        <div className="login__lead">
+          <span className="eyebrow">Healen OS</span>
+          <h1>No pudimos cargar tus datos</h1>
+          <p>Revisa tu conexión e inténtalo de nuevo. Tu sesión sigue activa.</p>
+        </div>
+        <button className="btn btn--primary btn--block" onClick={onRetry}>
+          <RefreshCw size={18} /> Reintentar
+        </button>
+        <button className="btn btn--ghost btn--block" onClick={onSignOut}>
+          Cerrar sesión
+        </button>
+      </div>
     </div>
   );
 }
 
-function DashboardView({
-  companyIncome,
-  companyExpenses,
-  netProfit,
-  pendingIncome,
-  personalOut,
+function Loader() {
+  return (
+    <div className="loader">
+      <div className="loader__mark">
+        <span className="loader__ring" />
+        <span className="loader__ring loader__ring--2" />
+        <span className="loader__core" />
+      </div>
+      <div className="loader__copy">
+        <strong>HEALEN</strong>
+        <span>Sincronizando pacientes, inventario y caja…</span>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   INICIO
+   ============================================================ */
+function InicioView({
   patients,
   inventory,
+  companyIncome,
+  netProfit,
+  pendingIncome,
   lowStock,
   serumCount,
   finishingTreatments,
-  setView,
+  go,
 }: {
-  companyIncome: number;
-  companyExpenses: number;
-  netProfit: number;
-  pendingIncome: number;
-  personalOut: number;
   patients: Patient[];
   inventory: InventoryItem[];
+  companyIncome: number;
+  netProfit: number;
+  pendingIncome: number;
   lowStock: number;
   serumCount: number;
   finishingTreatments: number;
-  setView: (view: View) => void;
+  go: (v: View) => void;
 }) {
+  const [selected, setSelected] = useState<Patient | null>(null);
+  const urgent = [...patients].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 4);
+  const stockView = [...inventory]
+    .sort((a, b) => a.stock / Math.max(a.minimum, 1) - b.stock / Math.max(b.minimum, 1))
+    .slice(0, 4);
+  const grown = useGrow();
+
   return (
-    <div className="content-stack">
-      <section className="welcome-band">
-        <div>
-          <span className="demo-pill">Healen OS · Datos demo</span>
-          <h2>Un centro de mando para pacientes, inventario y rentabilidad real.</h2>
-          <p>
-            Hoy hay {patients.length} pacientes activos, {finishingTreatments} tratamientos por finalizar y {lowStock}{' '}
-            alertas de inventario. Cada tarjeta abre su modulo para revisar el detalle.
-          </p>
+    <>
+      <section className="hero" data-reveal>
+        <div className="hero__intro">
+          <span className="eyebrow">Healen OS · Centro de mando</span>
+          <h1>Quién está por terminar, qué falta y cuánto entró.</h1>
+          <p>Un vistazo y sabes qué vender, qué reponer y a quién llamar. Sin perseguir datos en chats ni cuadernos.</p>
+          <div className="hero__chips">
+            <span className="hero__chip">
+              <span className="dot dot--warn" />
+              {finishingTreatments} por terminar
+            </span>
+            <span className="hero__chip">
+              <span className="dot dot--danger" />
+              {lowStock} en inventario
+            </span>
+            <span className="hero__chip">
+              <span className="dot dot--ok" />
+              {serumCount} sueros activos
+            </span>
+          </div>
         </div>
-        <div className="welcome-visual" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </div>
-      </section>
 
-      <section className="stats-grid">
-        <StatCard label="Ingresos empresa" value={formatCurrency(companyIncome)} helper="Recibidos este mes" icon={TrendingUp} tone="success" action="Abrir caja" onClick={() => setView('contabilidad')} />
-        <StatCard label="Gastos empresa" value={formatCurrency(companyExpenses)} helper="Operativos registrados" icon={CreditCard} tone="warning" action="Ver desglose" onClick={() => setView('contabilidad')} />
-        <StatCard label="Utilidad real" value={formatCurrency(netProfit)} helper="Sin gastos personales" icon={CircleDollarSign} tone="success" action="Ver reportes" onClick={() => setView('reportes')} />
-        <StatCard label="Por cobrar" value={formatCurrency(pendingIncome)} helper="Pendiente de recaudo" icon={CalendarClock} tone="warning" action="Revisar cartera" onClick={() => setView('contabilidad')} />
-      </section>
-
-      <section className="dashboard-grid">
-        <article className="panel span-2">
-          <SectionHeader eyebrow="Alertas" title="Prioridades de hoy" />
-          <div className="alert-list">
-            <AlertItem icon={Dna} title={`${finishingTreatments} tratamientos por finalizar`} text="Abrir pacientes y revisar dosis, cierre y siguiente compra." tone="warning" onClick={() => setView('pacientes')} />
-            <AlertItem icon={Syringe} title={`${serumCount} sueros semanales activos`} text="Abrir seguimiento de pacientes con agenda semanal." tone="success" onClick={() => setView('pacientes')} />
-            <AlertItem icon={PackageCheck} title={`${lowStock} productos requieren revision`} text="Abrir inventario para bajo stock o vencimiento cercano." tone="danger" onClick={() => setView('inventario')} />
-            <AlertItem icon={WalletCards} title={formatCurrency(personalOut)} text="Abrir caja personal separada de empresa." tone="neutral" onClick={() => setView('contabilidad')} />
-          </div>
-        </article>
-
-        <article className="panel">
-          <SectionHeader eyebrow="Accesos" title="Registro inteligente" />
-          <div className="quick-actions">
-            <button onClick={() => setView('pacientes')} type="button">
-              <UserRound size={18} />
-              Paciente
-              <ChevronRight size={16} />
-            </button>
-            <button onClick={() => setView('inventario')} type="button">
-              <PackageCheck size={18} />
-              Inventario
-              <ChevronRight size={16} />
-            </button>
-            <button onClick={() => setView('contabilidad')} type="button">
-              <WalletCards size={18} />
-              Movimiento
-              <ChevronRight size={16} />
-            </button>
-            <button onClick={() => setView('reportes')} type="button">
-              <BarChart3 size={18} />
-              Reportes
-              <ChevronRight size={16} />
+        <article className="panel today">
+          <div className="today__head">
+            <h2>Por terminar primero</h2>
+            <button className="alert-card__more" onClick={() => go('pacientes')}>
+              Ver todos <ChevronRight size={15} />
             </button>
           </div>
-        </article>
-
-        <article className="panel span-2">
-          <SectionHeader eyebrow="Tratamientos" title="Pacientes en seguimiento" />
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Paciente</th>
-                  <th>Plan</th>
-                  <th>Categoria</th>
-                  <th>Dias</th>
-                  <th>Suero</th>
-                </tr>
-              </thead>
-              <tbody>
-                {patients.map((patient) => (
-                  <tr key={patient.id}>
-                    <td>
-                      <strong>{patient.name}</strong>
-                      <span>{patient.id}</span>
-                    </td>
-                    <td>{patient.plan}</td>
-                    <td>
-                      <Badge label={patient.tier} tone={patient.tier === 'VIP' ? 'success' : 'neutral'} />
-                    </td>
-                    <td>{patient.daysLeft}</td>
-                    <td>{patient.weeklySerum ? patient.serumDay : '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article className="panel">
-          <SectionHeader eyebrow="Inventario" title="Estado por tipo" />
-          <div className="mini-chart">
-            {inventory.map((item) => (
-              <div key={item.id}>
-                <span>{item.product}</span>
-                <div>
-                  <i style={{ width: `${Math.min(100, (item.stock / Math.max(item.minimum * 2, 1)) * 100)}%` }} />
-                </div>
-                <em>
-                  {item.stock} {item.unit}
-                </em>
-              </div>
+          <div className="today__rings">
+            {urgent.map((p) => (
+              <button key={p.id} className="urgent-ring" onClick={() => setSelected(p)}>
+                <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={72} stroke={6} />
+                <span className="urgent-ring__name">{p.name.split(' ')[0]}</span>
+                <span className="urgent-ring__plan">{p.plan}</span>
+              </button>
             ))}
           </div>
         </article>
       </section>
-    </div>
+
+      <section className="panel money-strip" data-reveal style={{ padding: 0 }}>
+        <div className="money">
+          <div className="money__top">
+            <TrendingUp size={17} />
+            <span className="money__label">Ingresos empresa</span>
+          </div>
+          <span className="money__value">
+            <CountUp value={companyIncome} />
+          </span>
+          <span className="money__hint">Recibidos este mes</span>
+        </div>
+        <div className="money money--accent">
+          <div className="money__top">
+            <Sparkles size={17} />
+            <span className="money__label">Utilidad real</span>
+          </div>
+          <span className="money__value">
+            <CountUp value={netProfit} />
+          </span>
+          <span className="money__hint">Sin retiros personales</span>
+        </div>
+        <div className="money">
+          <div className="money__top">
+            <CalendarClock size={17} />
+            <span className="money__label">Por cobrar</span>
+          </div>
+          <span className="money__value">
+            <CountUp value={pendingIncome} />
+          </span>
+          <span className="money__hint">Cartera pendiente</span>
+        </div>
+      </section>
+
+      <section className="grid-2">
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Inventario</span>
+              <h2>De un vistazo</h2>
+            </div>
+            <button className="alert-card__more" onClick={() => go('inventario')}>
+              Abrir <ChevronRight size={15} />
+            </button>
+          </div>
+          <div className="stock-strip">
+            {stockView.map((item) => {
+              const signal = stockSignal(item);
+              const pct = grown ? Math.min(100, (item.stock / Math.max(item.minimum * 1.6, 1)) * 100) : 0;
+              return (
+                <div key={item.id} className="stock-line">
+                  <span className="stock-line__name">
+                    <span className={`dot dot--${signal}`} />
+                    <span>{item.product}</span>
+                  </span>
+                  <span className="gauge">
+                    <span className={`gauge__fill gauge__fill--${signal}`} style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="stock-line__val">
+                    {item.stock}/{item.minimum} {item.unit}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </article>
+
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Acciones</span>
+              <h2>Prioridades</h2>
+            </div>
+          </div>
+          <div className="priorities">
+            <Priority
+              icon={Dna}
+              tone="warn"
+              title={`${finishingTreatments} tratamientos por cerrar`}
+              text="Revisa dosis, cierre y recompra."
+              onClick={() => go('pacientes')}
+            />
+            <Priority
+              icon={Package}
+              tone="danger"
+              title={`${lowStock} productos a reponer`}
+              text="Bajo stock o vencimiento cercano."
+              onClick={() => go('inventario')}
+            />
+            <Priority
+              icon={CalendarClock}
+              tone="brand"
+              title={formatCompact(pendingIncome)}
+              text="Cartera pendiente por recaudar."
+              onClick={() => go('contabilidad')}
+            />
+          </div>
+        </article>
+      </section>
+
+      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} />}
+    </>
   );
 }
 
-function AlertItem({
+function Priority({
   icon: Icon,
+  tone,
   title,
   text,
-  tone,
   onClick,
 }: {
   icon: ElementType;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
   title: string;
   text: string;
-  tone: 'neutral' | 'success' | 'warning' | 'danger';
-  onClick?: () => void;
+  onClick: () => void;
 }) {
-  const content = (
-    <>
-      <Icon size={18} />
-      <div>
+  return (
+    <button className="priority" onClick={onClick}>
+      <span className={`priority__icon priority__icon--${tone}`}>
+        <Icon size={19} />
+      </span>
+      <span className="priority__body">
         <strong>{title}</strong>
         <span>{text}</span>
-      </div>
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <button className={`alert-item ${tone} interactive-alert`} onClick={onClick} type="button">
-        {content}
-      </button>
-    );
-  }
-
-  return (
-    <div className={`alert-item ${tone}`}>
-      {content}
-    </div>
+      </span>
+      <ChevronRight className="chev" size={18} />
+    </button>
   );
 }
 
-function Badge({ label, tone }: { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' }) {
-  return <span className={`badge ${tone}`}>{label}</span>;
-}
-
-function PeriodFilter({
-  filter,
-  onChange,
-  label = 'Periodo',
-}: {
-  filter: DateFilter;
-  onChange: (filter: DateFilter) => void;
-  label?: string;
-}) {
-  return (
-    <div className="period-filter">
-      <div className="filter-title">
-        <Filter size={16} />
-        <span>{label}</span>
-      </div>
-      <label>
-        Desde
-        <input
-          type="date"
-          value={filter.from}
-          onChange={(event) => onChange({ ...filter, from: event.target.value })}
-        />
-      </label>
-      <label>
-        Hasta
-        <input
-          type="date"
-          value={filter.to}
-          onChange={(event) => onChange({ ...filter, to: event.target.value })}
-        />
-      </label>
-      <label>
-        Mes
-        <input
-          type="month"
-          value={filter.month}
-          onChange={(event) => onChange({ ...filter, month: event.target.value })}
-        />
-      </label>
-      <label>
-        Año
-        <input
-          type="number"
-          min="2024"
-          max="2032"
-          placeholder="2026"
-          value={filter.year}
-          onChange={(event) => onChange({ ...filter, year: event.target.value })}
-        />
-      </label>
-      <button className="icon-button soft" onClick={() => onChange(emptyDateFilter)} type="button" aria-label="Limpiar filtros">
-        <RefreshCw size={16} />
-      </button>
-    </div>
-  );
-}
-
-function CollapsiblePeriodFilter({
-  filter,
-  onChange,
-  label,
-  open,
-  onToggle,
-}: {
-  filter: DateFilter;
-  onChange: (filter: DateFilter) => void;
-  label: string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  const active = hasDateFilter(filter);
-
-  return (
-    <div className="filter-shell">
-      <button className={`secondary-action filter-toggle ${active ? 'active' : ''}`} onClick={onToggle} type="button">
-        <Filter size={16} />
-        Filtrar
-        {active && <span>Activo</span>}
-      </button>
-      {open && <PeriodFilter filter={filter} onChange={onChange} label={label} />}
-    </div>
-  );
-}
-
-function PatientsView({
+/* ============================================================
+   PACIENTES
+   ============================================================ */
+function PacientesView({
   patients,
+  allPatients,
   inventory,
-  patientSearch,
-  setPatientSearch,
-  patientFilter,
-  setPatientFilter,
+  search,
+  setSearch,
   addPatient,
 }: {
   patients: Patient[];
+  allPatients: Patient[];
   inventory: InventoryItem[];
-  patientSearch: string;
-  setPatientSearch: (value: string) => void;
-  patientFilter: DateFilter;
-  setPatientFilter: (filter: DateFilter) => void;
-  addPatient: (event: FormEvent<HTMLFormElement>) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  addPatient: (e: FormEvent<HTMLFormElement>) => void;
 }) {
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [sub, setSub] = useState<'pacientes' | 'alertas'>('pacientes');
+  const [selected, setSelected] = useState<Patient | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<PatientProductAlert | null>(null);
-  const [activeSubView, setActiveSubView] = useState<PatientSubView>('pacientes');
-  const patientAlerts = buildPatientProductAlerts(patients, inventory);
-  const orangeAlerts = patientAlerts.filter((alert) => alert.tone === 'warning').length;
-  const redAlerts = patientAlerts.filter((alert) => alert.tone === 'danger').length;
-  const greenAlerts = patientAlerts.filter((alert) => alert.tone === 'success').length;
+  const [formOpen, setFormOpen] = useState(false);
+
+  const alerts = buildPatientProductAlerts(allPatients, inventory).sort((a, b) => {
+    const order = { danger: 0, warn: 1, ok: 2 } as const;
+    return order[a.signal] - order[b.signal] || a.daysLeft - b.daysLeft;
+  });
+  const green = alerts.filter((a) => a.signal === 'ok').length;
+  const orange = alerts.filter((a) => a.signal === 'warn').length;
+  const red = alerts.filter((a) => a.signal === 'danger').length;
 
   return (
-    <div className="content-stack">
-      <SectionHeader
-        eyebrow="Pacientes"
-        title="Tratamientos, peptidos y sueros"
-        action={
-          <div className="search-box">
-            <Search size={16} />
-            <input value={patientSearch} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Buscar paciente" />
-          </div>
-        }
-      />
-      <PeriodFilter filter={patientFilter} onChange={setPatientFilter} label="Filtrar por inicio o finalizacion" />
-
-      <div className="patient-subtabs" role="tablist" aria-label="Subventanas de pacientes">
-        <button
-          className={activeSubView === 'pacientes' ? 'active' : ''}
-          onClick={() => setActiveSubView('pacientes')}
-          type="button"
-          role="tab"
-          aria-selected={activeSubView === 'pacientes'}
-        >
-          <UserRound size={16} />
-          Pacientes
-          <span>{patients.length} historiales</span>
-        </button>
-        <button
-          className={activeSubView === 'alertas' ? 'active' : ''}
-          onClick={() => setActiveSubView('alertas')}
-          type="button"
-          role="tab"
-          aria-selected={activeSubView === 'alertas'}
-        >
-          <AlertTriangle size={16} />
-          Alertas
-          <span>{redAlerts} rojas · {orangeAlerts} naranjas</span>
-        </button>
+    <>
+      <div className="toolbar" data-reveal>
+        <div className="search">
+          <Search size={17} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar paciente, plan o ID" />
+        </div>
+        <div className="segmented">
+          <button className={`segmented__btn${sub === 'pacientes' ? ' is-active' : ''}`} onClick={() => setSub('pacientes')}>
+            <Users size={16} /> Pacientes <small>{allPatients.length}</small>
+          </button>
+          <button className={`segmented__btn${sub === 'alertas' ? ' is-active' : ''}`} onClick={() => setSub('alertas')}>
+            <AlertTriangle size={16} /> Alertas <small>{red}·{orange}</small>
+          </button>
+        </div>
+        {sub === 'pacientes' && (
+          <button className="btn btn--soft" onClick={() => setFormOpen((o) => !o)}>
+            <Plus size={17} /> {formOpen ? 'Cerrar' : 'Nuevo paciente'}
+          </button>
+        )}
       </div>
 
-      {activeSubView === 'pacientes' && (
-        <section className="split-layout">
-          <article className="panel">
-            <SectionHeader eyebrow="Nuevo" title="Paciente" />
-            <form className="form-grid" onSubmit={addPatient}>
-              <label>
-                Nombre
-                <input name="name" placeholder="Paciente" />
-              </label>
-              <label>
-                Plan
-                <input name="plan" placeholder="Plan de peptidos" />
-              </label>
-              <label>
-                Valor venta
-                <input name="saleValue" type="number" placeholder="0" />
-              </label>
-              <label>
-                Peptido
-                <input name="peptide" placeholder="NAD+, BPC..." />
-              </label>
-              <label>
-                Dosis
-                <input name="dose" placeholder="Dosis" />
-              </label>
-              <label>
-                Dias restantes
-                <input name="daysLeft" type="number" placeholder="30" />
-              </label>
-              <label>
-                Fecha inicio
-                <input name="startDate" type="date" />
-              </label>
-              <label>
-                Fecha final
-                <input name="endDate" type="date" />
-              </label>
-              <label>
-                Dia suero
-                <input name="serumDay" placeholder="Lunes" />
-              </label>
-              <label className="check-row">
-                <input name="weeklySerum" type="checkbox" />
-                Suero semanal
-              </label>
-              <button className="primary-action full" type="submit">
-                <Plus size={18} />
-                Agregar paciente
-              </button>
-            </form>
-          </article>
+      {sub === 'pacientes' && (
+        <>
+          {formOpen && (
+            <article className="panel" data-reveal>
+              <div className="panel__head">
+                <div>
+                  <span className="eyebrow">Nuevo</span>
+                  <h2>Registrar paciente</h2>
+                </div>
+              </div>
+              <form className="form" onSubmit={addPatient}>
+                <Field label="Nombre">
+                  <input name="name" placeholder="Nombre y apellido" required />
+                </Field>
+                <Field label="Plan">
+                  <input name="plan" placeholder="Plan de péptidos" />
+                </Field>
+                <Field label="Valor venta">
+                  <input name="saleValue" type="number" min="0" placeholder="0" />
+                </Field>
+                <Field label="Péptido">
+                  <input name="peptide" placeholder="NAD+, BPC-157…" />
+                </Field>
+                <Field label="Dosis">
+                  <input name="dose" placeholder="250 mg semanal" />
+                </Field>
+                <Field label="Días restantes">
+                  <input name="daysLeft" type="number" placeholder="30" />
+                </Field>
+                <Field label="Fecha inicio">
+                  <input name="startDate" type="date" />
+                </Field>
+                <Field label="Fecha final">
+                  <input name="endDate" type="date" />
+                </Field>
+                <Field label="Día de suero">
+                  <input name="serumDay" placeholder="Lunes" />
+                </Field>
+                <label className="field field--check">
+                  <input name="weeklySerum" type="checkbox" />
+                  <span>Suero semanal</span>
+                </label>
+                <button className="btn btn--primary field--full" type="submit">
+                  <Plus size={18} /> Agregar paciente
+                </button>
+              </form>
+            </article>
+          )}
 
-          <article className="panel span-2">
-            <SectionHeader eyebrow="Activos" title={`${patients.length} pacientes en vista`} />
-            <div className="patient-list">
-              {patients.map((patient) => (
-                <button className="patient-row" key={patient.id} onClick={() => setSelectedPatient(patient)} type="button">
-                  <div className="patient-main">
-                    <div className="avatar">{patient.name.slice(-1)}</div>
+          <section className="patient-grid">
+            {patients.map((p) => (
+              <button key={p.id} className="patient-card" data-reveal onClick={() => setSelected(p)}>
+                <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={66} stroke={6} />
+                <div className="patient-card__main">
+                  <div className="patient-card__top">
                     <div>
-                      <strong>{patient.name}</strong>
-                      <span>
-                        {patient.id} · {patient.plan}
-                      </span>
+                      <div className="patient-card__name">{p.name}</div>
+                      <div className="patient-card__sub">
+                        {p.id} · {p.plan}
+                      </div>
                     </div>
+                    <span className={`tier${p.tier === 'VIP' ? ' tier--vip' : ''}`}>{p.tier}</span>
                   </div>
-                  <div className="patient-meta">
-                    <Badge label={patient.tier} tone={patient.tier === 'VIP' ? 'success' : 'neutral'} />
-                    <Badge label={patient.status} tone={statusClass(patient.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
-                    <span>{formatCurrency(patient.saleValue)}</span>
-                    <span>{patient.daysLeft} dias</span>
-                    <span>{patient.weeklySerum ? `Suero ${patient.serumDay}` : 'Sin suero'}</span>
-                    <span className="patient-history-chip">
-                      <Eye size={14} />
-                      Ver historial
-                    </span>
+                  <div className="patient-card__meta">
+                    <Badge label={p.status} tone={statusTone(p.status)} />
+                    <span className="patient-card__value">{formatCurrency(p.saleValue)}</span>
+                    {p.weeklySerum && (
+                      <span className="patient-card__value" style={{ color: 'var(--muted)', fontWeight: 500 }}>
+                        Suero {p.serumDay}
+                      </span>
+                    )}
                   </div>
-                  <div className="peptide-list">
-                    {patient.peptides.map((peptide) => (
-                      <span key={`${patient.id}-${peptide.name}`}>
-                        {peptide.name} · {peptide.dose} · {peptide.endsInDays} dias
+                  <div className="peptide-chips">
+                    {p.peptides.map((pep) => (
+                      <span key={pep.name} className="peptide">
+                        <span className={`dot dot--${treatmentSignal(pep.endsInDays)}`} />
+                        {pep.name} · {pep.endsInDays}d
                       </span>
                     ))}
                   </div>
-                </button>
-              ))}
-            </div>
-          </article>
-        </section>
-      )}
-
-      {activeSubView === 'alertas' && (
-        <PatientAlertsPanel
-          alerts={patientAlerts}
-          greenAlerts={greenAlerts}
-          orangeAlerts={orangeAlerts}
-          redAlerts={redAlerts}
-          onSelectAlert={setSelectedAlert}
-        />
-      )}
-
-      {selectedPatient && (
-        <PatientHistoryModal patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
-      )}
-      {selectedAlert && <PatientAlertModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}
-    </div>
-  );
-}
-
-function PatientAlertsPanel({
-  alerts,
-  greenAlerts,
-  orangeAlerts,
-  redAlerts,
-  onSelectAlert,
-}: {
-  alerts: PatientProductAlert[];
-  greenAlerts: number;
-  orangeAlerts: number;
-  redAlerts: number;
-  onSelectAlert: (alert: PatientProductAlert) => void;
-}) {
-  const sortedAlerts = [...alerts].sort((a, b) => {
-    const priority = { danger: 0, warning: 1, success: 2 };
-    return priority[a.tone] - priority[b.tone] || a.daysLeft - b.daysLeft;
-  });
-
-  return (
-    <section className="patient-alert-workspace">
-      <div className="patient-alert-hero">
-        <div>
-          <span>Alertas de productos</span>
-          <h3>Seguimiento 5 dias antes de que se acabe cada producto.</h3>
-          <p>Estados por paciente y peptido para anticipar reposicion, recompra o continuidad del tratamiento.</p>
-        </div>
-        <Badge label={`${alerts.length} alertas activas`} tone={redAlerts > 0 ? 'danger' : orangeAlerts > 0 ? 'warning' : 'success'} />
-      </div>
-
-      <div className="stats-grid patient-alert-stats">
-        <StatCard label="Verde" value={String(greenAlerts)} helper="Tratamientos estables" icon={Check} tone="success" />
-        <StatCard label="Naranja" value={String(orangeAlerts)} helper="5 dias o bajo stock" icon={CalendarClock} tone="warning" />
-        <StatCard label="Rojo" value={String(redAlerts)} helper="Critico o agotado" icon={AlertTriangle} tone="danger" />
-        <StatCard label="Productos" value={String(alerts.length)} helper="Pacientes con seguimiento" icon={PackageCheck} tone="neutral" />
-      </div>
-
-      <article className="panel">
-        <SectionHeader eyebrow="Historico" title="Alertas por paciente y producto" />
-        <div className="patient-alert-list">
-          {sortedAlerts.map((alert) => (
-            <button
-              className={`patient-alert-card ${alert.tone}`}
-              key={alert.id}
-              onClick={() => onSelectAlert(alert)}
-              type="button"
-            >
-              <div className="patient-alert-card-head">
-                <div>
-                  <strong>{alert.patientName}</strong>
-                  <span>{alert.patientId} · {alert.plan}</span>
+                  <div className="patient-card__foot">
+                    <Eye size={15} /> Ver historial
+                  </div>
                 </div>
-                <Badge label={alert.state} tone={alert.tone} />
-              </div>
-              <div className="patient-alert-product">
-                <Dna size={18} />
-                <div>
-                  <strong>{alert.product}</strong>
-                  <span>{alert.dose}</span>
+              </button>
+            ))}
+            {patients.length === 0 && (
+              <article className="panel" data-reveal>
+                <p style={{ color: 'var(--muted)' }}>Ningún paciente coincide con la búsqueda.</p>
+              </article>
+            )}
+          </section>
+        </>
+      )}
+
+      {sub === 'alertas' && (
+        <>
+          <section className="kpi-grid" data-reveal>
+            <SignalKpi icon={Check} tone="ok" label="Estables" value={green} hint="Tratamiento normal" />
+            <SignalKpi icon={CalendarClock} tone="warn" label="Atención" value={orange} hint="5 días o bajo stock" />
+            <SignalKpi icon={AlertTriangle} tone="danger" label="Urgentes" value={red} hint="Reposición inmediata" />
+            <SignalKpi icon={Package} tone="brand" label="Productos" value={alerts.length} hint="En seguimiento" />
+          </section>
+          <section className="alert-board">
+            {alerts.map((a) => (
+              <button key={a.id} className={`alert-card alert-card--${a.signal}`} data-reveal onClick={() => setSelectedAlert(a)}>
+                <div className="alert-card__head">
+                  <div>
+                    <strong>{a.patientName}</strong>
+                    <span>
+                      {a.patientId} · {a.plan}
+                    </span>
+                  </div>
+                  <TreatmentRing daysLeft={a.daysLeft} totalDays={30} size={52} stroke={5} showUnit={false} />
                 </div>
-              </div>
-              <div className="patient-alert-metrics">
-                <span>{alert.daysLeft} dias restantes</span>
-                <span>
-                  {alert.inventoryStock === null
-                    ? 'Sin inventario vinculado'
-                    : `${alert.inventoryStock} ${alert.inventoryUnit} en stock`}
+                <div className="alert-card__product">
+                  <Dna size={18} style={{ color: 'var(--brand)' }} />
+                  <div>
+                    <strong>{a.product}</strong>
+                    <span>{a.dose}</span>
+                  </div>
+                </div>
+                <div className="alert-card__metrics">
+                  <span>{a.daysLeft} días</span>
+                  <span>{a.inventoryStock === null ? 'Sin stock vinculado' : `${a.inventoryStock} ${a.inventoryUnit}`}</span>
+                  <span>{a.statusText}</span>
+                </div>
+                <p className="alert-card__action">{a.nextAction}</p>
+                <span className="alert-card__more">
+                  <ClipboardList size={15} /> Ver histórico
                 </span>
-                <span>{alert.statusText}</span>
-              </div>
-              <p>{alert.nextAction}</p>
-              <div className="patient-alert-history-preview">
-                <ClipboardList size={15} />
-                Ver historico de alerta
-              </div>
-            </button>
-          ))}
-        </div>
-      </article>
-    </section>
+              </button>
+            ))}
+          </section>
+        </>
+      )}
+
+      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} />}
+      {selectedAlert && <AlertSheet alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}
+    </>
   );
 }
 
-function patientHistory(patient: Patient): PatientHistoryItem[] {
-  return [
-    {
-      date: patient.startDate,
-      title: 'Inicio del tratamiento',
-      detail: `${patient.plan} registrado con valor de ${formatCurrency(patient.saleValue)}.`,
-      tone: 'success',
-    },
-    ...patient.peptides.map((peptide) => ({
-      date: patient.startDate,
-      title: `Peptido: ${peptide.name}`,
-      detail: `${peptide.dose}. Estado: ${peptide.status}. Restan ${peptide.endsInDays} dias.`,
-      tone: peptide.status === 'Por finalizar' ? 'warning' : 'neutral',
-    }) satisfies PatientHistoryItem),
-    {
-      date: patient.weeklySerum ? patient.serumDay : '-',
-      title: patient.weeklySerum ? 'Suero semanal activo' : 'Sin suero semanal',
-      detail: patient.weeklySerum
-        ? `Paciente agendado para suero semanal los ${patient.serumDay}.`
-        : 'No tiene suero semanal marcado para este tratamiento.',
-      tone: patient.weeklySerum ? 'success' : 'neutral',
-    },
-    {
-      date: patient.endDate,
-      title: patient.daysLeft <= 10 ? 'Cierre proximo' : 'Finalizacion estimada',
-      detail: patient.daysLeft <= 10
-        ? `Quedan ${patient.daysLeft} dias. Revisar cierre, recompra o continuidad.`
-        : `Finalizacion estimada en ${patient.daysLeft} dias.`,
-      tone: patient.daysLeft <= 10 ? 'warning' : 'neutral',
-    },
-  ];
-}
-
-function PatientHistoryModal({ patient, onClose }: { patient: Patient; onClose: () => void }) {
-  const history = patientHistory(patient);
-  const totalPeptides = patient.peptides.length;
-  const endingSoon = patient.peptides.filter((peptide) => peptide.endsInDays <= 10).length;
-
+function SignalKpi({
+  icon: Icon,
+  tone,
+  label,
+  value,
+  hint,
+}: {
+  icon: ElementType;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+  label: string;
+  value: number | string;
+  hint: string;
+}) {
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Historial de ${patient.name}`}>
-      <article className="patient-history-modal">
-        <header className="support-modal-header">
-          <div>
-            <span>Historial del paciente</span>
-            <h3>{patient.name}</h3>
-          </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar historial">
-            <X size={18} />
-          </button>
-        </header>
-
-        <section className="patient-history-hero">
-          <div>
-            <span>{patient.id}</span>
-            <strong>{patient.plan}</strong>
-            <p>{patient.status} · {patient.tier} · {formatCurrency(patient.saleValue)}</p>
-          </div>
-          <Badge label={`${patient.daysLeft} dias restantes`} tone={patient.daysLeft <= 10 ? 'warning' : 'success'} />
-        </section>
-
-        <section className="patient-history-grid">
-          <article>
-            <span>Inicio</span>
-            <strong>{patient.startDate}</strong>
-          </article>
-          <article>
-            <span>Final estimado</span>
-            <strong>{patient.endDate}</strong>
-          </article>
-          <article>
-            <span>Peptidos</span>
-            <strong>{totalPeptides}</strong>
-          </article>
-          <article>
-            <span>Por finalizar</span>
-            <strong>{endingSoon}</strong>
-          </article>
-        </section>
-
-        <section className="patient-history-section">
-          <div className="detail-card-title">
-            <Syringe size={18} />
-            <strong>Tratamiento activo</strong>
-          </div>
-          <div className="patient-treatment-list">
-            {patient.peptides.map((peptide) => (
-              <article key={`${patient.id}-history-${peptide.name}`}>
-                <div>
-                  <strong>{peptide.name}</strong>
-                  <Badge label={peptide.status} tone={statusClass(peptide.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
-                </div>
-                <span>{peptide.dose}</span>
-                <small>{peptide.endsInDays} dias restantes</small>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="patient-history-section">
-          <div className="detail-card-title">
-            <ClipboardList size={18} />
-            <strong>Linea de tiempo</strong>
-          </div>
-          <div className="patient-timeline">
-            {history.map((item) => (
-              <article className={`patient-timeline-item ${item.tone}`} key={`${item.date}-${item.title}`}>
-                <span>{item.date}</span>
-                <div>
-                  <strong>{item.title}</strong>
-                  <p>{item.detail}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="patient-next-steps">
-          <strong>Proximos pasos</strong>
-          <span>{patient.daysLeft <= 10 ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.' : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}</span>
-        </section>
-      </article>
+    <div className="kpi">
+      <div className="kpi__top">
+        <span className={`kpi__icon kpi__icon--${tone}`}>
+          <Icon size={17} />
+        </span>
+        <span className="kpi__label">{label}</span>
+      </div>
+      <span className="kpi__value">{value}</span>
+      <span className="kpi__hint">{hint}</span>
     </div>
   );
 }
 
-function PatientAlertModal({ alert, onClose }: { alert: PatientProductAlert; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Alerta de ${alert.patientName}`}>
-      <article className="patient-history-modal patient-alert-modal">
-        <header className="support-modal-header">
-          <div>
-            <span>Historico de alerta</span>
-            <h3>{alert.patientName}</h3>
-          </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar alerta">
-            <X size={18} />
-          </button>
-        </header>
-
-        <section className={`patient-alert-detail-hero ${alert.tone}`}>
-          <div>
-            <span>{alert.patientId} · {alert.plan}</span>
-            <strong>{alert.product}</strong>
-            <p>{alert.dose}</p>
-          </div>
-          <Badge label={alert.state} tone={alert.tone} />
-        </section>
-
-        <section className="patient-history-grid">
-          <article>
-            <span>Dias restantes</span>
-            <strong>{alert.daysLeft}</strong>
-          </article>
-          <article>
-            <span>Estado</span>
-            <strong>{alert.statusText}</strong>
-          </article>
-          <article>
-            <span>Stock</span>
-            <strong>{alert.inventoryStock === null ? '-' : alert.inventoryStock}</strong>
-          </article>
-          <article>
-            <span>Minimo</span>
-            <strong>{alert.inventoryMinimum === null ? '-' : alert.inventoryMinimum}</strong>
-          </article>
-        </section>
-
-        <section className="patient-history-section">
-          <div className="detail-card-title">
-            <ClipboardList size={18} />
-            <strong>Historico</strong>
-          </div>
-          <div className="patient-timeline">
-            {alert.history.map((item) => (
-              <article className={`patient-timeline-item ${item.tone}`} key={`${alert.id}-${item.date}-${item.title}`}>
-                <span>{item.date}</span>
-                <div>
-                  <strong>{item.title}</strong>
-                  <p>{item.detail}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="patient-next-steps">
-          <strong>Accion sugerida</strong>
-          <span>{alert.nextAction}</span>
-        </section>
-      </article>
-    </div>
-  );
-}
-
-function InventoryView({
+/* ============================================================
+   INVENTARIO
+   ============================================================ */
+function InventarioView({
   inventory,
   allInventory,
-  inventoryMovements,
-  inventoryFilter,
-  setInventoryFilter,
+  movements,
   addInventory,
-  registerInventoryMovement,
+  registerMovement,
 }: {
   inventory: InventoryItem[];
   allInventory: InventoryItem[];
-  inventoryMovements: InventoryMovement[];
-  inventoryFilter: DateFilter;
-  setInventoryFilter: (filter: DateFilter) => void;
-  addInventory: (event: FormEvent<HTMLFormElement>) => void;
-  registerInventoryMovement: (event: FormEvent<HTMLFormElement>) => void;
+  movements: MovementRow[];
+  addInventory: (e: FormEvent<HTMLFormElement>) => void;
+  registerMovement: (e: FormEvent<HTMLFormElement>) => void;
 }) {
-  const unitsInStock = inventory.reduce((total, item) => total + item.stock, 0);
-  const lowStock = inventory.filter((item) => item.stock <= item.minimum).length;
-  const stockValue = inventory.reduce((total, item) => total + item.stock * item.unitCost, 0);
-  const outgoingToday = inventoryMovements
-    .filter((movement) => movement.kind === 'Salida' || movement.kind === 'Venta')
-    .reduce((total, movement) => total + movement.quantity, 0);
-  const movementByProduct = inventoryMovements.reduce<Record<string, InventoryMovement>>((acc, movement) => {
-    if (!acc[movement.itemId]) acc[movement.itemId] = movement;
+  const [formOpen, setFormOpen] = useState<null | 'producto' | 'movimiento'>(null);
+  const grown = useGrow();
+  const units = inventory.reduce((t, i) => t + i.stock, 0);
+  const low = inventory.filter((i) => i.stock <= i.minimum).length;
+  const value = inventory.reduce((t, i) => t + i.stock * i.unitCost, 0);
+  const outgoing = movements
+    .filter((m) => m.kind === 'Salida' || m.kind === 'Venta')
+    .reduce((t, m) => t + m.quantity, 0);
+  const lastByProduct = movements.reduce<Record<string, MovementRow>>((acc, m) => {
+    if (!acc[m.product]) acc[m.product] = m;
     return acc;
   }, {});
 
   return (
-    <div className="content-stack">
-      <SectionHeader eyebrow="Inventario" title="Peptidos, sueros e insumos" />
-      <PeriodFilter filter={inventoryFilter} onChange={setInventoryFilter} label="Filtrar por vencimiento" />
-
-      <section className="stats-grid">
-        <StatCard label="Unidades disponibles" value={String(unitsInStock)} helper="Stock total filtrado" icon={PackageCheck} tone="success" />
-        <StatCard label="Bajo minimo" value={String(lowStock)} helper="Requieren reposicion" icon={AlertTriangle} tone="warning" />
-        <StatCard label="Valor inventario" value={formatCurrency(stockValue)} helper="Costo estimado" icon={CircleDollarSign} tone="neutral" />
-        <StatCard label="Salidas registradas" value={String(outgoingToday)} helper="Uso o ventas" icon={RefreshCw} tone="danger" />
+    <>
+      <section className="kpi-grid" data-reveal>
+        <SignalKpi icon={Package} tone="ok" label="Unidades" value={units} hint="Stock total" />
+        <SignalKpi icon={AlertTriangle} tone="warn" label="Bajo mínimo" value={low} hint="A reponer" />
+        <Kpi icon={Activity} tone="brand" label="Valor stock" value={formatCompact(value)} hint="Costo estimado" />
+        <SignalKpi icon={RefreshCw} tone="danger" label="Salidas" value={outgoing} hint="Uso o ventas" />
       </section>
 
-      <section className="split-layout">
-        <article className="panel">
-          <SectionHeader eyebrow="Nuevo" title="Producto" />
-          <form className="form-grid" onSubmit={addInventory}>
-            <label>
-              Producto
-              <input name="product" placeholder="Nombre" />
-            </label>
-            <label>
-              Tipo
+      <div className="toolbar" data-reveal>
+        <button className="btn btn--soft" onClick={() => setFormOpen(formOpen === 'producto' ? null : 'producto')}>
+          <Plus size={17} /> Nuevo producto
+        </button>
+        <button className="btn btn--soft" onClick={() => setFormOpen(formOpen === 'movimiento' ? null : 'movimiento')}>
+          <RefreshCw size={17} /> Registrar movimiento
+        </button>
+      </div>
+
+      {formOpen === 'producto' && (
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Nuevo</span>
+              <h2>Producto</h2>
+            </div>
+          </div>
+          <form className="form" onSubmit={addInventory}>
+            <Field label="Producto">
+              <input name="product" placeholder="Nombre" required />
+            </Field>
+            <Field label="Tipo">
               <select name="type">
                 <option>Peptido</option>
                 <option>Suero</option>
                 <option>Insumo medico</option>
                 <option>Suplemento</option>
               </select>
-            </label>
-            <label>
-              Stock actual
+            </Field>
+            <Field label="Stock actual">
               <input name="stock" type="number" placeholder="0" />
-            </label>
-            <label>
-              Stock minimo
+            </Field>
+            <Field label="Stock mínimo">
               <input name="minimum" type="number" placeholder="0" />
-            </label>
-            <label>
-              Unidad
-              <input name="unit" placeholder="viales, kits..." />
-            </label>
-            <label>
-              Lote
+            </Field>
+            <Field label="Unidad">
+              <input name="unit" placeholder="viales, kits…" />
+            </Field>
+            <Field label="Lote">
               <input name="lot" placeholder="Lote" />
-            </label>
-            <label>
-              Vencimiento
+            </Field>
+            <Field label="Vencimiento">
               <input name="expiration" type="date" />
-            </label>
-            <label>
-              Proveedor
+            </Field>
+            <Field label="Proveedor">
               <input name="supplier" placeholder="Proveedor" />
-            </label>
-            <label>
-              Costo unitario
+            </Field>
+            <Field label="Costo unitario" full>
               <input name="unitCost" type="number" placeholder="0" />
-            </label>
-            <button className="primary-action full" type="submit">
-              <Plus size={18} />
-              Agregar producto
+            </Field>
+            <button className="btn btn--primary field--full" type="submit">
+              <Plus size={18} /> Agregar producto
             </button>
           </form>
         </article>
+      )}
 
-        <article className="panel span-2">
-          <SectionHeader eyebrow="Actualizar" title="Movimiento de stock" />
-          <form className="form-grid inventory-movement-form" onSubmit={registerInventoryMovement}>
-            <label>
-              Producto
+      {formOpen === 'movimiento' && (
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Actualizar</span>
+              <h2>Movimiento de stock</h2>
+            </div>
+          </div>
+          <form className="form" onSubmit={registerMovement}>
+            <Field label="Producto" full>
               <select name="itemId" required>
                 <option value="">Seleccionar producto</option>
-                {allInventory.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.product} · quedan {item.stock} {item.unit}
+                {allInventory.map((i) => (
+                  <option key={i.id} value={i.productId}>
+                    {i.product} · quedan {i.stock} {i.unit}
                   </option>
                 ))}
               </select>
-            </label>
-            <label>
-              Movimiento
+            </Field>
+            <Field label="Movimiento">
               <select name="kind">
                 <option>Salida</option>
                 <option>Venta</option>
                 <option>Entrada</option>
                 <option>Ajuste</option>
               </select>
-            </label>
-            <label>
-              Cantidad
+            </Field>
+            <Field label="Cantidad">
               <input name="quantity" type="number" min="0" step="1" placeholder="Unidades" required />
-            </label>
-            <label>
-              Fecha
+            </Field>
+            <Field label="Fecha">
               <input name="date" type="date" />
-            </label>
-            <label>
-              Responsable
-              <input name="responsible" placeholder="Quien registra" />
-            </label>
-            <label>
-              Motivo
-              <input name="reason" placeholder="Paciente, venta, ajuste..." />
-            </label>
-            <button className="primary-action full" type="submit">
-              <RefreshCw size={18} />
-              Actualizar restante
+            </Field>
+            <Field label="Responsable">
+              <input name="responsible" placeholder="Quién registra" />
+            </Field>
+            <Field label="Motivo" full>
+              <input name="reason" placeholder="Paciente, venta, ajuste…" />
+            </Field>
+            <button className="btn btn--primary field--full" type="submit">
+              <RefreshCw size={18} /> Actualizar restante
             </button>
           </form>
         </article>
-      </section>
+      )}
 
-      <section className="split-layout inventory-detail-layout">
-        <article className="panel">
-          <SectionHeader eyebrow="Stock" title={`${inventory.length} productos en vista`} />
-          <div className="table-wrap inventory-table-wrap">
-            <table className="inventory-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Tipo</th>
-                  <th>Restante</th>
-                  <th>Minimo</th>
-                  <th>Lote</th>
-                  <th>Vence</th>
-                  <th>Ultimo movimiento</th>
-                  <th>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inventory.map((item) => {
-                  const lastMovement = movementByProduct[item.id];
-
-                  return (
-                    <tr key={item.id}>
-                      <td data-label="Producto">
-                        <strong>{item.product}</strong>
-                        <span>{formatCurrency(item.unitCost)} unidad</span>
-                      </td>
-                      <td data-label="Tipo">{item.type}</td>
-                      <td data-label="Restante">
-                        <strong className="stock-restant">{item.stock} {item.unit}</strong>
-                      </td>
-                      <td data-label="Minimo">min {item.minimum} {item.unit}</td>
-                      <td data-label="Lote">{item.lot}</td>
-                      <td data-label="Vence">{item.expiration}</td>
-                      <td data-label="Ultimo movimiento">
-                        {lastMovement ? (
-                          <>
-                            <strong>{lastMovement.kind} de {lastMovement.quantity}</strong>
-                            <span>Quedo en {lastMovement.resultingStock} · {lastMovement.date}</span>
-                          </>
-                        ) : (
-                          <span className="muted-cell">Sin movimientos</span>
-                        )}
-                      </td>
-                      <td data-label="Estado">
-                        <Badge label={item.status} tone={statusClass(item.status) as 'neutral' | 'success' | 'warning' | 'danger'} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      <section className="grid-2">
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Stock</span>
+              <h2>{inventory.length} productos</h2>
+            </div>
+          </div>
+          <div className="inv-list">
+            {inventory.map((item) => {
+              const signal = stockSignal(item);
+              const pct = grown ? Math.min(100, (item.stock / Math.max(item.minimum * 1.6, 1)) * 100) : 0;
+              const last = lastByProduct[item.product];
+              return (
+                <div key={item.id} className="inv-row">
+                  <div className="inv-row__id">
+                    <strong>{item.product}</strong>
+                    <span>
+                      {item.type} · {formatCurrency(item.unitCost)}
+                    </span>
+                  </div>
+                  <div className="inv-row__gauge">
+                    <span className="gauge">
+                      <span className={`gauge__fill gauge__fill--${signal}`} style={{ width: `${pct}%` }} />
+                    </span>
+                    <small>
+                      {item.stock} {item.unit} · mín {item.minimum} · vence {item.expiration ? formatDate(item.expiration) : 's/v'}
+                    </small>
+                  </div>
+                  <span className="inv-row__meta">
+                    {last ? `${last.kind} ${last.quantity} → ${last.resultingStock}` : 'Sin movimientos'}
+                  </span>
+                  <Badge label={item.status} tone={statusTone(item.status)} />
+                </div>
+              );
+            })}
           </div>
         </article>
 
-        <article className="panel">
-          <SectionHeader eyebrow="Historial" title="Ultimos movimientos" />
-          <div className="inventory-movement-list">
-            {inventoryMovements.length === 0 ? (
-              <p className="empty-state">Todavia no hay movimientos de inventario.</p>
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Historial</span>
+              <h2>Movimientos</h2>
+            </div>
+          </div>
+          <div className="movements">
+            {movements.length === 0 ? (
+              <p style={{ color: 'var(--muted)' }}>Todavía no hay movimientos.</p>
             ) : (
-              inventoryMovements.slice(0, 6).map((movement) => (
-                <article key={movement.id} className="inventory-movement-card">
-                  <div>
-                    <strong>{movement.product}</strong>
-                    <span>{movement.kind} · {movement.date}</span>
+              movements.slice(0, 6).map((m) => (
+                <div key={m.id} className="movement">
+                  <span className="movement__kind">
+                    <RefreshCw size={16} />
+                  </span>
+                  <div className="movement__body">
+                    <strong>{m.product}</strong>
+                    <span>
+                      {m.kind} · {formatDate(m.date)} · {m.reason}
+                    </span>
                   </div>
-                  <p>{movement.reason}</p>
-                  <div className="movement-stock-line">
-                    <span>{movement.previousStock}</span>
-                    <ChevronRight size={15} />
-                    <strong>{movement.resultingStock}</strong>
-                  </div>
-                  <small>{movement.quantity} unidades · {movement.responsible}</small>
-                </article>
+                  <span className="movement__delta">
+                    {m.previousStock} <ChevronRight size={14} /> <b>{m.resultingStock}</b>
+                  </span>
+                </div>
               ))
             )}
           </div>
         </article>
       </section>
+    </>
+  );
+}
+
+function Kpi({
+  icon: Icon,
+  tone,
+  label,
+  value,
+  hint,
+}: {
+  icon: ElementType;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="kpi">
+      <div className="kpi__top">
+        <span className={`kpi__icon kpi__icon--${tone}`}>
+          <Icon size={17} />
+        </span>
+        <span className="kpi__label">{label}</span>
+      </div>
+      <span className="kpi__value">{value}</span>
+      <span className="kpi__hint">{hint}</span>
     </div>
   );
 }
 
-function AccountingView({
+/* ============================================================
+   CONTABILIDAD / CAJA
+   ============================================================ */
+function ContabilidadView({
   finance,
-  financeFilter,
-  setFinanceFilter,
+  companyIncome,
+  companyExpenses,
+  pendingIncome,
+  personalOut,
   addMovement,
 }: {
   finance: FinanceMovement[];
-  financeFilter: DateFilter;
-  setFinanceFilter: (filter: DateFilter) => void;
-  addMovement: (event: FormEvent<HTMLFormElement>) => void;
+  companyIncome: number;
+  companyExpenses: number;
+  pendingIncome: number;
+  personalOut: number;
+  addMovement: (e: FormEvent<HTMLFormElement>) => void;
 }) {
-  const [selectedSupport, setSelectedSupport] = useState<FinanceMovement | null>(null);
-  const [activeTab, setActiveTab] = useState<AccountingTab>('ingresos');
-  const [filterOpen, setFilterOpen] = useState(false);
-  const incomeMovements = finance.filter(
-    (movement) => movement.kind === 'Ingreso' && movement.scope === 'Empresa' && !isReceivable(movement),
-  );
+  const [tab, setTab] = useState<AccountingTab>('ingresos');
+  const [support, setSupport] = useState<FinanceMovement | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+
+  // value de las ventas ya es la caja recibida (paidValue). Una venta parcial
+  // aparece como ingreso (su abono) y como cartera (su saldo) — no es doble conteo.
+  const incomeMovements = finance.filter((m) => m.kind === 'Ingreso' && m.scope === 'Empresa');
   const receivableMovements = finance.filter(isReceivable);
-  const expenseMovements = finance.filter((movement) => movement.kind === 'Gasto');
-  const companyIncome = incomeMovements.reduce((total, movement) => total + movement.value, 0);
-  const pendingIncome = receivableMovements.reduce((total, movement) => total + movement.value, 0);
-  const companyExpenses = expenseMovements
-    .filter((movement) => movement.scope === 'Empresa')
-    .reduce((total, movement) => total + movement.value, 0);
-  const personalOut = expenseMovements
-    .filter((movement) => movement.scope !== 'Empresa')
-    .reduce((total, movement) => total + movement.value, 0);
-  const activeMovements =
-    activeTab === 'ingresos' ? incomeMovements : activeTab === 'egresos' ? expenseMovements : receivableMovements;
-  const activeTotal = activeMovements.reduce((total, movement) => total + movement.value, 0);
-  const activeMeta = {
-    ingresos: {
-      eyebrow: 'Ingresos',
-      title: 'Ingresos recibidos',
-      badge: `${incomeMovements.length} registros`,
-      empty: 'No hay ingresos recibidos en este periodo.',
-    },
-    egresos: {
-      eyebrow: 'Egresos',
-      title: 'Egresos y retiros',
-      badge: `${expenseMovements.length} registros`,
-      empty: 'No hay egresos en este periodo.',
-    },
-    cobrar: {
-      eyebrow: 'Cuentas por cobrar',
-      title: 'Cartera pendiente',
-      badge: `${receivableMovements.length} pendientes`,
-      empty: 'No hay cuentas por cobrar en este periodo.',
-    },
-  }[activeTab];
+  const expenseMovements = finance.filter((m) => m.kind === 'Gasto');
+  const balanceOf = (m: FinanceMovement) => (m.invoiceValue ?? m.value) - (m.paidValue ?? 0);
+  const receivableBalance = receivableMovements.reduce((t, m) => t + balanceOf(m), 0);
+  const active =
+    tab === 'ingresos' ? incomeMovements : tab === 'egresos' ? expenseMovements : receivableMovements;
+  const total = tab === 'cobrar' ? receivableBalance : active.reduce((t, m) => t + m.value, 0);
+
+  const focus =
+    tab === 'ingresos'
+      ? [
+          ['Recibido', formatCompact(total)],
+          ['Registros', String(incomeMovements.length)],
+          ['Ticket prom.', incomeMovements.length ? formatCompact(total / incomeMovements.length) : '$0'],
+          ['Clientes', String(new Set(incomeMovements.map((m) => m.person)).size)],
+        ]
+      : tab === 'egresos'
+        ? [
+            ['Egresos', formatCompact(total)],
+            ['Empresa', formatCompact(expenseMovements.filter((m) => m.scope === 'Empresa').reduce((t, m) => t + m.value, 0))],
+            ['No empresa', formatCompact(personalOut)],
+            ['Soportes', `${expenseMovements.filter((m) => m.attachment || m.attachmentUrl).length}/${expenseMovements.length}`],
+          ]
+        : [
+            ['Por cobrar', formatCompact(total)],
+            ['Vencido', formatCompact(receivableMovements.filter((m) => m.status === 'Vencido').reduce((t, m) => t + balanceOf(m), 0))],
+            ['Abonado', formatCompact(receivableMovements.reduce((t, m) => t + (m.paidValue ?? 0), 0))],
+            ['Facturado', formatCompact(receivableMovements.reduce((t, m) => t + (m.invoiceValue ?? m.value), 0))],
+          ];
+
+  const breakdownPrimary =
+    tab === 'egresos'
+      ? sumBy(active, (m) => m.costCenter, (m) => m.value)
+      : tab === 'cobrar'
+        ? sumBy(active, (m) => m.status, (m) => m.value)
+        : sumBy(active, (m) => m.category, (m) => m.value);
+  const breakdownPayment = sumBy(active, (m) => m.paymentMethod, (m) => m.value);
 
   return (
-    <div className="content-stack">
-      <CollapsiblePeriodFilter
-        filter={financeFilter}
-        onChange={setFinanceFilter}
-        label="Calendario de busqueda"
-        open={filterOpen}
-        onToggle={() => setFilterOpen((current) => !current)}
-      />
-
-      <div className="accounting-tabs" role="tablist" aria-label="Secciones de contabilidad">
-        <button
-          className={activeTab === 'ingresos' ? 'active' : ''}
-          onClick={() => setActiveTab('ingresos')}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'ingresos'}
-        >
-          <TrendingUp size={16} />
-          Ingresos
-          <span>{formatCurrency(companyIncome)}</span>
+    <>
+      <div className="acct-tabs" data-reveal role="tablist">
+        <button className={`acct-tab${tab === 'ingresos' ? ' is-active' : ''}`} onClick={() => setTab('ingresos')} role="tab">
+          <span className="acct-tab__top">
+            <TrendingUp size={16} /> Ingresos
+          </span>
+          <strong>{formatCompact(companyIncome)}</strong>
         </button>
-        <button
-          className={activeTab === 'egresos' ? 'active' : ''}
-          onClick={() => setActiveTab('egresos')}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'egresos'}
-        >
-          <CreditCard size={16} />
-          Egresos
-          <span>{formatCurrency(companyExpenses + personalOut)}</span>
+        <button className={`acct-tab${tab === 'egresos' ? ' is-active' : ''}`} onClick={() => setTab('egresos')} role="tab">
+          <span className="acct-tab__top">
+            <CreditCard size={16} /> Egresos
+          </span>
+          <strong>{formatCompact(companyExpenses + personalOut)}</strong>
         </button>
-        <button
-          className={activeTab === 'cobrar' ? 'active' : ''}
-          onClick={() => setActiveTab('cobrar')}
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'cobrar'}
-        >
-          <CalendarClock size={16} />
-          Cuentas por cobrar
-          <span>{formatCurrency(pendingIncome)}</span>
+        <button className={`acct-tab${tab === 'cobrar' ? ' is-active' : ''}`} onClick={() => setTab('cobrar')} role="tab">
+          <span className="acct-tab__top">
+            <CalendarClock size={16} /> Por cobrar
+          </span>
+          <strong>{formatCompact(pendingIncome)}</strong>
         </button>
       </div>
 
-      <article className="panel accounting-page-panel">
-        <SectionHeader
-          eyebrow={activeMeta.eyebrow}
-          title={activeMeta.title}
-          action={<Badge label={`${activeMeta.badge} · ${formatCurrency(activeTotal)}`} tone={activeTab === 'egresos' ? 'warning' : activeTab === 'cobrar' ? 'danger' : 'success'} />}
-        />
-        <AccountingTabPanel
-          tab={activeTab}
-          movements={activeMovements}
-          emptyText={activeMeta.empty}
-          onSupport={setSelectedSupport}
-        />
+      <article className="panel stack" data-reveal>
+        <div className="acct-focus">
+          {focus.map(([label, val]) => (
+            <div key={label}>
+              <span>{label}</span>
+              <strong>{val}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div className="breakdown">
+          <article>
+            <strong>{tab === 'egresos' ? 'Centros de costo' : tab === 'cobrar' ? 'Estado de recaudo' : 'Categorías'}</strong>
+            {Object.entries(breakdownPrimary).map(([k, v]) => (
+              <div className="detail-line" key={k}>
+                <span>{k}</span>
+                <strong>{formatCurrency(v)}</strong>
+              </div>
+            ))}
+          </article>
+          <article>
+            <strong>Medios de pago</strong>
+            {Object.entries(breakdownPayment).map(([k, v]) => (
+              <div className="detail-line" key={k}>
+                <span>{k}</span>
+                <strong>{formatCurrency(v)}</strong>
+              </div>
+            ))}
+          </article>
+        </div>
+
+        <FinanceTable tab={tab} movements={active} onSupport={setSupport} />
       </article>
 
-      <section className="split-layout accounting-entry-layout">
-        <article className="panel">
-          <SectionHeader eyebrow="Nuevo" title="Movimiento" />
-          <form className="form-grid" onSubmit={addMovement}>
-            <label>
-              Tipo
+      <div className="toolbar" data-reveal>
+        <button className="btn btn--soft" onClick={() => setFormOpen((o) => !o)}>
+          <Plus size={17} /> {formOpen ? 'Cerrar' : 'Registrar movimiento'}
+        </button>
+      </div>
+
+      {formOpen && (
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Nuevo</span>
+              <h2>Movimiento de caja</h2>
+            </div>
+          </div>
+          <form className="form" onSubmit={addMovement}>
+            <Field label="Tipo">
               <select name="kind">
                 <option>Ingreso</option>
                 <option>Gasto</option>
               </select>
-            </label>
-            <label>
-              Fecha
+            </Field>
+            <Field label="Fecha">
               <input name="date" type="date" />
-            </label>
-            <label>
-              Cliente/proveedor
+            </Field>
+            <Field label="Cliente / proveedor">
               <input name="person" placeholder="Nombre" />
-            </label>
-            <label>
-              Concepto
-              <input name="concept" placeholder="Concepto" />
-            </label>
-            <label>
-              Categoria
-              <input name="category" placeholder="Tratamientos, inventario..." />
-            </label>
-            <label>
-              Valor
-              <input name="value" type="number" placeholder="0" />
-            </label>
-            <label>
-              Valor factura
-              <input name="invoiceValue" type="number" placeholder="Total vendido" />
-            </label>
-            <label>
-              Abonado
-              <input name="paidValue" type="number" placeholder="Pagado hasta ahora" />
-            </label>
-            <label>
-              Fecha limite
-              <input name="dueDate" type="date" />
-            </label>
-            <label>
-              Medio de pago
+            </Field>
+            <Field label="Concepto">
+              <input name="concept" placeholder="Concepto" required />
+            </Field>
+            <Field label="Categoría">
+              <input name="category" placeholder="Tratamientos, inventario…" />
+            </Field>
+            <Field label="Valor">
+              <input name="value" type="number" min="0" placeholder="0" required />
+            </Field>
+            <Field label="Medio de pago">
               <select name="paymentMethod">
                 <option>Transferencia</option>
                 <option>Efectivo</option>
@@ -2054,20 +1400,9 @@ function AccountingView({
                 <option>PSE</option>
                 <option>Nequi</option>
                 <option>Daviplata</option>
-                <option>Pendiente</option>
               </select>
-            </label>
-            <label>
-              Estado
-              <select name="status">
-                <option>Recibido</option>
-                <option>Pendiente</option>
-                <option>Pagado</option>
-                <option>Vencido</option>
-              </select>
-            </label>
-            <label>
-              Centro de costo
+            </Field>
+            <Field label="Centro de costo">
               <select name="costCenter">
                 <option>Operacion</option>
                 <option>Inventario</option>
@@ -2076,560 +1411,495 @@ function AccountingView({
                 <option>Administrativo</option>
                 <option>Personal</option>
               </select>
-            </label>
-            <label>
-              Clasificacion
+            </Field>
+            <Field label="Clasificación">
               <select name="scope">
                 <option>Empresa</option>
                 <option>Personal</option>
                 <option>Retiro socio</option>
                 <option>Reembolso</option>
               </select>
-            </label>
-            <label className="file-button">
-              <Camera size={16} />
-              Foto soporte
-              <input name="attachment" type="file" accept="image/*" />
-            </label>
-            <label>
-              Link soporte
-              <input name="attachmentUrl" type="url" placeholder="Drive, banco, factura..." />
-            </label>
-            <label className="full">
-              Nota
-              <input name="note" placeholder="Acuerdo, abono, responsable o detalle importante" />
-            </label>
-            <button className="primary-action full" type="submit">
-              <Plus size={18} />
-              Registrar
+            </Field>
+            <Field label="Link soporte" full>
+              <input name="attachmentUrl" type="url" placeholder="Drive, banco, factura…" />
+            </Field>
+            <Field label="Nota" full>
+              <input name="note" placeholder="Acuerdo, abono o detalle importante" />
+            </Field>
+            <button className="btn btn--primary field--full" type="submit">
+              <Plus size={18} /> Registrar
             </button>
           </form>
         </article>
-      </section>
-
-      {selectedSupport && (
-        <SupportModal movement={selectedSupport} onClose={() => setSelectedSupport(null)} />
       )}
-    </div>
+
+      {support && <SupportSheet movement={support} onClose={() => setSupport(null)} />}
+    </>
   );
 }
 
-function AccountingTabPanel({
+function FinanceTable({
   tab,
   movements,
-  emptyText,
   onSupport,
 }: {
   tab: AccountingTab;
   movements: FinanceMovement[];
-  emptyText: string;
-  onSupport: (movement: FinanceMovement) => void;
+  onSupport: (m: FinanceMovement) => void;
 }) {
-  const total = movements.reduce((sum, movement) => sum + movement.value, 0);
-  const byCategory = sumBy(movements, (movement) => movement.category, (movement) => movement.value);
-  const byPayment = sumBy(movements, (movement) => movement.paymentMethod, (movement) => movement.value);
-  const supported = movements.filter((movement) => movement.attachment || movement.attachmentUrl).length;
-  const overdue = movements.filter((movement) => movement.status === 'Vencido').reduce((sum, movement) => sum + movement.value, 0);
-  const operational = movements.filter((movement) => movement.scope === 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
-  const personal = movements.filter((movement) => movement.scope !== 'Empresa').reduce((sum, movement) => sum + movement.value, 0);
-  const invoiceTotal = movements.reduce((sum, movement) => sum + (movement.invoiceValue ?? movement.value), 0);
-  const paidTotal = movements.reduce((sum, movement) => sum + (movement.paidValue ?? (tab === 'ingresos' ? movement.value : 0)), 0);
-  const byStatus = sumBy(movements, (movement) => movement.status, (movement) => movement.value);
-
-  const config = {
-    ingresos: {
-      className: 'income',
-      title: 'Panel de ingresos recibidos',
-      copy: 'Pagos reales por paciente, servicio, fecha de recaudo y metodo de pago.',
-      firstLabel: 'Recibido total',
-      firstValue: formatCurrency(total),
-      secondLabel: 'Metodos activos',
-      secondValue: String(Object.keys(byPayment).length),
-      thirdLabel: 'Ticket promedio',
-      thirdValue: movements.length ? formatCurrency(total / movements.length) : formatCurrency(0),
-      fourthLabel: 'Clientes cobrados',
-      fourthValue: String(new Set(movements.map((movement) => movement.person)).size),
-      tableTitle: 'Detalle de ingresos cobrados',
-    },
-    egresos: {
-      className: 'expense',
-      title: 'Control de egresos y soportes',
-      copy: 'Vista de gastos operativos, retiros y centros de costo con foto o link del comprobante.',
-      firstLabel: 'Egresos total',
-      firstValue: formatCurrency(total),
-      secondLabel: 'Soportes cargados',
-      secondValue: `${supported}/${movements.length}`,
-      thirdLabel: 'No empresa',
-      thirdValue: formatCurrency(personal),
-      fourthLabel: 'Operativo empresa',
-      fourthValue: formatCurrency(operational),
-      tableTitle: 'Detalle de gastos y retiros',
-    },
-    cobrar: {
-      className: 'receivable',
-      title: 'Seguimiento de cartera',
-      copy: 'Cartera por paciente: valor facturado, abonos, saldo, fecha limite y dias de mora.',
-      firstLabel: 'Por cobrar',
-      firstValue: formatCurrency(total),
-      secondLabel: 'Vencido',
-      secondValue: formatCurrency(overdue),
-      thirdLabel: 'Abonado',
-      thirdValue: formatCurrency(paidTotal),
-      fourthLabel: 'Facturado',
-      fourthValue: formatCurrency(invoiceTotal),
-      tableTitle: 'Detalle de cuentas por cobrar',
-    },
-  }[tab];
-
+  if (movements.length === 0) {
+    return (
+      <div className="table-wrap">
+        <p className="empty-cell">No hay registros en esta vista.</p>
+      </div>
+    );
+  }
   return (
-    <div className={`accounting-workspace ${config.className}`}>
-      <div className="accounting-workspace-hero">
-        <div>
-          <span>{config.title}</span>
-          <p>{config.copy}</p>
-        </div>
-        <strong>{formatCurrency(total)}</strong>
-      </div>
-
-      <div className="accounting-focus-grid">
-        <div>
-          <span>{config.firstLabel}</span>
-          <strong>{config.firstValue}</strong>
-        </div>
-        <div>
-          <span>{config.secondLabel}</span>
-          <strong>{config.secondValue}</strong>
-        </div>
-        <div>
-          <span>{config.thirdLabel}</span>
-          <strong>{config.thirdValue}</strong>
-        </div>
-        <div>
-          <span>{config.fourthLabel}</span>
-          <strong>{config.fourthValue}</strong>
-        </div>
-      </div>
-
-      <div className="accounting-breakdown">
-        <article>
-          <strong>{tab === 'cobrar' ? 'Estado de recaudo' : tab === 'egresos' ? 'Centros de costo' : 'Categorias vendidas'}</strong>
-          {Object.keys(tab === 'cobrar' ? byStatus : tab === 'egresos' ? sumBy(movements, (movement) => movement.costCenter, (movement) => movement.value) : byCategory).length > 0 ? (
-            Object.entries(tab === 'cobrar' ? byStatus : tab === 'egresos' ? sumBy(movements, (movement) => movement.costCenter, (movement) => movement.value) : byCategory).map(([category, value]) => (
-              <DetailLine key={category} label={category} value={formatCurrency(value)} />
-            ))
-          ) : (
-            <DetailLine label="Sin datos" value={formatCurrency(0)} />
-          )}
-        </article>
-        <article>
-          <strong>{tab === 'egresos' ? 'Metodo y soporte' : 'Medios de pago'}</strong>
-          {Object.keys(byPayment).length > 0 ? (
-            Object.entries(byPayment).map(([method, value]) => (
-              <DetailLine key={method} label={method} value={formatCurrency(value)} />
-            ))
-          ) : (
-            <DetailLine label="Sin datos" value={formatCurrency(0)} />
-          )}
-          {tab === 'egresos' && <DetailLine label="Con soporte" value={`${supported}/${movements.length}`} />}
-        </article>
-      </div>
-
-      <SectionHeader eyebrow="Detalle" title={config.tableTitle} />
-      {tab === 'ingresos' && <IncomeTable movements={movements} emptyText={emptyText} />}
-      {tab === 'egresos' && <ExpenseTable movements={movements} emptyText={emptyText} onSupport={onSupport} />}
-      {tab === 'cobrar' && <ReceivableTable movements={movements} emptyText={emptyText} />}
-    </div>
-  );
-}
-
-function IncomeTable({
-  movements,
-  emptyText,
-}: {
-  movements: FinanceMovement[];
-  emptyText: string;
-}) {
-  return (
-    <div className="table-wrap accounting-table-wrap">
-      <table className="accounting-table income-table">
+    <div className="table-wrap">
+      <table className="table">
         <thead>
-          <tr>
-            <th>Cliente</th>
-            <th>Fecha pago</th>
-            <th>Servicio</th>
-            <th>Categoria</th>
-            <th>Metodo</th>
-            <th>Factura</th>
-            <th>Recibido</th>
-            <th>Estado</th>
-          </tr>
+          {tab === 'ingresos' && (
+            <tr>
+              <th>Cliente</th>
+              <th>Fecha</th>
+              <th>Servicio</th>
+              <th>Método</th>
+              <th>Recibido</th>
+              <th>Estado</th>
+            </tr>
+          )}
+          {tab === 'egresos' && (
+            <tr>
+              <th>Concepto</th>
+              <th>Fecha</th>
+              <th>Centro</th>
+              <th>Valor</th>
+              <th>Soporte</th>
+              <th>Estado</th>
+            </tr>
+          )}
+          {tab === 'cobrar' && (
+            <tr>
+              <th>Paciente</th>
+              <th>Facturado</th>
+              <th>Abonado</th>
+              <th>Saldo</th>
+              <th>Límite</th>
+              <th>Estado</th>
+            </tr>
+          )}
         </thead>
         <tbody>
-          {movements.length === 0 ? (
-            <tr>
-              <td className="empty-table" colSpan={8}>{emptyText}</td>
-            </tr>
-          ) : (
-            movements.map((movement) => (
-              <tr key={movement.id}>
-                <td data-label="Cliente">
-                  <strong>{movement.person}</strong>
-                  <span>{movement.id}</span>
+          {movements.map((m) => {
+            if (tab === 'ingresos') {
+              return (
+                <tr key={m.id}>
+                  <td>
+                    <strong>{m.person}</strong>
+                    <span>{m.id}</span>
+                  </td>
+                  <td className="num">{formatDate(m.date)}</td>
+                  <td>
+                    <strong>{m.concept}</strong>
+                    <span>{m.category}</span>
+                  </td>
+                  <td>{m.paymentMethod}</td>
+                  <td className="num">{formatCurrency(m.value)}</td>
+                  <td>
+                    <Badge label={m.status} tone={statusTone(m.status)} />
+                  </td>
+                </tr>
+              );
+            }
+            if (tab === 'egresos') {
+              return (
+                <tr key={m.id}>
+                  <td>
+                    <strong>{m.concept}</strong>
+                    <span>{m.person}</span>
+                  </td>
+                  <td className="num">{formatDate(m.date)}</td>
+                  <td>{m.costCenter}</td>
+                  <td className="num">{formatCurrency(m.value)}</td>
+                  <td>
+                    {m.attachment || m.attachmentUrl ? (
+                      <button className="support-link" onClick={() => onSupport(m)}>
+                        <Eye size={14} /> Ver
+                      </button>
+                    ) : (
+                      <span style={{ color: 'var(--faint)' }}>—</span>
+                    )}
+                  </td>
+                  <td>
+                    <Badge label={m.scope === 'Empresa' ? m.status : m.scope} tone={statusTone(m.status)} />
+                  </td>
+                </tr>
+              );
+            }
+            const saldo = (m.invoiceValue ?? m.value) - (m.paidValue ?? 0);
+            return (
+              <tr key={m.id}>
+                <td>
+                  <strong>{m.person}</strong>
+                  <span>{m.note ?? m.concept}</span>
                 </td>
-                <td data-label="Fecha pago">{movement.date}</td>
-                <td data-label="Servicio">
-                  <strong>{movement.concept}</strong>
-                  <span>{movement.note ?? 'Pago registrado en caja empresa'}</span>
-                </td>
-                <td data-label="Categoria">{movement.category}</td>
-                <td data-label="Metodo">
-                  <strong className="payment-method">{movement.paymentMethod}</strong>
-                </td>
-                <td data-label="Factura">{formatCurrency(movement.invoiceValue ?? movement.value)}</td>
-                <td data-label="Recibido">{formatCurrency(movement.value)}</td>
-                <td data-label="Estado">
-                  <span className="status-text">{movement.status}</span>
+                <td className="num">{formatCurrency(m.invoiceValue ?? m.value)}</td>
+                <td className="num">{formatCurrency(m.paidValue ?? 0)}</td>
+                <td className="num">{formatCurrency(saldo)}</td>
+                <td className="num">{m.dueDate ? formatDate(m.dueDate) : '—'}</td>
+                <td>
+                  <Badge label={m.status} tone={statusTone(m.status)} />
                 </td>
               </tr>
-            ))
-          )}
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function ExpenseTable({
-  movements,
-  emptyText,
-  onSupport,
-}: {
-  movements: FinanceMovement[];
-  emptyText: string;
-  onSupport: (movement: FinanceMovement) => void;
-}) {
-  return (
-    <div className="table-wrap accounting-table-wrap">
-      <table className="accounting-table expense-table">
-        <thead>
-          <tr>
-            <th>Proveedor / retiro</th>
-            <th>Fecha</th>
-            <th>Concepto</th>
-            <th>Categoria</th>
-            <th>Centro</th>
-            <th>Valor</th>
-            <th>Clasificacion</th>
-            <th>Metodo</th>
-            <th>Estado</th>
-            <th>Soporte</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movements.length === 0 ? (
-            <tr>
-              <td className="empty-table" colSpan={10}>{emptyText}</td>
-            </tr>
-          ) : (
-            movements.map((movement) => (
-              <tr key={movement.id}>
-                <td data-label="Proveedor / retiro">
-                  <strong>{movement.person}</strong>
-                  <span>{movement.id}</span>
-                </td>
-                <td data-label="Fecha">{movement.date}</td>
-                <td data-label="Concepto">
-                  <strong>{movement.concept}</strong>
-                  <span>{movement.note ?? 'Gasto registrado'}</span>
-                </td>
-                <td data-label="Categoria">
-                  <strong>{movement.category}</strong>
-                </td>
-                <td data-label="Centro">{movement.costCenter}</td>
-                <td data-label="Valor">{formatCurrency(movement.value)}</td>
-                <td data-label="Clasificacion">
-                  <Badge label={movement.scope} tone={movement.scope === 'Empresa' ? 'success' : 'neutral'} />
-                </td>
-                <td data-label="Metodo">
-                  <strong className="payment-method">{movement.paymentMethod}</strong>
-                </td>
-                <td data-label="Estado">
-                  <span className="status-text">{movement.status}</span>
-                </td>
-                <td data-label="Soporte">
-                  <SupportCell movement={movement} onSupport={onSupport} />
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ReceivableTable({ movements, emptyText }: { movements: FinanceMovement[]; emptyText: string }) {
-  return (
-    <div className="table-wrap accounting-table-wrap">
-      <table className="accounting-table receivable-table">
-        <thead>
-          <tr>
-            <th>Deudor</th>
-            <th>Desde</th>
-            <th>Fecha limite</th>
-            <th>Mora</th>
-            <th>Concepto</th>
-            <th>Facturado</th>
-            <th>Abonado</th>
-            <th>Saldo</th>
-            <th>Estado</th>
-            <th>Nota</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movements.length === 0 ? (
-            <tr>
-              <td className="empty-table" colSpan={10}>{emptyText}</td>
-            </tr>
-          ) : (
-            movements.map((movement) => (
-              <tr key={movement.id}>
-                <td data-label="Deudor">
-                  <strong>{movement.person}</strong>
-                  <span>{movement.id}</span>
-                </td>
-                <td data-label="Desde">{movement.date}</td>
-                <td data-label="Fecha limite">{movement.dueDate ?? '-'}</td>
-                <td data-label="Mora">
-                  <strong className={daysFromDueDate(movement.dueDate) && daysFromDueDate(movement.dueDate)! > 0 ? 'overdue-text' : 'due-text'}>
-                    {dueLabel(movement)}
-                  </strong>
-                </td>
-                <td data-label="Concepto">
-                  <strong>{movement.concept}</strong>
-                  <span>{movement.category}</span>
-                </td>
-                <td data-label="Facturado">{formatCurrency(movement.invoiceValue ?? movement.value)}</td>
-                <td data-label="Abonado">{formatCurrency(movement.paidValue ?? 0)}</td>
-                <td data-label="Saldo">{formatCurrency(movement.value)}</td>
-                <td data-label="Estado">
-                  <span className="status-text">{movement.status}</span>
-                </td>
-                <td data-label="Nota">{movement.note ?? 'Sin nota'}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function SupportCell({ movement, onSupport }: { movement: FinanceMovement; onSupport: (movement: FinanceMovement) => void }) {
-  if (!movement.attachment && !movement.attachmentUrl) return <span className="muted-cell">Sin soporte</span>;
-
-  return (
-    <button className="support-button" onClick={() => onSupport(movement)} type="button">
-      <Eye size={16} />
-      {movement.attachment && movement.attachmentUrl ? 'Foto + link' : movement.attachment ? 'Ver foto' : 'Abrir link'}
-    </button>
-  );
-}
-
-function DetailLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-line">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function SupportModal({ movement, onClose }: { movement: FinanceMovement; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Soporte del movimiento">
-      <article className="support-modal">
-        <header className="support-modal-header">
-          <div>
-            <span>Soporte</span>
-            <h3>{movement.concept}</h3>
-          </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Cerrar soporte">
-            <X size={18} />
-          </button>
-        </header>
-
-        {movement.attachmentPreview ? (
-          <>
-            <img className="support-image" src={movement.attachmentPreview} alt={`Soporte de ${movement.concept}`} />
-            {movement.attachmentUrl && (
-              <a className="support-link support-link-floating" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
-                <LinkIcon size={16} />
-                Abrir link del soporte
-              </a>
-            )}
-          </>
-        ) : (
-          <div className="support-receipt">
-            <div className="receipt-mark">
-              <FileText size={24} />
-            </div>
-            <strong>{movement.attachment ? 'Comprobante adjunto' : 'Soporte enlazado'}</strong>
-            <span>{movement.attachment ?? 'Link externo del gasto'}</span>
-            {movement.attachmentUrl && (
-              <a className="support-link" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
-                <LinkIcon size={16} />
-                Abrir link del soporte
-              </a>
-            )}
-            <dl>
-              <div>
-                <dt>Fecha</dt>
-                <dd>{movement.date}</dd>
-              </div>
-              <div>
-                <dt>Proveedor / cliente</dt>
-                <dd>{movement.person}</dd>
-              </div>
-              <div>
-                <dt>Valor</dt>
-                <dd>{formatCurrency(movement.value)}</dd>
-              </div>
-              <div>
-                <dt>Centro de costo</dt>
-                <dd>{movement.costCenter}</dd>
-              </div>
-              <div>
-                <dt>Medio de pago</dt>
-                <dd>{movement.paymentMethod}</dd>
-              </div>
-            </dl>
-          </div>
-        )}
-      </article>
-    </div>
-  );
-}
-
-function ReportsView({
+/* ============================================================
+   REPORTES
+   ============================================================ */
+function ReportesView({
   patients,
   inventory,
   finance,
-  reportFilter,
-  setReportFilter,
+  companyIncome,
+  companyExpenses,
+  personalOut,
+  netProfit,
 }: {
   patients: Patient[];
   inventory: InventoryItem[];
   finance: FinanceMovement[];
-  reportFilter: DateFilter;
-  setReportFilter: (filter: DateFilter) => void;
+  companyIncome: number;
+  companyExpenses: number;
+  personalOut: number;
+  netProfit: number;
 }) {
-  const companyMovements = finance.filter((movement) => movement.scope === 'Empresa');
-  const companyIncome = companyMovements
-    .filter((movement) => movement.kind === 'Ingreso' && movement.status !== 'Pendiente')
-    .reduce((total, movement) => total + movement.value, 0);
-  const companyExpenses = companyMovements
-    .filter((movement) => movement.kind === 'Gasto')
-    .reduce((total, movement) => total + movement.value, 0);
-  const personalOut = finance
-    .filter((movement) => movement.scope !== 'Empresa')
-    .reduce((total, movement) => total + movement.value, 0);
-  const netProfit = companyIncome - companyExpenses;
-  const vipPatients = patients.filter((patient) => patient.tier === 'VIP').length;
-  const companyRatio = companyIncome > 0 ? Math.round((netProfit / companyIncome) * 100) : 0;
-  const stockValue = inventory.reduce((total, item) => total + item.stock * item.unitCost, 0);
+  const grown = useGrow();
+  const vip = patients.filter((p) => p.tier === 'VIP').length;
+  const ratio = companyIncome > 0 ? Math.round((netProfit / companyIncome) * 100) : 0;
+  const stockValue = inventory.reduce((t, i) => t + i.stock * i.unitCost, 0);
+  const max = Math.max(companyIncome, companyExpenses, personalOut, netProfit, 1);
   const expensesByCategory = finance
-    .filter((movement) => movement.kind === 'Gasto' && movement.scope === 'Empresa')
-    .reduce<Record<string, number>>((acc, movement) => {
-      acc[movement.category] = (acc[movement.category] ?? 0) + movement.value;
+    .filter((m) => m.kind === 'Gasto' && m.scope === 'Empresa')
+    .reduce<Record<string, number>>((acc, m) => {
+      acc[m.category] = (acc[m.category] ?? 0) + m.value;
       return acc;
     }, {});
 
+  const bars = [
+    { label: 'Ingresos empresa', value: companyIncome, tone: 'success' as const },
+    { label: 'Gastos empresa', value: companyExpenses, tone: 'warning' as const },
+    { label: 'Utilidad real', value: netProfit, tone: 'neutral' as const },
+    { label: 'Personal / retiros', value: personalOut, tone: 'warning' as const },
+  ];
+
   return (
-    <div className="content-stack">
-      <SectionHeader
-        eyebrow="Reportes"
-        title="Resumen dinamico"
-        action={
-          <button className="secondary-action" onClick={() => window.print()} type="button">
-            <Download size={16} />
-            Exportar
-          </button>
-        }
-      />
-      <PeriodFilter filter={reportFilter} onChange={setReportFilter} label="Filtrar reportes por periodo" />
-      <section className="stats-grid">
-        <StatCard label="Margen empresa" value={`${companyRatio}%`} helper="Ingresos vs utilidad" icon={Activity} tone="success" />
-        <StatCard label="Pacientes VIP" value={String(vipPatients)} helper="Por valor de venta" icon={Sparkles} tone="success" />
-        <StatCard label="Valor inventario" value={formatCurrency(stockValue)} helper="Stock valorizado" icon={PackageCheck} tone="neutral" />
-        <StatCard label="Separado personal" value={formatCurrency(personalOut)} helper="No afecta utilidad" icon={WalletCards} tone="neutral" />
+    <>
+      <section className="kpi-grid" data-reveal>
+        <SignalKpi icon={Activity} tone="ok" label="Margen" value={`${ratio}%`} hint="Utilidad / ingresos" />
+        <SignalKpi icon={Sparkles} tone="brand" label="Pacientes VIP" value={vip} hint="Por valor de venta" />
+        <Kpi icon={Package} tone="warn" label="Valor inventario" value={formatCompact(stockValue)} hint="Stock valorizado" />
+        <Kpi icon={Wallet} tone="brand" label="Separado personal" value={formatCompact(personalOut)} hint="No afecta utilidad" />
       </section>
 
-      <section className="dashboard-grid">
-        <article className="panel span-2">
-          <SectionHeader eyebrow="Flujo" title="Empresa vs operacion" />
-          <div className="bars">
-            <ReportBar label="Ingresos empresa" value={companyIncome} max={Math.max(companyIncome, companyExpenses, personalOut)} tone="success" />
-            <ReportBar label="Gastos empresa" value={companyExpenses} max={Math.max(companyIncome, companyExpenses, personalOut)} tone="warning" />
-            <ReportBar label="Utilidad" value={netProfit} max={Math.max(companyIncome, companyExpenses, personalOut)} tone="success" />
-            <ReportBar label="Personal/retiros" value={personalOut} max={Math.max(companyIncome, companyExpenses, personalOut)} tone="neutral" />
+      <div className="grid-2">
+        <article className="panel" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Flujo</span>
+              <h2>Empresa vs operación</h2>
+            </div>
+            <button className="btn btn--ghost" onClick={() => window.print()}>
+              <Download size={16} /> Exportar
+            </button>
           </div>
-        </article>
-
-        <article className="panel">
-          <SectionHeader eyebrow="Categorias" title="Gastos empresa" />
-          <div className="category-list">
-            {Object.entries(expensesByCategory).map(([category, value]) => (
-              <div key={category}>
-                <span>{category}</span>
-                <strong>{formatCurrency(value)}</strong>
+          <div className="bars">
+            {bars.map((b) => (
+              <div key={b.label}>
+                <div className="bar__top">
+                  <span>{b.label}</span>
+                  <strong className="tnum">{formatCurrency(b.value)}</strong>
+                </div>
+                <span className="bar__track">
+                  <span
+                    className={`bar__fill bar__fill--${b.tone}`}
+                    style={{ width: grown ? `${Math.max(3, (b.value / max) * 100)}%` : '0%' }}
+                  />
+                </span>
               </div>
             ))}
           </div>
         </article>
 
-        <article className="panel">
-          <SectionHeader eyebrow="Mes" title="Lectura rapida" />
-          <ul className="insight-list">
-            <li>
-              <Check size={16} />
-              Caja empresa separada de retiros personales.
-            </li>
-            <li>
-              <AlertTriangle size={16} />
-              Revisar productos bajo minimo.
-            </li>
-            <li>
-              <ClipboardList size={16} />
-              Mantener soportes de gastos adjuntos.
-            </li>
-          </ul>
-        </article>
-      </section>
+        <div className="stack">
+          <article className="panel" data-reveal>
+            <div className="panel__head">
+              <div>
+                <span className="eyebrow">Categorías</span>
+                <h2>Gastos empresa</h2>
+              </div>
+            </div>
+            <div className="cat-list">
+              {Object.entries(expensesByCategory).map(([c, v]) => (
+                <div key={c}>
+                  <span>{c}</span>
+                  <strong className="tnum">{formatCurrency(v)}</strong>
+                </div>
+              ))}
+              {Object.keys(expensesByCategory).length === 0 && (
+                <div>
+                  <span>Sin gastos</span>
+                  <strong>$0</strong>
+                </div>
+              )}
+            </div>
+          </article>
+
+          <article className="panel" data-reveal>
+            <div className="panel__head">
+              <div>
+                <span className="eyebrow">Lectura rápida</span>
+                <h2>Del mes</h2>
+              </div>
+            </div>
+            <ul className="insights">
+              <li>
+                <Check size={17} /> Caja empresa separada de retiros personales.
+              </li>
+              <li>
+                <AlertTriangle size={17} /> Revisar productos bajo mínimo antes de vender.
+              </li>
+              <li>
+                <ClipboardList size={17} /> Mantener soportes de gasto adjuntos.
+              </li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   SHEETS (modales)
+   ============================================================ */
+function Sheet({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label={title}>
+      <article className="sheet" onClick={(e) => e.stopPropagation()}>
+        <span className="sheet__grab" />
+        <header className="sheet__head">
+          <div>
+            <span className="eyebrow">{eyebrow}</span>
+            <h3>{title}</h3>
+          </div>
+          <button className="btn btn--icon" onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </header>
+        {children}
+      </article>
     </div>
   );
 }
 
-function ReportBar({
-  label,
-  value,
-  max,
-  tone,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  tone: 'neutral' | 'success' | 'warning';
-}) {
+function PatientSheet({ patient, onClose }: { patient: Patient; onClose: () => void }) {
+  const history = patientHistory(patient);
+  const endingSoon = patient.peptides.filter((p) => p.endsInDays <= 10).length;
+  const signal = treatmentSignal(patient.daysLeft);
   return (
-    <div className={`report-bar ${tone}`}>
-      <div>
-        <span>{label}</span>
-        <strong>{formatCurrency(value)}</strong>
+    <Sheet eyebrow="Historial del paciente" title={patient.name} onClose={onClose}>
+      <div className={`sheet__hero sheet__hero--${signal}`}>
+        <div>
+          <span>
+            {patient.id} · {patient.tier} · {formatCurrency(patient.saleValue)}
+          </span>
+          <strong>{patient.plan}</strong>
+          <span>{patient.status}</span>
+        </div>
+        <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={88} stroke={8} />
       </div>
-      <i>
-        <em style={{ width: `${Math.max(4, (value / Math.max(max, 1)) * 100)}%` }} />
-      </i>
-    </div>
+
+      <div className="mini-grid">
+        <article>
+          <span>Inicio</span>
+          <strong>{formatDate(patient.startDate)}</strong>
+        </article>
+        <article>
+          <span>Final</span>
+          <strong>{formatDate(patient.endDate)}</strong>
+        </article>
+        <article>
+          <span>Péptidos</span>
+          <strong>{patient.peptides.length}</strong>
+        </article>
+        <article>
+          <span>Por cerrar</span>
+          <strong>{endingSoon}</strong>
+        </article>
+      </div>
+
+      <div className="sheet__section">
+        <div className="label">
+          <Syringe size={17} /> Tratamiento activo
+        </div>
+        <div className="treatment-list">
+          {patient.peptides.map((p) => (
+            <article key={p.name}>
+              <span className={`dot dot--${treatmentSignal(p.endsInDays)}`} />
+              <div>
+                <strong>{p.name}</strong>
+                <span style={{ display: 'block', fontSize: '0.74rem', color: 'var(--muted)', marginLeft: 0 }}>
+                  {p.dose}
+                </span>
+              </div>
+              <span>{p.endsInDays} días</span>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <div className="sheet__section">
+        <div className="label">
+          <ClipboardList size={17} /> Línea de tiempo
+        </div>
+        <div className="timeline">
+          {history.map((item) => (
+            <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
+              <span>{item.date === '-' ? 'Sin fecha' : formatDate(item.date) || item.date}</span>
+              <div>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="next-steps">
+        <strong>Próximos pasos</strong>
+        <span>
+          {patient.daysLeft <= 12
+            ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.'
+            : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}
+        </span>
+      </div>
+    </Sheet>
+  );
+}
+
+function AlertSheet({ alert, onClose }: { alert: PatientProductAlert; onClose: () => void }) {
+  return (
+    <Sheet eyebrow="Histórico de alerta" title={alert.patientName} onClose={onClose}>
+      <div className={`sheet__hero sheet__hero--${alert.signal}`}>
+        <div>
+          <span>
+            {alert.patientId} · {alert.plan}
+          </span>
+          <strong>{alert.product}</strong>
+          <span>{alert.dose}</span>
+        </div>
+        <TreatmentRing daysLeft={alert.daysLeft} totalDays={30} size={88} stroke={8} />
+      </div>
+
+      <div className="mini-grid">
+        <article>
+          <span>Días</span>
+          <strong>{alert.daysLeft}</strong>
+        </article>
+        <article>
+          <span>Estado</span>
+          <strong style={{ fontSize: '0.82rem' }}>{signalLabel(alert.signal)}</strong>
+        </article>
+        <article>
+          <span>Stock</span>
+          <strong>{alert.inventoryStock === null ? '—' : alert.inventoryStock}</strong>
+        </article>
+        <article>
+          <span>Mínimo</span>
+          <strong>{alert.inventoryMinimum === null ? '—' : alert.inventoryMinimum}</strong>
+        </article>
+      </div>
+
+      <div className="sheet__section">
+        <div className="label">
+          <ClipboardList size={17} /> Histórico
+        </div>
+        <div className="timeline">
+          {alert.history.map((item) => (
+            <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
+              <span>{item.date}</span>
+              <div>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="next-steps">
+        <strong>Acción sugerida</strong>
+        <span>{alert.nextAction}</span>
+      </div>
+    </Sheet>
+  );
+}
+
+function SupportSheet({ movement, onClose }: { movement: FinanceMovement; onClose: () => void }) {
+  return (
+    <Sheet eyebrow="Soporte del gasto" title={movement.concept} onClose={onClose}>
+      <div className="sheet__hero">
+        <div>
+          <span>
+            {movement.person} · {formatDate(movement.date)}
+          </span>
+          <strong>{formatCurrency(movement.value)}</strong>
+          <span>
+            {movement.costCenter} · {movement.paymentMethod}
+          </span>
+        </div>
+        <Badge label={movement.status} tone={statusTone(movement.status)} />
+      </div>
+
+      {movement.attachment && (
+        <div className="sheet__section">
+          <div className="label">
+            <Camera size={17} /> Comprobante
+          </div>
+          <div className="treatment-list">
+            <article>
+              <Camera size={18} style={{ color: 'var(--brand)' }} />
+              <div>
+                <strong>{movement.attachment}</strong>
+              </div>
+            </article>
+          </div>
+        </div>
+      )}
+
+      {movement.attachmentUrl && (
+        <a className="btn btn--soft btn--block" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
+          <LinkIcon size={16} /> Abrir soporte externo
+        </a>
+      )}
+
+      {movement.note && (
+        <div className="next-steps" style={{ marginTop: 16 }}>
+          <strong>Nota</strong>
+          <span>{movement.note}</span>
+        </div>
+      )}
+    </Sheet>
   );
 }
