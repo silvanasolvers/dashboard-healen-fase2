@@ -12,6 +12,7 @@ import gsap from 'gsap';
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   BarChart3,
   CalendarClock,
   Camera,
@@ -55,6 +56,7 @@ import {
   Patient,
   patientHistory,
   PatientProductAlert,
+  Signal,
   signalLabel,
   statusTone,
   stockSignal,
@@ -152,6 +154,19 @@ function useScrollReveal(dep: unknown) {
       cleanup();
     };
   }, [dep]);
+
+  // Seguro: en CADA render revela al instante cualquier [data-reveal] que haya
+  // entrado y siga sobre el fold (cambios de sub-tab, master-detail, etc.). Sin
+  // esto, contenido remontado dentro de la misma vista quedaría en opacity 0.
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root || REDUCED) return;
+    const vh = window.innerHeight;
+    root.querySelectorAll<HTMLElement>('[data-reveal]:not(.in)').forEach((el) => {
+      if (el.getBoundingClientRect().top < vh * 0.95) el.classList.add('in');
+    });
+  });
+
   return ref;
 }
 
@@ -300,6 +315,10 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [loadError, setLoadError] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(null);
   const [prescribe, setPrescribe] = useState<Patient | null>(null);
+  // Detalle abierto (master-detail). Vive aquí para que el reveal del .view se
+  // re-ejecute al entrar/salir (su key/dep cambia) y la lista no quede oculta.
+  const [detailPatient, setDetailPatient] = useState<Patient | null>(null);
+  const [detailAlert, setDetailAlert] = useState<PatientProductAlert | null>(null);
   const [rail, setRail] = useState<boolean>(
     () => typeof localStorage !== 'undefined' && localStorage.getItem('healen_rail') === '1',
   );
@@ -432,11 +451,19 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   function go(next: View) {
     setView(next);
     setDrawer(false);
+    setDetailPatient(null);
+    setDetailAlert(null);
   }
 
   const lead = VIEW_LEAD[view];
-  // dep incluye loading: la .view solo existe tras cargar, y key={view} la remonta.
-  const scrollRef = useScrollReveal(loading ? '__loading' : view);
+  // El detalle abierto tiene prioridad en la "ruta" actual; al alternar
+  // lista↔detalle cambia navKey → el .view se remonta y el reveal corre de nuevo.
+  const navKey = detailPatient
+    ? `patient-${detailPatient.id}`
+    : detailAlert
+      ? `alert-${detailAlert.id}`
+      : view;
+  const scrollRef = useScrollReveal(loading ? '__loading' : navKey);
 
   if (loading) return <Loader />;
   if (loadError) return <ErrorScreen onRetry={retry} onSignOut={onSignOut} />;
@@ -479,7 +506,17 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
             </div>
           </header>
 
-          <div className="view" key={view} ref={scrollRef}>
+          <div className="view" key={navKey} ref={scrollRef}>
+            {detailPatient ? (
+              <PatientDetail
+                patient={detailPatient}
+                onBack={() => setDetailPatient(null)}
+                onPrescribe={setPrescribe}
+              />
+            ) : detailAlert ? (
+              <AlertDetail alert={detailAlert} onBack={() => setDetailAlert(null)} />
+            ) : (
+              <>
             {view === 'inicio' && (
               <InicioView
                 patients={patients}
@@ -491,7 +528,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 serumCount={serumCount}
                 finishingTreatments={finishingTreatments}
                 go={go}
-                onPrescribe={setPrescribe}
+                onOpenPatient={setDetailPatient}
               />
             )}
             {view === 'pacientes' && (
@@ -502,7 +539,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 search={patientSearch}
                 setSearch={setPatientSearch}
                 addPatient={addPatient}
-                onPrescribe={setPrescribe}
+                onOpenPatient={setDetailPatient}
+                onOpenAlert={setDetailAlert}
               />
             )}
             {view === 'inventario' && (
@@ -534,6 +572,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 personalOut={personalOut}
                 netProfit={netProfit}
               />
+            )}
+              </>
             )}
           </div>
         </main>
@@ -690,7 +730,7 @@ function InicioView({
   serumCount,
   finishingTreatments,
   go,
-  onPrescribe,
+  onOpenPatient,
 }: {
   patients: Patient[];
   inventory: InventoryItem[];
@@ -701,9 +741,8 @@ function InicioView({
   serumCount: number;
   finishingTreatments: number;
   go: (v: View) => void;
-  onPrescribe: (p: Patient) => void;
+  onOpenPatient: (p: Patient) => void;
 }) {
-  const [selected, setSelected] = useState<Patient | null>(null);
   const urgent = [...patients].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 4);
   const stockView = [...inventory]
     .sort((a, b) => a.stock / Math.max(a.minimum, 1) - b.stock / Math.max(b.minimum, 1))
@@ -742,7 +781,7 @@ function InicioView({
           </div>
           <div className="today__rings">
             {urgent.map((p) => (
-              <button key={p.id} className="urgent-ring" onClick={() => setSelected(p)}>
+              <button key={p.id} className="urgent-ring" onClick={() => onOpenPatient(p)}>
                 <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={72} stroke={6} />
                 <span className="urgent-ring__name">{p.name.split(' ')[0]}</span>
                 <span className="urgent-ring__plan">{p.plan}</span>
@@ -850,8 +889,6 @@ function InicioView({
           </div>
         </article>
       </section>
-
-      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} onPrescribe={onPrescribe} />}
     </>
   );
 }
@@ -893,7 +930,8 @@ function PacientesView({
   search,
   setSearch,
   addPatient,
-  onPrescribe,
+  onOpenPatient,
+  onOpenAlert,
 }: {
   patients: Patient[];
   allPatients: Patient[];
@@ -901,11 +939,10 @@ function PacientesView({
   search: string;
   setSearch: (v: string) => void;
   addPatient: (e: FormEvent<HTMLFormElement>) => void;
-  onPrescribe: (p: Patient) => void;
+  onOpenPatient: (p: Patient) => void;
+  onOpenAlert: (a: PatientProductAlert) => void;
 }) {
   const [sub, setSub] = useState<'pacientes' | 'alertas'>('pacientes');
-  const [selected, setSelected] = useState<Patient | null>(null);
-  const [selectedAlert, setSelectedAlert] = useState<PatientProductAlert | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
   const alerts = buildPatientProductAlerts(allPatients, inventory).sort((a, b) => {
@@ -989,7 +1026,7 @@ function PacientesView({
 
           <section className="patient-grid">
             {patients.map((p) => (
-              <button key={p.id} className="patient-card" data-reveal onClick={() => setSelected(p)}>
+              <button key={p.id} className="patient-card" data-reveal onClick={() => onOpenPatient(p)}>
                 <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={66} stroke={6} />
                 <div className="patient-card__main">
                   <div className="patient-card__top">
@@ -1043,7 +1080,7 @@ function PacientesView({
           </section>
           <section className="alert-board">
             {alerts.map((a) => (
-              <button key={a.id} className={`alert-card alert-card--${a.signal}`} data-reveal onClick={() => setSelectedAlert(a)}>
+              <button key={a.id} className={`alert-card alert-card--${a.signal}`} data-reveal onClick={() => onOpenAlert(a)}>
                 <div className="alert-card__head">
                   <div>
                     <strong>{a.patientName}</strong>
@@ -1074,9 +1111,6 @@ function PacientesView({
           </section>
         </>
       )}
-
-      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} onPrescribe={onPrescribe} />}
-      {selectedAlert && <AlertSheet alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}
     </>
   );
 }
@@ -1828,166 +1862,237 @@ function Sheet({ title, eyebrow, onClose, children }: { title: string; eyebrow: 
   );
 }
 
-function PatientSheet({
+const SIGNAL_TONE: Record<Signal, Tone> = { ok: 'success', warn: 'warning', danger: 'danger' };
+
+/** Página completa de paciente (reemplaza el viejo modal). Master-detail estilo
+ *  Apple: barra de regreso + héroe + dos columnas (resumen sticky + cuerpo). */
+function PatientDetail({
   patient,
-  onClose,
+  onBack,
   onPrescribe,
 }: {
   patient: Patient;
-  onClose: () => void;
+  onBack: () => void;
   onPrescribe?: (p: Patient) => void;
 }) {
+  const ref = useScrollReveal(patient.id);
   const history = patientHistory(patient);
   const endingSoon = patient.peptides.filter((p) => p.endsInDays <= 10).length;
   const signal = treatmentSignal(patient.daysLeft);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onBack();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onBack]);
+
   return (
-    <Sheet eyebrow="Historial del paciente" title={patient.name} onClose={onClose}>
-      <div className={`sheet__hero sheet__hero--${signal}`}>
-        <div>
-          <span>
-            {patient.id} · {patient.tier} · {formatCurrency(patient.saleValue)}
-          </span>
-          <strong>{patient.plan}</strong>
-          <span>{patient.status}</span>
-        </div>
-        <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={88} stroke={8} />
-      </div>
-
-      {onPrescribe && (
-        <button
-          className="btn btn--primary btn--block rx-open"
-          onClick={() => {
-            onClose();
-            onPrescribe(patient);
-          }}
-        >
-          <Syringe size={18} /> Recetar productos
+    <div className="detail" ref={ref}>
+      <div className="detail__bar" data-reveal>
+        <button className="detail__back" onClick={onBack}>
+          <ArrowLeft size={17} /> Pacientes
         </button>
-      )}
-
-      <div className="mini-grid">
-        <article>
-          <span>Inicio</span>
-          <strong>{formatDate(patient.startDate)}</strong>
-        </article>
-        <article>
-          <span>Final</span>
-          <strong>{formatDate(patient.endDate)}</strong>
-        </article>
-        <article>
-          <span>Péptidos</span>
-          <strong>{patient.peptides.length}</strong>
-        </article>
-        <article>
-          <span>Por cerrar</span>
-          <strong>{endingSoon}</strong>
-        </article>
+        <nav className="detail__crumbs" aria-label="Ruta">
+          <button onClick={onBack}>Pacientes</button>
+          <ChevronRight size={13} />
+          <span>{patient.name}</span>
+        </nav>
       </div>
 
-      <div className="sheet__section">
-        <div className="label">
-          <Syringe size={17} /> Tratamiento activo
+      <header className={`detail__hero detail__hero--${signal}`} data-reveal>
+        <div className="detail__identity">
+          <span className="eyebrow">Historial del paciente</span>
+          <h1>{patient.name}</h1>
+          <div className="detail__tags">
+            <span className={`tier${patient.tier === 'VIP' ? ' tier--vip' : ''}`}>{patient.tier}</span>
+            <Badge label={patient.status} tone={statusTone(patient.status)} />
+            <span className="detail__pid">{patient.id}</span>
+          </div>
+          <p className="detail__plan">
+            {patient.plan} · <strong>{formatCurrency(patient.saleValue)}</strong>
+          </p>
         </div>
-        <div className="treatment-list">
-          {patient.peptides.map((p, i) => (
-            <article key={`${p.name}-${i}`}>
-              <span className={`dot dot--${treatmentSignal(p.endsInDays)}`} />
-              <div>
-                <strong>{p.name}</strong>
-                <span style={{ display: 'block', fontSize: '0.74rem', color: 'var(--muted)', marginLeft: 0 }}>
-                  {p.dose}
-                </span>
-              </div>
-              <span>{p.endsInDays} días</span>
-            </article>
-          ))}
+        <div className="detail__ringwrap">
+          <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={128} stroke={11} />
+          <span className={`detail__ringcap detail__ringcap--${signal}`}>{signalLabel(signal)}</span>
         </div>
-      </div>
+      </header>
 
-      <div className="sheet__section">
-        <div className="label">
-          <ClipboardList size={17} /> Línea de tiempo
-        </div>
-        <div className="timeline">
-          {history.map((item) => (
-            <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
-              <span>{item.date === '-' ? 'Sin fecha' : formatDate(item.date) || item.date}</span>
-              <div>
-                <strong>{item.title}</strong>
-                <p>{item.detail}</p>
-              </div>
+      <div className="detail__grid">
+        <aside className="detail__aside">
+          {onPrescribe && (
+            <button className="btn btn--primary btn--block detail__cta" data-reveal onClick={() => onPrescribe(patient)}>
+              <Syringe size={18} /> Recetar productos
+            </button>
+          )}
+          <div className="fact-card" data-reveal>
+            <div className="fact">
+              <span>Inicio</span>
+              <strong>{formatDate(patient.startDate)}</strong>
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="fact">
+              <span>Final</span>
+              <strong>{formatDate(patient.endDate)}</strong>
+            </div>
+            <div className="fact">
+              <span>Péptidos</span>
+              <strong>{patient.peptides.length}</strong>
+            </div>
+            <div className="fact">
+              <span>Por cerrar</span>
+              <strong>{endingSoon}</strong>
+            </div>
+            {patient.weeklySerum && (
+              <div className="fact">
+                <span>Suero</span>
+                <strong>{patient.serumDay}</strong>
+              </div>
+            )}
+          </div>
+          <div className="next-steps" data-reveal>
+            <strong>Próximos pasos</strong>
+            <span>
+              {patient.daysLeft <= 12
+                ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.'
+                : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}
+            </span>
+          </div>
+        </aside>
 
-      <div className="next-steps">
-        <strong>Próximos pasos</strong>
-        <span>
-          {patient.daysLeft <= 12
-            ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.'
-            : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}
-        </span>
+        <main className="detail__main">
+          <section className="detail-block" data-reveal>
+            <div className="label">
+              <Syringe size={17} /> Tratamiento activo
+            </div>
+            <div className="treatment-list">
+              {patient.peptides.map((p, i) => (
+                <article key={`${p.name}-${i}`}>
+                  <span className={`dot dot--${treatmentSignal(p.endsInDays)}`} />
+                  <div>
+                    <strong>{p.name}</strong>
+                    <span className="treatment-list__dose">{p.dose}</span>
+                  </div>
+                  <span className="treatment-list__days">{p.endsInDays} días</span>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="detail-block" data-reveal>
+            <div className="label">
+              <ClipboardList size={17} /> Línea de tiempo
+            </div>
+            <div className="timeline">
+              {history.map((item) => (
+                <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
+                  <span>{item.date === '-' ? 'Sin fecha' : formatDate(item.date) || item.date}</span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </main>
       </div>
-    </Sheet>
+    </div>
   );
 }
 
-function AlertSheet({ alert, onClose }: { alert: PatientProductAlert; onClose: () => void }) {
+/** Página completa de alerta de producto (reemplaza el viejo modal). */
+function AlertDetail({ alert, onBack }: { alert: PatientProductAlert; onBack: () => void }) {
+  const ref = useScrollReveal(alert.id);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onBack();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onBack]);
+
   return (
-    <Sheet eyebrow="Histórico de alerta" title={alert.patientName} onClose={onClose}>
-      <div className={`sheet__hero sheet__hero--${alert.signal}`}>
-        <div>
-          <span>
-            {alert.patientId} · {alert.plan}
-          </span>
-          <strong>{alert.product}</strong>
-          <span>{alert.dose}</span>
-        </div>
-        <TreatmentRing daysLeft={alert.daysLeft} totalDays={30} size={88} stroke={8} />
+    <div className="detail" ref={ref}>
+      <div className="detail__bar" data-reveal>
+        <button className="detail__back" onClick={onBack}>
+          <ArrowLeft size={17} /> Alertas
+        </button>
+        <nav className="detail__crumbs" aria-label="Ruta">
+          <button onClick={onBack}>Alertas</button>
+          <ChevronRight size={13} />
+          <span>{alert.patientName}</span>
+        </nav>
       </div>
 
-      <div className="mini-grid">
-        <article>
-          <span>Días</span>
-          <strong>{alert.daysLeft}</strong>
-        </article>
-        <article>
-          <span>Estado</span>
-          <strong style={{ fontSize: '0.82rem' }}>{signalLabel(alert.signal)}</strong>
-        </article>
-        <article>
-          <span>Stock</span>
-          <strong>{alert.inventoryStock === null ? '—' : alert.inventoryStock}</strong>
-        </article>
-        <article>
-          <span>Mínimo</span>
-          <strong>{alert.inventoryMinimum === null ? '—' : alert.inventoryMinimum}</strong>
-        </article>
-      </div>
-
-      <div className="sheet__section">
-        <div className="label">
-          <ClipboardList size={17} /> Histórico
+      <header className={`detail__hero detail__hero--${alert.signal}`} data-reveal>
+        <div className="detail__identity">
+          <span className="eyebrow">Alerta de producto</span>
+          <h1>{alert.patientName}</h1>
+          <div className="detail__tags">
+            <Badge label={signalLabel(alert.signal)} tone={SIGNAL_TONE[alert.signal]} />
+            <span className="detail__pid">
+              {alert.patientId} · {alert.plan}
+            </span>
+          </div>
+          <p className="detail__plan">
+            {alert.product} · <strong>{alert.dose}</strong>
+          </p>
         </div>
-        <div className="timeline">
-          {alert.history.map((item) => (
-            <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
-              <span>{item.date}</span>
-              <div>
-                <strong>{item.title}</strong>
-                <p>{item.detail}</p>
-              </div>
+        <div className="detail__ringwrap">
+          <TreatmentRing daysLeft={alert.daysLeft} totalDays={30} size={128} stroke={11} />
+          <span className={`detail__ringcap detail__ringcap--${alert.signal}`}>{alert.statusText}</span>
+        </div>
+      </header>
+
+      <div className="detail__grid">
+        <aside className="detail__aside">
+          <div className="fact-card" data-reveal>
+            <div className="fact">
+              <span>Días</span>
+              <strong>{alert.daysLeft}</strong>
             </div>
-          ))}
-        </div>
-      </div>
+            <div className="fact">
+              <span>Estado</span>
+              <strong className="fact__sm">{signalLabel(alert.signal)}</strong>
+            </div>
+            <div className="fact">
+              <span>Stock</span>
+              <strong>
+                {alert.inventoryStock === null ? '—' : `${alert.inventoryStock} ${alert.inventoryUnit}`}
+              </strong>
+            </div>
+            <div className="fact">
+              <span>Mínimo</span>
+              <strong>{alert.inventoryMinimum === null ? '—' : alert.inventoryMinimum}</strong>
+            </div>
+          </div>
+          <div className="next-steps" data-reveal>
+            <strong>Acción sugerida</strong>
+            <span>{alert.nextAction}</span>
+          </div>
+        </aside>
 
-      <div className="next-steps">
-        <strong>Acción sugerida</strong>
-        <span>{alert.nextAction}</span>
+        <main className="detail__main">
+          <section className="detail-block" data-reveal>
+            <div className="label">
+              <ClipboardList size={17} /> Histórico
+            </div>
+            <div className="timeline">
+              {alert.history.map((item) => (
+                <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
+                  <span>{item.date}</span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </main>
       </div>
-    </Sheet>
+    </div>
   );
 }
 

@@ -15,7 +15,7 @@ queriendo saber en dos segundos quién está por terminar y qué reponer." → t
 ## Color (OKLCH, ver `src/styles.css`)
 Estrategia: Restrained + acentos semáforo en los momentos que importan.
 - Lienzo: blanco casi puro con tinte violeta tenue (`--bg`, `--surface`).
-- Marca Healen: violeta `--brand` / `--brand-strong`.
+- **Marca Healen: el púrpura EXACTO del logo `#7A1F9B` = `oklch(0.447 0.192 315)`** (magenta-púrpura), en `--brand`/`--brand-strong`/etc. Logo real en `public/healen-logo.png` (círculo recortado, usado en sidebar/login/loader). Aurora WebGL afinada al mismo tono.
 - **Semáforo** (el lenguaje central): `--ok` esmeralda · `--warn` ámbar · `--danger` rosa-rojo.
 - Tinta profunda violeta para legibilidad (≥4.5:1).
 
@@ -28,7 +28,17 @@ Anillo SVG estilo Apple Activity. Se vacía según días restantes y cambia de c
 verde→ámbar→rojo (`treatmentSignal`: ≤5 rojo, ≤12 ámbar, resto verde). El número
 de días va al centro. Se rellena animado con GSAP al montar. Es el semáforo que
 pidió el cliente: rojo = está por acabarse → vender; vuelve a verde al reponer.
-Reutilizado en Inicio (pared de urgencia), Pacientes, Alertas y los modales.
+Reutilizado en Inicio (pared de urgencia), Pacientes, Alertas y las páginas de detalle.
+
+## Detalle = página completa (no modal)
+El historial de paciente y la alerta de producto son **páginas completas**
+(`PatientDetail` / `AlertDetail`), no modales: barra de regreso + breadcrumb,
+héroe con anillo grande + semáforo, y dos columnas (resumen sticky con CTA de
+recetar + cuerpo con tratamiento y línea de tiempo). En móvil apilan a una
+columna con el anillo arriba. El estado del detalle abierto vive en el shell
+(`Dashboard`) para que el `navKey` del `.view` cambie al entrar/salir y el
+revelado por scroll se vuelva a ejecutar (si no, la lista quedaba en opacity 0).
+Solo `recetar = checkout` sigue siendo overlay (tarea enfocada, command-palette).
 
 ## Movimiento
 - Fondo **WebGL** (`src/aurora.ts`): aurora violeta que deriva lento, muy suave,
