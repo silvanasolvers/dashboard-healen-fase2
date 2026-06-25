@@ -178,6 +178,30 @@ export function deleteNote(noteId: string) {
   return rpc('dash_delete_note', { p_note: noteId });
 }
 
+export interface ClientFields {
+  full_name?: string | null;
+  document_id?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  birthdate?: string | null;
+  address?: string | null;
+  notes?: string | null;
+}
+
+/** Actualiza la ficha de datos del paciente (contacto + demografía). */
+export function updateClient(clientUuid: string, f: ClientFields) {
+  return rpc('dash_update_client', {
+    p_client: clientUuid,
+    p_full_name: f.full_name || null,
+    p_document_id: f.document_id || null,
+    p_phone: f.phone || null,
+    p_email: f.email || null,
+    p_birthdate: f.birthdate || null,
+    p_address: f.address || null,
+    p_notes: f.notes || null,
+  });
+}
+
 // ---------- Mutaciones (1:1 con los formularios) ----------
 export function createPatient(f: FormData) {
   return rpc('dash_create_patient', {

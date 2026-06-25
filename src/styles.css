@@ -991,6 +991,19 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .detail__ringcap--warn { color: oklch(0.52 0.13 64); }
 .detail__ringcap--danger { color: var(--danger); }
 
+/* ---- Estado del tratamiento en el héroe (veredicto + mini-anillos) ---- */
+.detail__status { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; flex-shrink: 0; max-width: 360px; }
+.detail__verdict { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+.detail__verdict-word { font-size: clamp(1.5rem, 3vw, 1.9rem); font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: var(--ink); }
+.detail__verdict--ok .detail__verdict-word { color: oklch(0.46 0.14 158); }
+.detail__verdict--warn .detail__verdict-word { color: oklch(0.52 0.13 64); }
+.detail__verdict--danger .detail__verdict-word { color: var(--danger); }
+.detail__verdict-phrase { font-size: 0.86rem; color: var(--ink-soft); font-weight: 500; }
+.detail__rings { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
+.detail__ringitem { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.detail__ringitem-label { font-size: 0.68rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.detail__rings-more { align-self: center; font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+
 .detail__grid { display: grid; grid-template-columns: 320px 1fr; gap: clamp(18px, 2.5vw, 26px); align-items: start; }
 .detail__aside { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 18px; }
 .detail__cta { box-shadow: var(--shadow-md); }
@@ -1025,6 +1038,35 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .count-chip { margin-left: auto; font-size: 0.72rem; font-weight: 600; color: var(--brand-strong); background: var(--brand-soft); padding: 2px 9px; border-radius: var(--r-pill); }
 .fact strong.fact--danger { color: var(--danger); }
 .spinner--sm { width: 15px; height: 15px; border-width: 2px; }
+
+/* ---- Ficha de datos del paciente ---- */
+.detail-block__edit {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: var(--r-pill); font-size: 0.76rem; font-weight: 600;
+  color: var(--brand-strong); background: var(--brand-soft); transition: background var(--t-fast);
+}
+.detail-block__edit:hover { background: oklch(0.92 0.05 315); }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+.info-row { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.info-row--full { grid-column: 1 / -1; }
+.info-k { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.info-row > strong { font-size: 0.95rem; font-variant-numeric: tabular-nums; word-break: break-word; }
+.info-mail { font-variant-numeric: normal !important; font-size: 0.88rem !important; word-break: break-all; }
+.info-sub { font-size: 0.74rem; color: var(--muted); }
+.info-empty { color: var(--muted); font-weight: 500; font-size: 0.9rem; }
+.info-actions { display: inline-flex; gap: 6px; margin-top: 5px; }
+.info-act {
+  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--surface-2); color: var(--brand); transition: background var(--t-fast), color var(--t-fast);
+}
+.info-act:hover { background: var(--brand-soft); color: var(--brand-strong); }
+.info-form { margin-top: 2px; }
+.info-form textarea {
+  width: 100%; resize: vertical; min-height: 52px; padding: 10px 12px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--surface); font: inherit; font-size: 0.88rem; color: var(--ink);
+}
+.info-form textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.info-form__actions { display: flex; gap: 10px; align-items: center; }
 
 /* ---- Tabs + CTA del detalle (barra pegajosa) ---- */
 .detail__toolbar {
@@ -1483,8 +1525,17 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   .inv-row { grid-template-columns: 1fr auto; gap: 10px; }
   .inv-row__gauge { grid-column: 1 / -1; order: 3; }
   .timeline__item { grid-template-columns: 70px 1fr; gap: 10px; }
-  .detail__hero { flex-direction: column-reverse; align-items: flex-start; gap: 18px; }
+  .detail__hero { flex-direction: column; align-items: flex-start; gap: 18px; }
   .detail__ringwrap { flex-direction: row; align-self: stretch; justify-content: flex-start; gap: 14px; }
+  .detail__status { align-items: stretch; max-width: none; align-self: stretch; gap: 14px; }
+  .detail__verdict { align-items: flex-start; text-align: left; }
+  .detail__rings {
+    flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; gap: 12px;
+    scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; padding-bottom: 2px;
+  }
+  .detail__rings::-webkit-scrollbar { display: none; }
+  .detail__ringitem { scroll-snap-align: start; flex-shrink: 0; }
+  .info-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

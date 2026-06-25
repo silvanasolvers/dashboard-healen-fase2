@@ -664,6 +664,7 @@ export interface PatientSummary {
   client_id: string;
   code: string;
   full_name: string;
+  document_id: string | null;
   phone: string | null;
   email: string | null;
   birthdate: string | null;
@@ -702,13 +703,82 @@ export function patientSignalCounts(patient: Patient): SignalCounts {
   );
 }
 
-/** Señal global del paciente = el peor de sus productos (o la del plan si no tiene). */
+const SIGNAL_RANK: Record<Signal, number> = { ok: 0, warn: 1, danger: 2 };
+function worseSignal(a: Signal, b: Signal): Signal {
+  return SIGNAL_RANK[a] >= SIGNAL_RANK[b] ? a : b;
+}
+/** "hoy" / "en N días" — para frases honestas (0 días = hoy, no "en 0 días"). */
+function inDays(n: number): string {
+  if (n <= 0) return 'hoy';
+  if (n === 1) return 'en 1 día';
+  return `en ${n} días`;
+}
+
+/** Señal global = el PEOR entre sus productos y el cierre del plan (daysLeft).
+ *  Así un plan que cierra pronto nunca queda pintado de verde aunque los
+ *  productos estén holgados (y viceversa). */
 export function overallSignal(patient: Patient): Signal {
   const c = patientSignalCounts(patient);
-  if (c.danger) return 'danger';
-  if (c.warn) return 'warn';
-  if (patient.peptides.length) return 'ok';
-  return treatmentSignal(patient.daysLeft);
+  const planSig = treatmentSignal(patient.daysLeft);
+  if (!patient.peptides.length) return planSig;
+  const pepSig: Signal = c.danger ? 'danger' : c.warn ? 'warn' : 'ok';
+  return worseSignal(pepSig, planSig);
+}
+
+/** El producto más urgente del paciente (menos días restantes). null si no hay. */
+export function mostUrgentPeptide(
+  patient: Patient,
+): { name: string; endsInDays: number; signal: Signal } | null {
+  if (!patient.peptides.length) return null;
+  const mu = [...patient.peptides].sort((a, b) => a.endsInDays - b.endsInDays)[0];
+  return { name: mu.name, endsInDays: mu.endsInDays, signal: treatmentSignal(mu.endsInDays) };
+}
+
+/** Veredicto en una frase, derivado del estado real (sin un número que contradiga
+ *  el color). Habla del factor MÁS urgente: el producto que se acaba antes, o el
+ *  cierre del plan cuando este urge y llega antes (o no hay productos). */
+export function verdictPhrase(patient: Patient): string {
+  const mu = mostUrgentPeptide(patient);
+  const planSig = treatmentSignal(patient.daysLeft);
+  const planUrgent = planSig !== 'ok';
+  const pepUrgent = !!mu && mu.signal !== 'ok';
+
+  // El plan manda si urge y (no hay producto urgente, o cierra antes/igual que él).
+  if (planUrgent && (!pepUrgent || patient.daysLeft <= (mu?.endsInDays ?? Infinity))) {
+    return planSig === 'danger'
+      ? `El plan cierra ${inDays(patient.daysLeft)}`
+      : `Plan por cerrar ${inDays(patient.daysLeft)}`;
+  }
+  if (mu && mu.signal === 'danger') return `${mu.name} se acaba ${inDays(mu.endsInDays)}`;
+  if (mu && mu.signal === 'warn') return `Revisar pronto · ${mu.name} ${inDays(mu.endsInDays)}`;
+  if (mu) return `Plan estable · cierra ${inDays(patient.daysLeft)}`;
+  return `Plan · cierra ${inDays(patient.daysLeft)}`;
+}
+
+/** Nombre corto para etiquetas apretadas (primer token, recortado). */
+export function shortName(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  return first.length > 12 ? `${first.slice(0, 11)}…` : first;
+}
+
+/** Edad en años desde la fecha de nacimiento ISO. null si vacía/futura/inválida. */
+export function ageFromBirthdate(birthdate?: string | null): number | null {
+  if (!birthdate) return null;
+  const b = new Date(`${String(birthdate).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(b.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - b.getFullYear();
+  const m = today.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < b.getDate())) age -= 1;
+  return age < 0 || age > 130 ? null : age;
+}
+
+/** Fecha legible larga "12 mar 1991" para mostrar bajo la edad. */
+export function formatLongDate(value?: string | null): string {
+  if (!value) return '';
+  const d = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 /** Días transcurridos desde una fecha ISO (yyyy-mm-dd). */
@@ -748,7 +818,7 @@ export function buildNextSteps(patient: Patient, dossier: PatientDossier | null)
       signal: sig,
       action: 'recetar',
       target: 'pacientes',
-      title: sig === 'danger' ? `${p.name} se acaba en ${p.endsInDays} días` : `${p.name}: quedan ${p.endsInDays} días`,
+      title: sig === 'danger' ? `${p.name} se acaba ${inDays(p.endsInDays)}` : `${p.name}: quedan ${p.endsInDays} días`,
       detail: 'Recetar recompra y confirmar continuidad del producto.',
     });
   }
@@ -760,7 +830,7 @@ export function buildNextSteps(patient: Patient, dossier: PatientDossier | null)
       signal: patient.daysLeft <= 5 ? 'danger' : 'warn',
       action: 'recetar',
       target: 'pacientes',
-      title: `El plan cierra en ${patient.daysLeft} días`,
+      title: `El plan cierra ${inDays(patient.daysLeft)}`,
       detail: 'Agendar cierre, renovar plan y revisar inventario necesario.',
     });
   }

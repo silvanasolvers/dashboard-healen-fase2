@@ -108,9 +108,10 @@ comment on view v_patient_revenue is 'Revenue por mes y por paciente (suma de ab
 alter view v_patient_revenue set (security_invoker = on);
 
 -- Resumen vivo del paciente (valor de vida, saldo, última visita, tier)
-create or replace view v_patient_summary as
+drop view if exists v_patient_summary;
+create view v_patient_summary as
 select
-  c.id as client_id, c.code, c.full_name, c.phone, c.email, c.birthdate, c.address, c.notes,
+  c.id as client_id, c.code, c.full_name, c.document_id, c.phone, c.email, c.birthdate, c.address, c.notes,
   coalesce(s.total_purchased, 0)                              as total_purchased,
   coalesce(pay.total_paid, 0)                                 as total_paid,
   coalesce(s.total_purchased, 0) - coalesce(pay.total_paid, 0) as balance,
@@ -166,12 +167,44 @@ begin
 end $$;
 comment on function dash_delete_note is 'Elimina una nota clínica.';
 
+-- Editar la ficha de datos del paciente (contacto + demografía). PII: solo staff.
+create or replace function dash_update_client(
+  p_client uuid,
+  p_full_name text default null,
+  p_document_id text default null,
+  p_phone text default null,
+  p_email text default null,
+  p_birthdate date default null,
+  p_address text default null,
+  p_notes text default null
+) returns jsonb language plpgsql security definer set search_path = public as $$
+begin
+  perform require_staff();
+  if p_full_name is not null and trim(p_full_name) = '' then
+    raise exception 'El nombre no puede estar vacío';
+  end if;
+  update clients set
+    full_name   = coalesce(nullif(trim(p_full_name), ''), full_name),  -- requerido: no se borra
+    document_id = nullif(trim(p_document_id), ''),
+    phone       = nullif(trim(p_phone), ''),
+    email       = nullif(trim(p_email), ''),
+    birthdate   = p_birthdate,
+    address     = nullif(trim(p_address), ''),
+    notes       = nullif(trim(p_notes), ''),
+    updated_at  = now()
+  where id = p_client;
+  return jsonb_build_object('ok', true);
+end $$;
+comment on function dash_update_client is 'Actualiza la ficha de datos del paciente (nombre, documento, contacto, nacimiento, dirección, notas de ficha).';
+
 -- ---------- Grants + hardening (igual que 08) ----------
 grant select on v_patient_notes, v_patient_timeline, v_patient_revenue, v_patient_summary to authenticated;
 grant execute on function dash_add_note(uuid, text, text, uuid, boolean) to authenticated;
 grant execute on function dash_delete_note(uuid) to authenticated;
+grant execute on function dash_update_client(uuid, text, text, text, text, date, text, text) to authenticated;
 revoke execute on function dash_add_note(uuid, text, text, uuid, boolean) from public, anon;
 revoke execute on function dash_delete_note(uuid) from public, anon;
+revoke execute on function dash_update_client(uuid, text, text, text, text, date, text, text) from public, anon;
 
 -- ============================================================
 -- Seed demo (idempotente): notas para que la ficha muestre contenido real
@@ -209,3 +242,13 @@ begin
       (v, 'recomendacion', 'Mantener suero revitalizante semanal los lunes. Próxima revisión de biomarcadores en 30 días.', false);
   end if;
 end $$;
+
+-- Demografía demo (idempotente: solo si está sin registrar) para que la ficha se vea llena.
+update clients set document_id = '1018456712', birthdate = '1991-03-12', address = 'Cra 11 #93-45, Bogotá'
+  where code = 'HLN-001' and document_id is null;
+update clients set document_id = '1037889201', birthdate = '1986-09-27', address = 'Cl 70 #5-20, Medellín'
+  where code = 'HLN-002' and document_id is null;
+update clients set document_id = '71654329',   birthdate = '1979-01-05', address = 'Av 6N #28-12, Cali'
+  where code = 'HLN-003' and document_id is null;
+update clients set document_id = '1144028765', birthdate = '1994-07-19', address = 'Cra 43A #18-95, Medellín'
+  where code = 'HLN-004' and document_id is null;

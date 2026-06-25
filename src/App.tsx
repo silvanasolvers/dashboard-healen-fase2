@@ -30,9 +30,13 @@ import {
   Lightbulb,
   Link as LinkIcon,
   LogOut,
+  Mail,
   Menu,
+  MessageCircle,
   Minus,
   Package,
+  Pencil,
+  Phone,
   Pin,
   Plus,
   RefreshCw,
@@ -41,6 +45,7 @@ import {
   Syringe,
   Trash2,
   TrendingUp,
+  User,
   Users,
   Wallet,
   X,
@@ -48,6 +53,7 @@ import {
 import { startAurora } from './aurora';
 import {
   AccountingTab,
+  ageFromBirthdate,
   buildNextSteps,
   buildPatientProductAlerts,
   ClinicalNote,
@@ -58,8 +64,10 @@ import {
   formatCompact,
   formatCurrency,
   formatDate,
+  formatLongDate,
   formatMonth,
   InventoryItem,
+  mostUrgentPeptide,
   isReceivable,
   matchesDateFilter,
   matchesTreatmentFilter,
@@ -74,6 +82,8 @@ import {
   PatientDossier,
   PatientProductAlert,
   patientSignalCounts,
+  PatientSummary,
+  shortName,
   Signal,
   SignalCounts,
   signalLabel,
@@ -82,6 +92,7 @@ import {
   sumBy,
   Tone,
   treatmentSignal,
+  verdictPhrase,
   View,
 } from './data';
 import {
@@ -97,6 +108,7 @@ import {
   MovementRow,
   prescribeCheckout,
   PrescribeResult,
+  updateClient,
   upsertProduct,
 } from './api';
 import { Login, useSession } from './auth';
@@ -1926,6 +1938,44 @@ function SignalSummary({ counts, label = false }: { counts: SignalCounts; label?
   );
 }
 
+/** Estado del tratamiento en el héroe: veredicto honesto (palabra+frase, sin un
+ *  número que contradiga el color) + un mini-anillo por producto con su color
+ *  real, o un anillo grande si hay 1/0 productos. Reemplaza el anillo único. */
+function TreatmentStatus({ patient, counts, signal }: { patient: Patient; counts: SignalCounts; signal: Signal }) {
+  const peptides = patient.peptides;
+  const ordered = [...peptides].sort((a, b) => a.endsInDays - b.endsInDays);
+  return (
+    <div className="detail__status">
+      <div className={`detail__verdict detail__verdict--${signal}`}>
+        <span className="detail__verdict-word">{signalLabel(signal)}</span>
+        <span className="detail__verdict-phrase">{verdictPhrase(patient)}</span>
+      </div>
+
+      {peptides.length > 1 && (
+        <div className="detail__rings">
+          {ordered.slice(0, 4).map((p, i) => (
+            <div className="detail__ringitem" key={`${p.name}-${i}`}>
+              <TreatmentRing daysLeft={p.endsInDays} totalDays={30} size={56} stroke={5} showUnit={false} />
+              <span className="detail__ringitem-label">
+                {shortName(p.name)} · {p.endsInDays}d
+              </span>
+            </div>
+          ))}
+          {peptides.length > 4 && <span className="detail__rings-more">+{peptides.length - 4}</span>}
+        </div>
+      )}
+      {peptides.length === 1 && (
+        <TreatmentRing daysLeft={peptides[0].endsInDays} totalDays={30} size={96} stroke={9} />
+      )}
+      {peptides.length === 0 && (
+        <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={96} stroke={9} />
+      )}
+
+      <SignalSummary counts={counts} label />
+    </div>
+  );
+}
+
 /** Página completa de paciente = ficha clínica viva con pestañas
  *  (Resumen · Notas · Historial · Dinero). Carga el dossier al abrir. */
 function PatientDetail({
@@ -2009,12 +2059,8 @@ function PatientDetail({
           <p className="detail__plan">
             {patient.plan} · <strong>{formatCurrency(patient.saleValue)}</strong>
           </p>
-          <SignalSummary counts={counts} label />
         </div>
-        <div className="detail__ringwrap">
-          <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={128} stroke={11} />
-          <span className={`detail__ringcap detail__ringcap--${signal}`}>{signalLabel(signal)}</span>
-        </div>
+        <TreatmentStatus patient={patient} counts={counts} signal={signal} />
       </header>
 
       <div className="detail__toolbar" data-reveal>
@@ -2039,7 +2085,9 @@ function PatientDetail({
         )}
       </div>
 
-      {tab === 'resumen' && <ResumenPanel patient={patient} dossier={dossier} steps={steps} onAct={act} counts={counts} />}
+      {tab === 'resumen' && (
+        <ResumenPanel patient={patient} dossier={dossier} steps={steps} onAct={act} counts={counts} reload={reload} />
+      )}
       {tab === 'notas' && <NotasPanel patient={patient} dossier={dossier} loading={loading} onChanged={reload} />}
       {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
       {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
@@ -2096,7 +2144,7 @@ function TreatmentBlock({ patient }: { patient: Patient }) {
                   {p.route ? ` · ${p.route}` : ''}
                 </span>
               </div>
-              <span className={`ti-flag ti-flag--${sig}`}>{p.endsInDays} días</span>
+              <span className={`ti-flag ti-flag--${sig}`}>{p.endsInDays <= 0 ? 'Hoy' : `${p.endsInDays} días`}</span>
             </article>
           );
         })}
@@ -2143,12 +2191,14 @@ function ResumenPanel({
   steps,
   onAct,
   counts,
+  reload,
 }: {
   patient: Patient;
   dossier: PatientDossier | null;
   steps: NextStep[];
   onAct: (s: NextStep) => void;
   counts: SignalCounts;
+  reload: () => void;
 }) {
   const lifetime = dossier?.summary?.total_purchased ?? patient.saleValue;
   const balance = dossier?.summary?.balance ?? 0;
@@ -2158,6 +2208,7 @@ function ResumenPanel({
     <div className="detail__grid">
       <aside className="detail__aside">
         <NextStepsPanel steps={steps} onAct={onAct} />
+        <PatientInfoCard summary={dossier?.summary ?? null} patient={patient} onSaved={reload} />
         <div className="fact-card" data-reveal>
           <div className="fact">
             <span>Valor de vida</span>
@@ -2202,6 +2253,186 @@ function ResumenPanel({
         <ClinicalFlags dossier={dossier} />
       </main>
     </div>
+  );
+}
+
+/* ---- Ficha de datos del paciente (lectura + edición inline) ---- */
+function InfoRow({ k, v, sub, full }: { k: string; v: string | null; sub?: string; full?: boolean }) {
+  return (
+    <div className={`info-row${full ? ' info-row--full' : ''}`}>
+      <span className="info-k">{k}</span>
+      {v ? <strong>{v}</strong> : <span className="info-empty">Sin registrar</span>}
+      {v && sub && <span className="info-sub">{sub}</span>}
+    </div>
+  );
+}
+
+function PatientInfoCard({
+  summary,
+  patient,
+  onSaved,
+}: {
+  summary: PatientSummary | null;
+  patient: Patient;
+  onSaved: () => void;
+}) {
+  const clientUuid = patient.clientUuid;
+  // Solo se puede editar cuando el summary YA cargó: si no, el form se
+  // inicializaría desde valores vacíos y Guardar borraría los datos en BD.
+  const canEdit = !!clientUuid && !!summary;
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const name = summary?.full_name || patient.name;
+  const documentId = summary?.document_id ?? null;
+  const phone = summary?.phone ?? null;
+  const email = summary?.email ?? null;
+  const birthdate = summary?.birthdate ?? null;
+  const address = summary?.address ?? null;
+  const notes = summary?.notes ?? null;
+  const age = ageFromBirthdate(birthdate);
+
+  const [form, setForm] = useState({
+    full_name: '',
+    document_id: '',
+    phone: '',
+    email: '',
+    birthdate: '',
+    address: '',
+    notes: '',
+  });
+  const set = (k: keyof typeof form) => (e: { target: { value: string } }) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  function startEdit() {
+    setForm({
+      full_name: name,
+      document_id: documentId ?? '',
+      phone: phone ?? '',
+      email: email ?? '',
+      birthdate: birthdate ? birthdate.slice(0, 10) : '',
+      address: address ?? '',
+      notes: notes ?? '',
+    });
+    setError('');
+    setEditing(true);
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    if (!clientUuid || !summary) return; // nunca guardar sobre un summary sin cargar
+    setSaving(true);
+    setError('');
+    try {
+      await updateClient(clientUuid, form);
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const waDigits = phone ? phone.replace(/\D/g, '') : '';
+  const dialable = waDigits.length >= 10; // evita tel:/wa.me rotos con datos sucios
+  const wa = waDigits.startsWith('57') ? waDigits : `57${waDigits}`;
+
+  return (
+    <section className="detail-block" data-reveal>
+      <div className="label">
+        <User size={17} /> Datos del paciente
+        {canEdit && !editing && (
+          <button className="detail-block__edit" onClick={startEdit}>
+            <Pencil size={14} /> Editar
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <form className="form info-form" onSubmit={save}>
+          <Field label="Nombre">
+            <input value={form.full_name} onChange={set('full_name')} placeholder="Nombre y apellido" required />
+          </Field>
+          <Field label="Documento">
+            <input value={form.document_id} onChange={set('document_id')} placeholder="CC / pasaporte" />
+          </Field>
+          <Field label="Teléfono">
+            <input type="tel" value={form.phone} onChange={set('phone')} placeholder="300 000 0000" />
+          </Field>
+          <Field label="Correo">
+            <input type="email" value={form.email} onChange={set('email')} placeholder="nombre@correo.com" />
+          </Field>
+          <Field label="Nacimiento">
+            <input type="date" value={form.birthdate} onChange={set('birthdate')} />
+          </Field>
+          <Field label="Dirección" full>
+            <input value={form.address} onChange={set('address')} placeholder="Calle, ciudad" />
+          </Field>
+          <Field label="Notas de ficha" full>
+            <textarea value={form.notes} onChange={set('notes')} rows={2} placeholder="Preferencias, contacto, observaciones…" />
+          </Field>
+          {error && <p className="note-composer__error field--full">{error}</p>}
+          <div className="info-form__actions field--full">
+            <button className="btn btn--primary" type="submit" disabled={saving}>
+              {saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar cambios
+            </button>
+            <button className="btn btn--soft" type="button" onClick={() => setEditing(false)}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="info-grid">
+          <InfoRow k="Nombre" v={name} />
+          <InfoRow k="Documento" v={documentId} />
+          <InfoRow
+            k="Edad"
+            v={age !== null ? `${age} años` : null}
+            sub={age !== null && birthdate ? formatLongDate(birthdate) : undefined}
+          />
+          <InfoRow k="Código" v={patient.id} />
+          <div className="info-row">
+            <span className="info-k">Teléfono</span>
+            {phone ? (
+              <>
+                <strong>{phone}</strong>
+                {dialable && (
+                  <span className="info-actions">
+                    <a className="info-act" href={`tel:+${wa}`} aria-label="Llamar">
+                      <Phone size={14} />
+                    </a>
+                    <a className="info-act" href={`https://wa.me/${wa}`} target="_blank" rel="noreferrer" aria-label="WhatsApp">
+                      <MessageCircle size={14} />
+                    </a>
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="info-empty">Sin registrar</span>
+            )}
+          </div>
+          <div className="info-row">
+            <span className="info-k">Correo</span>
+            {email ? (
+              <>
+                <strong className="info-mail">{email}</strong>
+                <span className="info-actions">
+                  <a className="info-act" href={`mailto:${email}`} aria-label="Correo">
+                    <Mail size={14} />
+                  </a>
+                </span>
+              </>
+            ) : (
+              <span className="info-empty">Sin registrar</span>
+            )}
+          </div>
+          <InfoRow k="Dirección" v={address} full />
+          {notes && <InfoRow k="Notas de ficha" v={notes} full />}
+        </div>
+      )}
+    </section>
   );
 }
 
