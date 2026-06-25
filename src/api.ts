@@ -2,8 +2,11 @@
 // muta vía RPCs dash_*. Devuelve las formas que la UI ya consume.
 import { supabase } from './supabase';
 import type {
+  Analytics,
   ClinicalNote,
+  DateRange,
   FinanceMovement,
+  FinanceSummary,
   InventoryItem,
   NoteKind,
   Patient,
@@ -200,6 +203,25 @@ export function updateClient(clientUuid: string, f: ClientFields) {
     p_address: f.address || null,
     p_notes: f.notes || null,
   });
+}
+
+// ---------- Reportes / caja por rango de fechas (agregado en SQL) ----------
+export async function fetchFinanceSummary(range: DateRange): Promise<FinanceSummary> {
+  return rpc('dash_finance_summary', { p_from: range.from || null, p_to: range.to || null }) as Promise<FinanceSummary>;
+}
+
+export async function fetchAnalytics(range: DateRange): Promise<Analytics> {
+  return rpc('dash_analytics', { p_from: range.from || null, p_to: range.to || null }) as Promise<Analytics>;
+}
+
+/** Filas de caja del periodo (filtrado server-side por fecha; la UI solo lista). */
+export async function fetchFinanceRows(range: DateRange): Promise<FinanceMovement[]> {
+  let q = supabase.from('v_dashboard_finance').select('*').order('date', { ascending: false });
+  if (range.from) q = q.gte('date', range.from);
+  if (range.to) q = q.lte('date', range.to);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FinanceMovement[];
 }
 
 // ---------- Mutaciones (1:1 con los formularios) ----------

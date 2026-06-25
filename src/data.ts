@@ -15,13 +15,6 @@ export type Tone = 'neutral' | 'success' | 'warning' | 'danger';
 /** Semáforo: verde estable, ámbar atención, rojo urgente. */
 export type Signal = 'ok' | 'warn' | 'danger';
 
-export interface DateFilter {
-  from: string;
-  to: string;
-  month: string;
-  year: string;
-}
-
 export interface PeptideLine {
   name: string;
   dose: string;
@@ -445,26 +438,6 @@ export function stockSignal(item: InventoryItem): Signal {
   return 'ok';
 }
 
-export const emptyDateFilter: DateFilter = { from: '', to: '', month: '', year: '' };
-
-export function hasDateFilter(filter: DateFilter) {
-  return Boolean(filter.from || filter.to || filter.month || filter.year);
-}
-
-export function matchesDateFilter(date: string, filter: DateFilter) {
-  if (!hasDateFilter(filter)) return true;
-  if (filter.from && date < filter.from) return false;
-  if (filter.to && date > filter.to) return false;
-  if (filter.month && !date.startsWith(filter.month)) return false;
-  if (filter.year && !date.startsWith(filter.year)) return false;
-  return true;
-}
-
-export function matchesTreatmentFilter(patient: Patient, filter: DateFilter) {
-  if (!hasDateFilter(filter)) return true;
-  return matchesDateFilter(patient.startDate, filter) || matchesDateFilter(patient.endDate, filter);
-}
-
 export function isReceivable(movement: FinanceMovement) {
   return (
     movement.kind === 'Ingreso' &&
@@ -616,14 +589,6 @@ export function patientHistory(patient: Patient): PatientHistoryItem[] {
       tone: patient.daysLeft <= 10 ? 'warning' : 'neutral',
     },
   ];
-}
-
-export function sumBy<T>(items: T[], key: (item: T) => string, value: (item: T) => number) {
-  return items.reduce<Record<string, number>>((acc, item) => {
-    const group = key(item);
-    acc[group] = (acc[group] ?? 0) + value(item);
-    return acc;
-  }, {});
 }
 
 /* ============================================================
@@ -896,4 +861,97 @@ export function formatMonth(value: string): string {
   if (Number.isNaN(d.getTime())) return value;
   const month = d.toLocaleDateString('es-CO', { month: 'short' }).replace('.', '');
   return `${month} ${String(d.getFullYear()).slice(2)}`;
+}
+
+/* ============================================================
+   RANGOS DE FECHA + REPORTES (agregaciones server-side)
+   ============================================================ */
+export interface DateRange {
+  from: string; // ISO yyyy-mm-dd, '' = sin límite
+  to: string;
+  preset: string; // 'todo' | '7d' | 'mes' | 'ano' | 'custom'
+}
+
+export const emptyRange: DateRange = { from: '', to: '', preset: 'todo' };
+
+export const RANGE_PRESETS: Array<{ id: string; label: string }> = [
+  { id: 'todo', label: 'Todo' },
+  { id: '7d', label: '7 días' },
+  { id: 'mes', label: 'Este mes' },
+  { id: 'ano', label: 'Este año' },
+];
+
+const isoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** Convierte un preset en {from,to}. 'todo' = sin límites. */
+export function rangeForPreset(preset: string): DateRange {
+  const today = new Date();
+  const to = isoDate(today);
+  if (preset === '7d') {
+    const f = new Date(today);
+    f.setDate(f.getDate() - 6);
+    return { from: isoDate(f), to, preset };
+  }
+  if (preset === 'mes') {
+    return { from: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), to, preset };
+  }
+  if (preset === 'ano') {
+    return { from: isoDate(new Date(today.getFullYear(), 0, 1)), to, preset };
+  }
+  return { ...emptyRange };
+}
+
+/** Etiqueta legible del rango actual ("Todo", "1 jun – 25 jun", etc.). */
+export function rangeLabel(range: DateRange): string {
+  if (!range.from && !range.to) return 'Todo el periodo';
+  const f = range.from ? formatDate(range.from) : '…';
+  const t = range.to ? formatDate(range.to) : 'hoy';
+  return `${f} – ${t}`;
+}
+
+export interface KV {
+  k: string;
+  v: number;
+}
+
+export interface FinanceSummary {
+  income: number;
+  income_count: number;
+  income_clients: number;
+  ticket_avg: number;
+  expenses: number;
+  expenses_company: number;
+  personal_out: number;
+  supports_with: number;
+  supports_total: number;
+  receivable: number;
+  receivable_invoiced: number;
+  receivable_paid: number;
+  receivable_overdue: number;
+  income_by_category: KV[];
+  income_by_payment: KV[];
+  expense_by_center: KV[];
+  expense_by_payment: KV[];
+  receivable_by_status: KV[];
+}
+
+export interface MonthPoint {
+  month: string; // 'YYYY-MM'
+  income: number;
+  expenses: number;
+  profit: number;
+}
+
+export interface Analytics {
+  company_income: number;
+  company_expenses: number;
+  net_profit: number;
+  personal_out: number;
+  margin_pct: number;
+  vip_count: number;
+  active_patients: number;
+  stock_value: number;
+  expenses_by_category: KV[];
+  monthly: MonthPoint[];
 }

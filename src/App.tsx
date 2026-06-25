@@ -25,6 +25,7 @@ import {
   Dna,
   Download,
   Eye,
+  FileDown,
   FileText,
   LayoutDashboard,
   Lightbulb,
@@ -54,23 +55,25 @@ import { startAurora } from './aurora';
 import {
   AccountingTab,
   ageFromBirthdate,
+  Analytics,
   buildNextSteps,
   buildPatientProductAlerts,
   ClinicalNote,
-  DateFilter,
+  DateRange,
   daysSince,
-  emptyDateFilter,
+  emptyRange,
   FinanceMovement,
+  FinanceSummary,
   formatCompact,
   formatCurrency,
   formatDate,
   formatLongDate,
   formatMonth,
   InventoryItem,
-  mostUrgentPeptide,
   isReceivable,
-  matchesDateFilter,
-  matchesTreatmentFilter,
+  KV,
+  MonthPoint,
+  mostUrgentPeptide,
   NextStep,
   NOTE_KINDS,
   NoteKind,
@@ -83,13 +86,15 @@ import {
   PatientProductAlert,
   patientSignalCounts,
   PatientSummary,
+  RANGE_PRESETS,
+  rangeForPreset,
+  rangeLabel,
   shortName,
   Signal,
   SignalCounts,
   signalLabel,
   statusTone,
   stockSignal,
-  sumBy,
   Tone,
   treatmentSignal,
   verdictPhrase,
@@ -101,8 +106,11 @@ import {
   createPatient,
   deleteNote,
   fetchAll,
+  fetchAnalytics,
   fetchCatalog,
   fetchDossier,
+  fetchFinanceRows,
+  fetchFinanceSummary,
   financeEntry,
   inventoryMovement,
   MovementRow,
@@ -111,6 +119,7 @@ import {
   updateClient,
   upsertProduct,
 } from './api';
+import { downloadCsv, downloadPdf } from './lib/export';
 import { Login, useSession } from './auth';
 
 const ROUTES = ['subcutanea', 'intramuscular', 'intravenosa', 'oral', 'sublingual', 'topica', 'nasal'];
@@ -376,10 +385,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [finance, setFinance] = useState<FinanceMovement[]>([]);
 
   const [patientSearch, setPatientSearch] = useState('');
-  const [patientFilter, setPatientFilter] = useState<DateFilter>(emptyDateFilter);
-  const [inventoryFilter, setInventoryFilter] = useState<DateFilter>(emptyDateFilter);
-  const [financeFilter, setFinanceFilter] = useState<DateFilter>(emptyDateFilter);
-  const [reportFilter, setReportFilter] = useState<DateFilter>(emptyDateFilter);
+  // Sube en cada recarga de datos: Contabilidad/Reportes re-piden su agregado al cambiar.
+  const [dataVersion, setDataVersion] = useState(0);
 
   const auroraRef = useRef<HTMLCanvasElement>(null);
 
@@ -390,6 +397,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
       setInventory(data.inventory);
       setFinance(data.finance);
       setInventoryMovements(data.movements);
+      setDataVersion((v) => v + 1);
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -420,6 +428,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
     if (!auroraRef.current) return;
     return startAurora(auroraRef.current);
   }, []);
+
+  const notify = (msg: string, error?: boolean) => setToast({ msg, error });
 
   async function runMutation(action: () => Promise<unknown>, form: HTMLFormElement, okMsg: string) {
     setSaving(true);
@@ -452,11 +462,9 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const serumCount = patients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
   const finishingTreatments = patients.filter((p) => p.daysLeft <= 12 && p.status !== 'Finalizado').length;
 
-  const filteredPatients = patients.filter((p) => {
-    const text = `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase();
-    return text.includes(patientSearch.toLowerCase()) && matchesTreatmentFilter(p, patientFilter);
-  });
-  const filteredInventory = inventory.filter((i) => matchesDateFilter(i.expiration ?? '', inventoryFilter));
+  const filteredPatients = patients.filter((p) =>
+    `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
+  );
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -580,7 +588,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
             )}
             {view === 'inventario' && (
               <InventarioView
-                inventory={filteredInventory}
+                inventory={inventory}
                 allInventory={inventory}
                 movements={inventoryMovements}
                 addInventory={addInventory}
@@ -588,26 +596,9 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
               />
             )}
             {view === 'contabilidad' && (
-              <ContabilidadView
-                finance={finance}
-                companyIncome={companyIncome}
-                companyExpenses={companyExpenses}
-                pendingIncome={pendingIncome}
-                personalOut={personalOut}
-                addMovement={addMovement}
-              />
+              <ContabilidadView dataVersion={dataVersion} addMovement={addMovement} notify={notify} />
             )}
-            {view === 'reportes' && (
-              <ReportesView
-                patients={patients}
-                inventory={inventory}
-                finance={finance}
-                companyIncome={companyIncome}
-                companyExpenses={companyExpenses}
-                personalOut={personalOut}
-                netProfit={netProfit}
-              />
-            )}
+            {view === 'reportes' && <ReportesView dataVersion={dataVersion} notify={notify} />}
               </>
             )}
           </div>
@@ -1418,122 +1409,269 @@ function Kpi({
 /* ============================================================
    CONTABILIDAD / CAJA
    ============================================================ */
-function ContabilidadView({
-  finance,
-  companyIncome,
-  companyExpenses,
-  pendingIncome,
-  personalOut,
-  addMovement,
+function DateRangeBar({
+  range,
+  onChange,
+  onCsv,
+  onPdf,
+  busy,
 }: {
-  finance: FinanceMovement[];
-  companyIncome: number;
-  companyExpenses: number;
-  pendingIncome: number;
-  personalOut: number;
-  addMovement: (e: FormEvent<HTMLFormElement>) => void;
+  range: DateRange;
+  onChange: (r: DateRange) => void;
+  onCsv: () => void;
+  onPdf: () => void;
+  busy?: boolean;
 }) {
+  return (
+    <div className="range-bar" data-reveal>
+      <div className="range-presets">
+        {RANGE_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            className={`range-preset${range.preset === p.id ? ' is-active' : ''}`}
+            onClick={() => onChange(rangeForPreset(p.id))}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="range-custom">
+        <input
+          type="date"
+          value={range.from}
+          max={range.to || undefined}
+          onChange={(e) => onChange({ from: e.target.value, to: range.to, preset: 'custom' })}
+          aria-label="Desde"
+        />
+        <span className="range-sep">→</span>
+        <input
+          type="date"
+          value={range.to}
+          min={range.from || undefined}
+          onChange={(e) => onChange({ from: range.from, to: e.target.value, preset: 'custom' })}
+          aria-label="Hasta"
+        />
+      </div>
+      <div className="range-actions">
+        {busy && <span className="spinner spinner--sm range-spin" aria-label="Actualizando" />}
+        <button className="btn btn--soft" onClick={onCsv} disabled={busy}>
+          <Download size={15} /> CSV
+        </button>
+        <button className="btn btn--soft" onClick={onPdf} disabled={busy}>
+          <FileDown size={15} /> PDF
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContabilidadView({
+  dataVersion,
+  addMovement,
+  notify,
+}: {
+  dataVersion: number;
+  addMovement: (e: FormEvent<HTMLFormElement>) => void;
+  notify: (msg: string, error?: boolean) => void;
+}) {
+  const [range, setRange] = useState<DateRange>(emptyRange);
+  const [summary, setSummary] = useState<FinanceSummary | null>(null);
+  const [rows, setRows] = useState<FinanceMovement[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<AccountingTab>('ingresos');
   const [support, setSupport] = useState<FinanceMovement | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const reveal = useScrollReveal(`${loading}-${tab}`);
 
-  // value de las ventas ya es la caja recibida (paidValue). Una venta parcial
-  // aparece como ingreso (su abono) y como cartera (su saldo) — no es doble conteo.
-  const incomeMovements = finance.filter((m) => m.kind === 'Ingreso' && m.scope === 'Empresa');
-  const receivableMovements = finance.filter(isReceivable);
-  const expenseMovements = finance.filter((m) => m.kind === 'Gasto');
-  const balanceOf = (m: FinanceMovement) => (m.invoiceValue ?? m.value) - (m.paidValue ?? 0);
-  const receivableBalance = receivableMovements.reduce((t, m) => t + balanceOf(m), 0);
-  const active =
-    tab === 'ingresos' ? incomeMovements : tab === 'egresos' ? expenseMovements : receivableMovements;
-  const total = tab === 'cobrar' ? receivableBalance : active.reduce((t, m) => t + m.value, 0);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    Promise.all([fetchFinanceSummary(range), fetchFinanceRows(range)])
+      .then(([s, r]) => {
+        if (!alive) return;
+        setSummary(s);
+        setRows(r);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setSummary(null);
+        setRows([]);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [range, dataVersion]);
 
-  const focus =
-    tab === 'ingresos'
+  // Filas por pestaña (filtro barato, no agregación: los totales vienen del backend).
+  const ingresoRows = rows.filter((m) => m.kind === 'Ingreso' && m.scope === 'Empresa');
+  const egresoRows = rows.filter((m) => m.kind === 'Gasto');
+  const cobrarRows = rows.filter(isReceivable);
+  const active = tab === 'ingresos' ? ingresoRows : tab === 'egresos' ? egresoRows : cobrarRows;
+
+  const s = summary;
+  const focus: Array<[string, string]> = !s
+    ? []
+    : tab === 'ingresos'
       ? [
-          ['Recibido', formatCompact(total)],
-          ['Registros', String(incomeMovements.length)],
-          ['Ticket prom.', incomeMovements.length ? formatCompact(total / incomeMovements.length) : '$0'],
-          ['Clientes', String(new Set(incomeMovements.map((m) => m.person)).size)],
+          ['Recibido', formatCompact(s.income)],
+          ['Registros', String(s.income_count)],
+          ['Ticket prom.', formatCompact(s.ticket_avg)],
+          ['Clientes', String(s.income_clients)],
         ]
       : tab === 'egresos'
         ? [
-            ['Egresos', formatCompact(total)],
-            ['Empresa', formatCompact(expenseMovements.filter((m) => m.scope === 'Empresa').reduce((t, m) => t + m.value, 0))],
-            ['No empresa', formatCompact(personalOut)],
-            ['Soportes', `${expenseMovements.filter((m) => m.attachment || m.attachmentUrl).length}/${expenseMovements.length}`],
+            ['Egresos', formatCompact(s.expenses)],
+            ['Empresa', formatCompact(s.expenses_company)],
+            ['No empresa', formatCompact(s.personal_out)],
+            ['Soportes', `${s.supports_with}/${s.supports_total}`],
           ]
         : [
-            ['Por cobrar', formatCompact(total)],
-            ['Vencido', formatCompact(receivableMovements.filter((m) => m.status === 'Vencido').reduce((t, m) => t + balanceOf(m), 0))],
-            ['Abonado', formatCompact(receivableMovements.reduce((t, m) => t + (m.paidValue ?? 0), 0))],
-            ['Facturado', formatCompact(receivableMovements.reduce((t, m) => t + (m.invoiceValue ?? m.value), 0))],
+            ['Por cobrar', formatCompact(s.receivable)],
+            ['Vencido', formatCompact(s.receivable_overdue)],
+            ['Abonado', formatCompact(s.receivable_paid)],
+            ['Facturado', formatCompact(s.receivable_invoiced)],
           ];
 
-  const breakdownPrimary =
-    tab === 'egresos'
-      ? sumBy(active, (m) => m.costCenter, (m) => m.value)
-      : tab === 'cobrar'
-        ? sumBy(active, (m) => m.status, (m) => m.value)
-        : sumBy(active, (m) => m.category, (m) => m.value);
-  const breakdownPayment = sumBy(active, (m) => m.paymentMethod, (m) => m.value);
+  const primaryTitle = tab === 'egresos' ? 'Centros de costo' : tab === 'cobrar' ? 'Estado de recaudo' : 'Categorías';
+  const primaryBreak: KV[] = !s ? [] : tab === 'ingresos' ? s.income_by_category : tab === 'egresos' ? s.expense_by_center : s.receivable_by_status;
+  const paymentBreak: KV[] = !s ? [] : tab === 'egresos' ? s.expense_by_payment : s.income_by_payment;
+  const showPayment = tab !== 'cobrar';
+
+  function exportRows(): { headers: string[]; rows: Array<Array<string | number>> } {
+    if (tab === 'ingresos')
+      return {
+        headers: ['Cliente', 'ID', 'Fecha', 'Servicio', 'Categoría', 'Método', 'Recibido', 'Estado'],
+        rows: ingresoRows.map((m) => [m.person, m.id, m.date, m.concept, m.category, m.paymentMethod, m.value, m.status]),
+      };
+    if (tab === 'egresos')
+      return {
+        headers: ['Concepto', 'Proveedor', 'Fecha', 'Centro', 'Valor', 'Clasificación', 'Estado'],
+        rows: egresoRows.map((m) => [m.concept, m.person, m.date, m.costCenter, m.value, m.scope, m.status]),
+      };
+    return {
+      headers: ['Paciente', 'Facturado', 'Abonado', 'Saldo', 'Límite', 'Estado'],
+      rows: cobrarRows.map((m) => {
+        const saldo = (m.invoiceValue ?? m.value) - (m.paidValue ?? 0);
+        return [m.person, m.invoiceValue ?? m.value, m.paidValue ?? 0, saldo, m.dueDate ?? '', m.status];
+      }),
+    };
+  }
+
+  const tabLabel = tab === 'ingresos' ? 'Ingresos' : tab === 'egresos' ? 'Egresos' : 'Por cobrar';
+  const stamp = range.from || 'todo';
+
+  function onCsv() {
+    try {
+      const { headers, rows: r } = exportRows();
+      if (!r.length) {
+        notify('No hay datos para exportar en este periodo.', true);
+        return;
+      }
+      downloadCsv(`healen-caja-${tab}-${stamp}`, headers, r);
+      notify('CSV descargado');
+    } catch {
+      notify('No se pudo exportar el CSV.', true);
+    }
+  }
+  async function onPdf() {
+    if (!s) {
+      notify('Espera a que cargue la información.', true);
+      return;
+    }
+    const { headers, rows: r } = exportRows();
+    try {
+      await downloadPdf({
+        filename: `healen-caja-${tab}-${stamp}`,
+        title: `Caja · ${tabLabel}`,
+        subtitle: rangeLabel(range),
+        kpis: [
+          { label: 'Ingresos', value: formatCompact(s.income) },
+          { label: 'Egresos', value: formatCompact(s.expenses_company + s.personal_out) },
+          { label: 'Por cobrar', value: formatCompact(s.receivable) },
+          { label: 'Utilidad', value: formatCompact(s.income - s.expenses_company) },
+        ],
+        sections: [
+          { heading: primaryTitle, headers: ['Concepto', 'Valor'], rows: primaryBreak.map((x) => [x.k, formatCurrency(x.v)]) },
+          { heading: `Detalle · ${tabLabel}`, headers, rows: r },
+        ],
+      });
+      notify('PDF descargado');
+    } catch {
+      notify('No se pudo generar el PDF.', true);
+    }
+  }
 
   return (
-    <>
+    <div className="view-wrap" ref={reveal}>
+      <DateRangeBar range={range} onChange={setRange} onCsv={onCsv} onPdf={onPdf} busy={loading} />
+
       <div className="acct-tabs" data-reveal role="tablist">
         <button className={`acct-tab${tab === 'ingresos' ? ' is-active' : ''}`} onClick={() => setTab('ingresos')} role="tab">
           <span className="acct-tab__top">
             <TrendingUp size={16} /> Ingresos
           </span>
-          <strong>{formatCompact(companyIncome)}</strong>
+          <strong>{formatCompact(s?.income ?? 0)}</strong>
         </button>
         <button className={`acct-tab${tab === 'egresos' ? ' is-active' : ''}`} onClick={() => setTab('egresos')} role="tab">
           <span className="acct-tab__top">
             <CreditCard size={16} /> Egresos
           </span>
-          <strong>{formatCompact(companyExpenses + personalOut)}</strong>
+          <strong>{formatCompact((s?.expenses_company ?? 0) + (s?.personal_out ?? 0))}</strong>
         </button>
         <button className={`acct-tab${tab === 'cobrar' ? ' is-active' : ''}`} onClick={() => setTab('cobrar')} role="tab">
           <span className="acct-tab__top">
             <CalendarClock size={16} /> Por cobrar
           </span>
-          <strong>{formatCompact(pendingIncome)}</strong>
+          <strong>{formatCompact(s?.receivable ?? 0)}</strong>
         </button>
       </div>
 
-      <article className="panel stack" data-reveal>
-        <div className="acct-focus">
-          {focus.map(([label, val]) => (
-            <div key={label}>
-              <span>{label}</span>
-              <strong>{val}</strong>
-            </div>
-          ))}
+      {loading && !s ? (
+        <div className="view-loading" data-reveal>
+          <span className="spinner" /> Cargando caja…
         </div>
-
-        <div className="breakdown">
-          <article>
-            <strong>{tab === 'egresos' ? 'Centros de costo' : tab === 'cobrar' ? 'Estado de recaudo' : 'Categorías'}</strong>
-            {Object.entries(breakdownPrimary).map(([k, v]) => (
-              <div className="detail-line" key={k}>
-                <span>{k}</span>
-                <strong>{formatCurrency(v)}</strong>
+      ) : (
+        <article className="panel stack" data-reveal>
+          <div className="acct-focus">
+            {focus.map(([label, val]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong>{val}</strong>
               </div>
             ))}
-          </article>
-          <article>
-            <strong>Medios de pago</strong>
-            {Object.entries(breakdownPayment).map(([k, v]) => (
-              <div className="detail-line" key={k}>
-                <span>{k}</span>
-                <strong>{formatCurrency(v)}</strong>
-              </div>
-            ))}
-          </article>
-        </div>
+          </div>
 
-        <FinanceTable tab={tab} movements={active} onSupport={setSupport} />
-      </article>
+          <div className="breakdown">
+            <article>
+              <strong>{primaryTitle}</strong>
+              {primaryBreak.length === 0 && <p className="muted-line">Sin datos en el periodo.</p>}
+              {primaryBreak.map((x) => (
+                <div className="detail-line" key={x.k}>
+                  <span>{x.k}</span>
+                  <strong>{formatCurrency(x.v)}</strong>
+                </div>
+              ))}
+            </article>
+            {showPayment && (
+              <article>
+                <strong>Medios de pago</strong>
+                {paymentBreak.length === 0 && <p className="muted-line">Sin datos en el periodo.</p>}
+                {paymentBreak.map((x) => (
+                  <div className="detail-line" key={x.k}>
+                    <span>{x.k}</span>
+                    <strong>{formatCurrency(x.v)}</strong>
+                  </div>
+                ))}
+              </article>
+            )}
+          </div>
+
+          <FinanceTable tab={tab} movements={active} onSupport={setSupport} />
+        </article>
+      )}
 
       <div className="toolbar" data-reveal>
         <button className="btn btn--soft" onClick={() => setFormOpen((o) => !o)}>
@@ -1614,7 +1752,7 @@ function ContabilidadView({
       )}
 
       {support && <SupportSheet movement={support} onClose={() => setSupport(null)} />}
-    </>
+    </div>
   );
 }
 
@@ -1743,48 +1881,119 @@ function FinanceTable({
    REPORTES
    ============================================================ */
 function ReportesView({
-  patients,
-  inventory,
-  finance,
-  companyIncome,
-  companyExpenses,
-  personalOut,
-  netProfit,
+  dataVersion,
+  notify,
 }: {
-  patients: Patient[];
-  inventory: InventoryItem[];
-  finance: FinanceMovement[];
-  companyIncome: number;
-  companyExpenses: number;
-  personalOut: number;
-  netProfit: number;
+  dataVersion: number;
+  notify: (msg: string, error?: boolean) => void;
 }) {
+  const [range, setRange] = useState<DateRange>(emptyRange);
+  const [data, setData] = useState<Analytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const reveal = useScrollReveal(`${loading}`);
   const grown = useGrow();
-  const vip = patients.filter((p) => p.tier === 'VIP').length;
-  const ratio = companyIncome > 0 ? Math.round((netProfit / companyIncome) * 100) : 0;
-  const stockValue = inventory.reduce((t, i) => t + i.stock * i.unitCost, 0);
-  const max = Math.max(companyIncome, companyExpenses, personalOut, netProfit, 1);
-  const expensesByCategory = finance
-    .filter((m) => m.kind === 'Gasto' && m.scope === 'Empresa')
-    .reduce<Record<string, number>>((acc, m) => {
-      acc[m.category] = (acc[m.category] ?? 0) + m.value;
-      return acc;
-    }, {});
 
-  const bars = [
-    { label: 'Ingresos empresa', value: companyIncome, tone: 'success' as const },
-    { label: 'Gastos empresa', value: companyExpenses, tone: 'warning' as const },
-    { label: 'Utilidad real', value: netProfit, tone: 'neutral' as const },
-    { label: 'Personal / retiros', value: personalOut, tone: 'warning' as const },
-  ];
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetchAnalytics(range)
+      .then((a) => {
+        if (alive) setData(a);
+      })
+      .catch(() => {
+        if (alive) setData(null);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [range, dataVersion]);
+
+  const a = data;
+  const max = a ? Math.max(a.company_income, a.company_expenses, a.personal_out, Math.abs(a.net_profit), 1) : 1;
+  const monthMax = a && a.monthly.length ? Math.max(...a.monthly.map((m) => Math.max(m.income, m.expenses)), 1) : 1;
+  const bars = a
+    ? [
+        { label: 'Ingresos empresa', value: a.company_income, tone: 'success' as const },
+        { label: 'Gastos empresa', value: a.company_expenses, tone: 'warning' as const },
+        { label: 'Utilidad real', value: a.net_profit, tone: 'neutral' as const },
+        { label: 'Personal / retiros', value: a.personal_out, tone: 'warning' as const },
+      ]
+    : [];
+
+  function onCsv() {
+    if (!a) {
+      notify('Espera a que carguen los reportes.', true);
+      return;
+    }
+    try {
+      downloadCsv(
+        `healen-reportes-${range.from || 'todo'}`,
+        ['Mes', 'Ingresos', 'Gastos', 'Utilidad'],
+        a.monthly.map((m) => [formatMonth(`${m.month}-01`), m.income, m.expenses, m.profit]),
+      );
+      notify('CSV descargado');
+    } catch {
+      notify('No se pudo exportar el CSV.', true);
+    }
+  }
+  async function onPdf() {
+    if (!a) {
+      notify('Espera a que carguen los reportes.', true);
+      return;
+    }
+    try {
+      await downloadPdf({
+        filename: `healen-reportes-${range.from || 'todo'}`,
+        title: 'Reporte financiero',
+        subtitle: rangeLabel(range),
+        kpis: [
+          { label: 'Ingresos', value: formatCompact(a.company_income) },
+          { label: 'Gastos', value: formatCompact(a.company_expenses) },
+          { label: 'Utilidad', value: formatCompact(a.net_profit) },
+          { label: 'Margen', value: `${a.margin_pct}%` },
+        ],
+        sections: [
+          {
+            heading: 'Serie mensual',
+            headers: ['Mes', 'Ingresos', 'Gastos', 'Utilidad'],
+            rows: a.monthly.map((m) => [formatMonth(`${m.month}-01`), formatCurrency(m.income), formatCurrency(m.expenses), formatCurrency(m.profit)]),
+          },
+          {
+            heading: 'Gastos por categoría',
+            headers: ['Categoría', 'Valor'],
+            rows: a.expenses_by_category.map((x) => [x.k, formatCurrency(x.v)]),
+          },
+        ],
+      });
+      notify('PDF descargado');
+    } catch {
+      notify('No se pudo generar el PDF.', true);
+    }
+  }
+
+  if (loading && !a) {
+    return (
+      <div className="view-wrap" ref={reveal}>
+        <DateRangeBar range={range} onChange={setRange} onCsv={onCsv} onPdf={onPdf} busy />
+        <div className="view-loading" data-reveal>
+          <span className="spinner" /> Cargando reportes…
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
+    <div className="view-wrap" ref={reveal}>
+      <DateRangeBar range={range} onChange={setRange} onCsv={onCsv} onPdf={onPdf} busy={loading || !a} />
+
       <section className="kpi-grid" data-reveal>
-        <SignalKpi icon={Activity} tone="ok" label="Margen" value={`${ratio}%`} hint="Utilidad / ingresos" />
-        <SignalKpi icon={Sparkles} tone="brand" label="Pacientes VIP" value={vip} hint="Por valor de venta" />
-        <Kpi icon={Package} tone="warn" label="Valor inventario" value={formatCompact(stockValue)} hint="Stock valorizado" />
-        <Kpi icon={Wallet} tone="brand" label="Separado personal" value={formatCompact(personalOut)} hint="No afecta utilidad" />
+        <SignalKpi icon={Activity} tone="ok" label="Margen" value={`${a?.margin_pct ?? 0}%`} hint="Utilidad / ingresos" />
+        <SignalKpi icon={Sparkles} tone="brand" label="Pacientes VIP" value={a?.vip_count ?? 0} hint="Por valor de venta" />
+        <Kpi icon={Package} tone="warn" label="Valor inventario" value={formatCompact(a?.stock_value ?? 0)} hint="Stock valorizado" />
+        <Kpi icon={Wallet} tone="brand" label="Separado personal" value={formatCompact(a?.personal_out ?? 0)} hint="No afecta utilidad" />
       </section>
 
       <div className="grid-2">
@@ -1794,9 +2003,6 @@ function ReportesView({
               <span className="eyebrow">Flujo</span>
               <h2>Empresa vs operación</h2>
             </div>
-            <button className="btn btn--ghost" onClick={() => window.print()}>
-              <Download size={16} /> Exportar
-            </button>
           </div>
           <div className="bars">
             {bars.map((b) => (
@@ -1808,7 +2014,7 @@ function ReportesView({
                 <span className="bar__track">
                   <span
                     className={`bar__fill bar__fill--${b.tone}`}
-                    style={{ width: grown ? `${Math.max(3, (b.value / max) * 100)}%` : '0%' }}
+                    style={{ width: grown ? `${Math.max(3, (Math.abs(b.value) / max) * 100)}%` : '0%' }}
                   />
                 </span>
               </div>
@@ -1820,18 +2026,45 @@ function ReportesView({
           <article className="panel" data-reveal>
             <div className="panel__head">
               <div>
+                <span className="eyebrow">Tendencia</span>
+                <h2>Ingresos por mes</h2>
+              </div>
+            </div>
+            {a && a.monthly.length > 0 ? (
+              <div className="rev-bars">
+                {a.monthly.map((m) => (
+                  <div className="rev-bar" key={m.month}>
+                    <span className="rev-bar__track">
+                      <span
+                        className="rev-bar__fill"
+                        style={{ height: grown ? `${Math.max(6, (m.income / monthMax) * 100)}%` : '0%' }}
+                      />
+                    </span>
+                    <span className="rev-bar__val">{formatCompact(m.income)}</span>
+                    <span className="rev-bar__month">{formatMonth(`${m.month}-01`)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-line">Sin movimientos en el periodo.</p>
+            )}
+          </article>
+
+          <article className="panel" data-reveal>
+            <div className="panel__head">
+              <div>
                 <span className="eyebrow">Categorías</span>
                 <h2>Gastos empresa</h2>
               </div>
             </div>
             <div className="cat-list">
-              {Object.entries(expensesByCategory).map(([c, v]) => (
-                <div key={c}>
-                  <span>{c}</span>
-                  <strong className="tnum">{formatCurrency(v)}</strong>
+              {(a?.expenses_by_category ?? []).map((x) => (
+                <div key={x.k}>
+                  <span>{x.k}</span>
+                  <strong className="tnum">{formatCurrency(x.v)}</strong>
                 </div>
               ))}
-              {Object.keys(expensesByCategory).length === 0 && (
+              {(!a || a.expenses_by_category.length === 0) && (
                 <div>
                   <span>Sin gastos</span>
                   <strong>$0</strong>
@@ -1839,29 +2072,9 @@ function ReportesView({
               )}
             </div>
           </article>
-
-          <article className="panel" data-reveal>
-            <div className="panel__head">
-              <div>
-                <span className="eyebrow">Lectura rápida</span>
-                <h2>Del mes</h2>
-              </div>
-            </div>
-            <ul className="insights">
-              <li>
-                <Check size={17} /> Caja empresa separada de retiros personales.
-              </li>
-              <li>
-                <AlertTriangle size={17} /> Revisar productos bajo mínimo antes de vender.
-              </li>
-              <li>
-                <ClipboardList size={17} /> Mantener soportes de gasto adjuntos.
-              </li>
-            </ul>
-          </article>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
