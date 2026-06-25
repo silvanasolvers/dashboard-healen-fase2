@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import gsap from 'gsap';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
   AlertTriangle,
@@ -38,6 +39,7 @@ import {
   MessageCircle,
   Minus,
   Package,
+  Paperclip,
   Pencil,
   Phone,
   Pin,
@@ -47,8 +49,10 @@ import {
   Sparkles,
   Syringe,
   Trash2,
+  Upload,
   TrendingUp,
   User,
+  UserPlus,
   Users,
   Wallet,
   X,
@@ -120,6 +124,8 @@ import {
   fetchFinanceSummary,
   fetchPayees,
   financeEntry,
+  supportUrl,
+  uploadSupport,
   inventoryMovement,
   MovementRow,
   prescribeCheckout,
@@ -354,6 +360,108 @@ function Field({
   );
 }
 
+/* ---- Botón de menú animado (framer-motion) ---- */
+function MenuToggle({ open, onClick, label }: { open: boolean; onClick: () => void; label: string }) {
+  const state = open ? 'open' : 'closed';
+  const ease = [0.22, 1, 0.36, 1] as const;
+  return (
+    <motion.button className="menu-toggle" onClick={onClick} aria-label={label} whileTap={{ scale: 0.9 }} whileHover={{ scale: 1.06 }}>
+      <span className="menu-toggle__bars">
+        <motion.span
+          className="menu-toggle__bar"
+          initial={false}
+          animate={state}
+          variants={{ closed: { y: -5, rotate: 0 }, open: { y: 0, rotate: 45 } }}
+          transition={{ duration: 0.24, ease }}
+        />
+        <motion.span
+          className="menu-toggle__bar"
+          initial={false}
+          animate={state}
+          variants={{ closed: { opacity: 1, scaleX: 1 }, open: { opacity: 0, scaleX: 0.3 } }}
+          transition={{ duration: 0.16 }}
+        />
+        <motion.span
+          className="menu-toggle__bar"
+          initial={false}
+          animate={state}
+          variants={{ closed: { y: 5, rotate: 0 }, open: { y: 0, rotate: -45 } }}
+          transition={{ duration: 0.24, ease }}
+        />
+      </span>
+    </motion.button>
+  );
+}
+
+/* ---- Quick-create global (reemplaza el botón "Nuevo") ---- */
+const QUICK_ACTIONS: Array<{ id: string; view: View; label: string; icon: ElementType }> = [
+  { id: 'patient', view: 'pacientes', label: 'Nuevo paciente', icon: UserPlus },
+  { id: 'cash', view: 'contabilidad', label: 'Movimiento de caja', icon: Wallet },
+  { id: 'stock', view: 'inventario', label: 'Movimiento de stock', icon: RefreshCw },
+  { id: 'product', view: 'inventario', label: 'Nuevo producto', icon: Package },
+];
+
+function QuickCreate({ onAction }: { onAction: (view: View, intent: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="quick" ref={ref}>
+      <motion.button className="btn btn--primary quick__btn" onClick={() => setOpen((o) => !o)} whileTap={{ scale: 0.96 }} aria-expanded={open}>
+        <motion.span animate={{ rotate: open ? 135 : 0 }} transition={{ duration: 0.2 }} style={{ display: 'inline-flex' }}>
+          <Plus size={18} />
+        </motion.span>
+        Crear
+      </motion.button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="quick__menu"
+            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.96 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {QUICK_ACTIONS.map((a, i) => (
+              <motion.button
+                key={a.id}
+                className="quick__item"
+                onClick={() => {
+                  setOpen(false);
+                  onAction(a.view, a.id);
+                }}
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.03 * i, duration: 0.18 }}
+              >
+                <span className="quick__ico">
+                  <a.icon size={16} />
+                </span>
+                {a.label}
+              </motion.button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ============================================================
    App shell
    ============================================================ */
@@ -539,6 +647,14 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
     setDetailAlert(null);
   }
 
+  // Quick-create global (topbar): navega + deja un "intent" que la vista consume
+  // para auto-abrir su formulario.
+  const [intent, setIntent] = useState<string | null>(null);
+  function quickCreate(v: View, key: string) {
+    go(v);
+    setIntent(key);
+  }
+
   const lead = VIEW_LEAD[view];
   // El detalle abierto tiene prioridad en la "ruta" actual; al alternar
   // lista↔detalle cambia navKey → el .view se remonta y el reveal corre de nuevo.
@@ -557,7 +673,18 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
       <canvas ref={auroraRef} className="aurora" />
       <div className="aurora-veil" />
       <div className={`app${rail ? ' is-rail' : ''}`}>
-        {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
+        <AnimatePresence>
+          {drawer && (
+            <motion.div
+              className="drawer-scrim"
+              onClick={() => setDrawer(false)}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            />
+          )}
+        </AnimatePresence>
         <Sidebar
           view={view}
           go={go}
@@ -570,23 +697,14 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
 
         <main className="main">
           <header className="topbar">
-            <button
-              className="btn btn--icon menu-btn"
-              onClick={toggleMenu}
-              aria-label={rail ? 'Expandir menú' : 'Contraer menú'}
-            >
-              <Menu size={20} />
-            </button>
+            <MenuToggle open={drawer} onClick={toggleMenu} label={rail ? 'Abrir menú' : 'Menú'} />
             <div className="topbar__lead">
               <span className="eyebrow">{lead.eyebrow}</span>
               <h1 className="topbar__title">{lead.title}</h1>
             </div>
             <div className="topbar__actions">
               {saving && <span className="spinner" aria-label="Guardando" />}
-              <button className="btn btn--primary" onClick={() => go('pacientes')}>
-                <Plus size={18} />
-                Nuevo
-              </button>
+              <QuickCreate onAction={quickCreate} />
             </div>
           </header>
 
@@ -626,6 +744,8 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 addPatient={addPatient}
                 onOpenPatient={setDetailPatient}
                 onOpenAlert={setDetailAlert}
+                intent={intent}
+                onIntentDone={() => setIntent(null)}
               />
             )}
             {view === 'inventario' && (
@@ -635,10 +755,18 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 movements={inventoryMovements}
                 addInventory={addInventory}
                 registerMovement={registerInventoryMovement}
+                intent={intent}
+                onIntentDone={() => setIntent(null)}
               />
             )}
             {view === 'contabilidad' && (
-              <ContabilidadView dataVersion={dataVersion} addMovement={addMovement} notify={notify} />
+              <ContabilidadView
+                dataVersion={dataVersion}
+                addMovement={addMovement}
+                notify={notify}
+                intent={intent}
+                onIntentDone={() => setIntent(null)}
+              />
             )}
             {view === 'reportes' && <ReportesView dataVersion={dataVersion} notify={notify} />}
               </>
@@ -1000,6 +1128,8 @@ function PacientesView({
   addPatient,
   onOpenPatient,
   onOpenAlert,
+  intent,
+  onIntentDone,
 }: {
   patients: Patient[];
   allPatients: Patient[];
@@ -1009,9 +1139,21 @@ function PacientesView({
   addPatient: (e: FormEvent<HTMLFormElement>) => void;
   onOpenPatient: (p: Patient) => void;
   onOpenAlert: (a: PatientProductAlert) => void;
+  intent: string | null;
+  onIntentDone: () => void;
 }) {
   const [sub, setSub] = useState<'pacientes' | 'alertas'>('pacientes');
   const [formOpen, setFormOpen] = useState(false);
+  const reveal = useScrollReveal(`${sub}-${formOpen}`);
+
+  useEffect(() => {
+    if (intent === 'patient') {
+      setSub('pacientes');
+      setFormOpen(true);
+      onIntentDone();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent]);
 
   const alerts = buildPatientProductAlerts(allPatients, inventory).sort((a, b) => {
     const order = { danger: 0, warn: 1, ok: 2 } as const;
@@ -1022,7 +1164,7 @@ function PacientesView({
   const red = alerts.filter((a) => a.signal === 'danger').length;
 
   return (
-    <>
+    <div className="view-wrap" ref={reveal}>
       <div className="toolbar" data-reveal>
         <div className="search">
           <Search size={17} />
@@ -1175,7 +1317,7 @@ function PacientesView({
           </section>
         </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -1215,17 +1357,28 @@ function InventarioView({
   movements,
   addInventory,
   registerMovement,
+  intent,
+  onIntentDone,
 }: {
   inventory: InventoryItem[];
   allInventory: InventoryItem[];
   movements: MovementRow[];
   addInventory: (p: ProductPayload) => Promise<boolean>;
   registerMovement: (p: StockMovePayload) => Promise<boolean>;
+  intent: string | null;
+  onIntentDone: () => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
   const [move, setMove] = useState<{ item: InventoryItem | null; kind: 'Entrada' | 'Salida' } | null>(null);
   const grown = useGrow();
   const reveal = useScrollReveal(`${productOpen}`);
+
+  useEffect(() => {
+    if (intent === 'product') setProductOpen(true);
+    else if (intent === 'stock') setMove({ item: null, kind: 'Salida' });
+    if (intent === 'product' || intent === 'stock') onIntentDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent]);
 
   const units = inventory.reduce((t, i) => t + i.stock, 0);
   const low = inventory.filter((i) => i.stock <= i.minimum).length;
@@ -1690,10 +1843,14 @@ function ContabilidadView({
   dataVersion,
   addMovement,
   notify,
+  intent,
+  onIntentDone,
 }: {
   dataVersion: number;
   addMovement: (p: MovementPayload) => Promise<boolean>;
   notify: (msg: string, error?: boolean) => void;
+  intent: string | null;
+  onIntentDone: () => void;
 }) {
   const [range, setRange] = useState<DateRange>(emptyRange);
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
@@ -1702,7 +1859,15 @@ function ContabilidadView({
   const [tab, setTab] = useState<AccountingTab>('ingresos');
   const [support, setSupport] = useState<FinanceMovement | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const reveal = useScrollReveal(`${loading}-${tab}`);
+  const reveal = useScrollReveal(`${loading}-${tab}-${formOpen}`);
+
+  useEffect(() => {
+    if (intent === 'cash') {
+      setFormOpen(true);
+      onIntentDone();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent]);
 
   useEffect(() => {
     let alive = true;
@@ -1900,7 +2065,7 @@ function ContabilidadView({
         </button>
       </div>
 
-      {formOpen && <MovementForm onSubmit={addMovement} onClose={() => setFormOpen(false)} />}
+      {formOpen && <MovementForm onSubmit={addMovement} onClose={() => setFormOpen(false)} notify={notify} />}
 
       {support && <SupportSheet movement={support} onClose={() => setSupport(null)} />}
     </div>
@@ -2010,9 +2175,11 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 function MovementForm({
   onSubmit,
   onClose,
+  notify,
 }: {
   onSubmit: (p: MovementPayload) => Promise<boolean>;
   onClose: () => void;
+  notify: (msg: string, error?: boolean) => void;
 }) {
   const [payees, setPayees] = useState<Payee[]>([]);
   const [kind, setKind] = useState<'Ingreso' | 'Gasto'>('Ingreso');
@@ -2195,14 +2362,8 @@ function MovementForm({
               </select>
             </div>
             <div className="mv__field mv__field--full">
-              <label className="mv__label">Link de soporte</label>
-              <input
-                className="mv__input"
-                type="url"
-                value={attachmentUrl}
-                onChange={(e) => setAttachmentUrl(e.target.value)}
-                placeholder="Drive, banco, factura…"
-              />
+              <label className="mv__label">Soporte · foto, PDF o archivo</label>
+              <FileUpload value={attachmentUrl} onChange={setAttachmentUrl} onError={(m) => notify(m, true)} />
             </div>
             <div className="mv__field mv__field--full">
               <label className="mv__label">Nota</label>
@@ -3473,9 +3634,100 @@ function AlertDetail({ alert, onBack }: { alert: PatientProductAlert; onBack: ()
   );
 }
 
+/* ---- Subida de soporte (archivo a Supabase Storage) ---- */
+function FileUpload({
+  value,
+  onChange,
+  onError,
+}: {
+  value: string;
+  onChange: (path: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileName = value ? (value.split('/').pop() ?? value).replace(/^\d+-/, '') : '';
+
+  async function onPick(input: HTMLInputElement) {
+    const file = input.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const path = await uploadSupport(file);
+      onChange(path);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'No se pudo subir el archivo.');
+    } finally {
+      setUploading(false);
+      input.value = '';
+    }
+  }
+
+  if (value) {
+    return (
+      <div className="upl-file">
+        <Paperclip size={15} />
+        <span className="upl-file__name">{fileName}</span>
+        <button type="button" className="upl-file__x" onClick={() => onChange('')} aria-label="Quitar soporte">
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="upl" onClick={() => inputRef.current?.click()} disabled={uploading}>
+      {uploading ? <span className="spinner spinner--sm" /> : <Upload size={16} />}
+      {uploading ? 'Subiendo…' : 'Subir foto, PDF o archivo'}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv"
+        hidden
+        onChange={(e) => onPick(e.currentTarget)}
+      />
+    </button>
+  );
+}
+
+/* ---- Vista/descarga de un soporte (resuelve signed URL) ---- */
+function SupportFile({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState(false);
+  const isImage = /\.(png|jpe?g|gif|webp|heic|avif)$/i.test(path);
+  useEffect(() => {
+    let alive = true;
+    supportUrl(path)
+      .then((u) => alive && setUrl(u))
+      .catch(() => alive && setErr(true));
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+
+  if (err) return <p className="muted-line">No se pudo cargar el soporte.</p>;
+  if (!url)
+    return (
+      <div className="view-loading" style={{ padding: '20px 0' }}>
+        <span className="spinner spinner--sm" />
+      </div>
+    );
+  return (
+    <div className="support-file">
+      {isImage && (
+        <a href={url} target="_blank" rel="noreferrer" className="support-file__img">
+          <img src={url} alt="Soporte" />
+        </a>
+      )}
+      <a className="btn btn--primary btn--block" href={url} target="_blank" rel="noreferrer" download>
+        <Download size={16} /> {isImage ? 'Descargar imagen' : 'Ver / descargar soporte'}
+      </a>
+    </div>
+  );
+}
+
 function SupportSheet({ movement, onClose }: { movement: FinanceMovement; onClose: () => void }) {
   return (
-    <Sheet eyebrow="Soporte del gasto" title={movement.concept} onClose={onClose}>
+    <Sheet eyebrow="Soporte del movimiento" title={movement.concept} onClose={onClose}>
       <div className="sheet__hero">
         <div>
           <span>
@@ -3489,27 +3741,16 @@ function SupportSheet({ movement, onClose }: { movement: FinanceMovement; onClos
         <Badge label={movement.status} tone={statusTone(movement.status)} />
       </div>
 
-      {movement.attachment && (
-        <div className="sheet__section">
-          <div className="label">
-            <Camera size={17} /> Comprobante
-          </div>
-          <div className="treatment-list">
-            <article>
-              <Camera size={18} style={{ color: 'var(--brand)' }} />
-              <div>
-                <strong>{movement.attachment}</strong>
-              </div>
-            </article>
-          </div>
+      <div className="sheet__section">
+        <div className="label">
+          <Paperclip size={17} /> Soporte
         </div>
-      )}
-
-      {movement.attachmentUrl && (
-        <a className="btn btn--soft btn--block" href={movement.attachmentUrl} target="_blank" rel="noreferrer">
-          <LinkIcon size={16} /> Abrir soporte externo
-        </a>
-      )}
+        {movement.attachmentUrl ? (
+          <SupportFile path={movement.attachmentUrl} />
+        ) : (
+          <p className="muted-line">Sin soporte adjunto.</p>
+        )}
+      </div>
 
       {movement.note && (
         <div className="next-steps" style={{ marginTop: 16 }}>

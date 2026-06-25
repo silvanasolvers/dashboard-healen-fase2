@@ -268,6 +268,35 @@ export function inventoryMovement(p: StockMovePayload) {
   });
 }
 
+// ---------- Soportes (archivos en Supabase Storage, bucket 'soportes') ----------
+function safeName(name: string): string {
+  return (
+    name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 80) || 'archivo'
+  );
+}
+
+/** Sube un archivo de soporte y devuelve su path (organizado por año-mes). */
+export async function uploadSupport(file: File): Promise<string> {
+  const now = new Date();
+  const folder = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const path = `${folder}/${now.getTime()}-${safeName(file.name)}`;
+  const { error } = await supabase.storage.from('soportes').upload(path, file, { cacheControl: '3600', upsert: false });
+  if (error) throw new Error(error.message);
+  return path;
+}
+
+/** Resuelve un soporte a URL descargable (signed URL del bucket, o el link si es externo). */
+export async function supportUrl(pathOrUrl: string): Promise<string> {
+  if (/^https?:\/\//.test(pathOrUrl)) return pathOrUrl;
+  const { data, error } = await supabase.storage.from('soportes').createSignedUrl(pathOrUrl, 3600);
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+
 /** Clientes + proveedores para el autocompletar del campo cliente/proveedor. */
 export async function fetchPayees(): Promise<Payee[]> {
   const { data, error } = await supabase.from('v_payees').select('*').order('name');

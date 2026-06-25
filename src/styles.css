@@ -1368,6 +1368,30 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .dp__foot button { font-size: 0.8rem; font-weight: 600; color: var(--brand-strong); padding: 4px 8px; border-radius: 8px; transition: background var(--t-fast); }
 .dp__foot button:hover { background: var(--brand-soft); }
 
+/* ---- Menú toggle animado + quick-create ---- */
+.menu-toggle {
+  width: 44px; height: 44px; border-radius: var(--r-md); display: grid; place-items: center;
+  background: var(--surface); box-shadow: var(--shadow-sm); color: var(--ink); flex-shrink: 0;
+}
+.menu-toggle:hover { color: var(--brand-strong); }
+.menu-toggle__bars { position: relative; width: 19px; height: 16px; display: block; }
+.menu-toggle__bar { position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: currentColor; }
+
+.quick { position: relative; }
+.quick__btn { gap: 8px; }
+.quick__menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; width: 232px;
+  padding: 7px; border-radius: var(--r-lg); background: var(--surface);
+  border: 1px solid var(--line-soft); box-shadow: var(--shadow-lg); transform-origin: top right;
+}
+.quick__item {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px; border-radius: var(--r-md);
+  font-size: 0.88rem; font-weight: 600; color: var(--ink); text-align: left; transition: background var(--t-fast), color var(--t-fast);
+}
+.quick__item:hover { background: var(--brand-soft); color: var(--brand-strong); }
+.quick__ico { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast); }
+.quick__item:hover .quick__ico { background: var(--brand); color: #fff; }
+
 /* Chips (categoría, medio de pago) */
 .mv__chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .mv__chip {
@@ -1436,6 +1460,26 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .payee-chip__ref { font-size: 0.74rem; color: var(--muted); flex-shrink: 0; }
 .payee-chip__x { color: var(--muted); padding: 4px; border-radius: 8px; flex-shrink: 0; transition: color var(--t-fast), background var(--t-fast); }
 .payee-chip__x:hover { color: var(--danger); background: var(--danger-soft); }
+
+/* ---- Subida / vista de soporte ---- */
+.upl {
+  display: inline-flex; align-items: center; gap: 9px; width: 100%; justify-content: center;
+  padding: 14px; border-radius: var(--r-md); border: 1.5px dashed var(--line); background: var(--surface-2);
+  font-size: 0.86rem; font-weight: 600; color: var(--brand-strong); transition: border-color var(--t-fast), background var(--t-fast);
+}
+.upl:hover { border-color: var(--brand); background: var(--brand-soft); }
+.upl:disabled { opacity: 0.7; cursor: progress; }
+.upl-file {
+  display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--r-md);
+  background: var(--brand-soft); border: 1px solid var(--brand);
+}
+.upl-file svg { color: var(--brand-strong); flex-shrink: 0; }
+.upl-file__name { flex: 1; min-width: 0; font-size: 0.86rem; font-weight: 600; color: var(--brand-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upl-file__x { color: var(--brand-strong); padding: 3px; border-radius: 7px; flex-shrink: 0; transition: background var(--t-fast); }
+.upl-file__x:hover { background: oklch(0.92 0.05 315); }
+.support-file { display: flex; flex-direction: column; gap: 12px; }
+.support-file__img { display: block; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line-soft); }
+.support-file__img img { display: block; width: 100%; max-height: 320px; object-fit: contain; background: var(--surface-2); }
 
 @media (max-width: 560px) {
   .mv__row, .mv__advanced { grid-template-columns: 1fr; }
