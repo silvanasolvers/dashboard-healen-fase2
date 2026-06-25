@@ -225,17 +225,23 @@ function useGrow() {
 
 function CountUp({ value, format = formatCompact }: { value: number; format?: (n: number) => string }) {
   const ref = useRef<HTMLSpanElement>(null);
+  // Anima DESDE el valor anterior (no desde 0): al ajustar cantidades en el
+  // checkout el total fluye suave en vez de saltar a $0 en cada cambio.
+  const prev = useRef(0);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (REDUCED) {
       el.textContent = format(value);
+      prev.current = value;
       return;
     }
-    const obj = { v: 0 };
+    const from = prev.current;
+    prev.current = value;
+    const obj = { v: from };
     const tw = gsap.to(obj, {
       v: value,
-      duration: 1,
+      duration: from === 0 ? 1 : 0.45,
       ease: 'power2.out',
       onUpdate: () => {
         el.textContent = format(Math.round(obj.v));
@@ -3204,7 +3210,8 @@ function PrescribeSheet({
     return () => window.removeEventListener('keydown', onWinKey);
   }, [onClose]);
 
-  const signal = treatmentSignal(patient.daysLeft);
+  const signal = overallSignal(patient);
+  const counts = patientSignalCounts(patient);
 
   // Atrapa Tab dentro del sheet (a11y: el foco no se escapa al dashboard de atrás).
   function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
@@ -3238,15 +3245,18 @@ function PrescribeSheet({
           </button>
         </header>
 
-        <div className={`sheet__hero sheet__hero--${signal} rx-hero`}>
-          <div>
-            <span>
+        <div className={`rx-hero rx-hero--${signal}`}>
+          <div className="rx-hero__id">
+            <span className="rx-hero__meta">
               {patient.id} · {patient.tier} · {patient.plan}
             </span>
             <strong>Receta nueva</strong>
-            <span>Los defaults clínicos ya vienen listos.</span>
+            <span className="rx-hero__hint">Defaults clínicos listos. Escribe, ajusta y cobra.</span>
           </div>
-          <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={56} stroke={6} showUnit={false} />
+          <div className="rx-hero__status">
+            <span className={`rx-hero__verdict rx-hero__verdict--${signal}`}>{verdictPhrase(patient)}</span>
+            <SignalSummary counts={counts} />
+          </div>
         </div>
 
         {/* Barra de comando */}

@@ -1268,7 +1268,25 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
    ============================================================ */
 @media (min-width: 720px) { .sheet--rx { max-width: 760px; } }
 .rx-open { margin: -2px 0 18px; }
-.rx-hero strong { font-size: 1.05rem; }
+
+/* Héroe del prescriptor: contexto + veredicto honesto (consistente con la ficha) */
+.rx-hero {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 18px; border-radius: var(--r-lg); margin-bottom: 16px;
+  background: linear-gradient(140deg, var(--brand-soft), var(--surface-2));
+}
+.rx-hero--ok { background: linear-gradient(140deg, var(--ok-soft), var(--surface-2)); }
+.rx-hero--warn { background: linear-gradient(140deg, var(--warn-soft), var(--surface-2)); }
+.rx-hero--danger { background: linear-gradient(140deg, var(--danger-soft), var(--surface-2)); }
+.rx-hero__id { min-width: 0; }
+.rx-hero__meta { display: block; font-size: 0.74rem; color: var(--muted); margin-bottom: 3px; }
+.rx-hero__id strong { display: block; font-size: 1.18rem; letter-spacing: -0.02em; line-height: 1.1; }
+.rx-hero__hint { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+.rx-hero__status { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; text-align: right; max-width: 46%; }
+.rx-hero__verdict { font-size: 0.9rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; color: var(--ink); }
+.rx-hero__verdict--ok { color: oklch(0.46 0.14 158); }
+.rx-hero__verdict--warn { color: oklch(0.52 0.13 64); }
+.rx-hero__verdict--danger { color: var(--danger); }
 
 /* Barra de comando (sticky arriba) */
 .rx-cmdbar {
@@ -1403,6 +1421,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   .rx-card__fields { grid-template-columns: 1fr 1fr; }
   .rx-checkout__foot { flex-direction: column; align-items: stretch; }
   .rx-cta { width: 100%; justify-content: center; }
+  .rx-hero { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .rx-hero__status { align-items: flex-start; text-align: left; max-width: none; }
 }
 
 /* ============================================================
