@@ -143,6 +143,17 @@ duración) y cobra en un acto. Soporte:
   a la cartera con saldo. Devuelve `{treatment_id, sale_id, code, lines, subtotal, cogs, margin, paid, balance}`.
   Bloqueada para anon (require_staff + revoke).
 
+### Historia clínica viva (`10_clinical.sql`)
+
+La ficha del paciente "a la mano": notas persistentes + historia real unificada + revenue en el tiempo.
+- **`clinical_notes`** — notas por paciente con `kind` (`nota`/`alergia`/`recomendacion`/`hito`/`seguimiento`) y `pinned` (las alergias se fijan). RLS `staff_all`.
+- **`dash_add_note(p_client, p_body, p_kind, p_treatment, p_pinned)`** / **`dash_delete_note(p_note)`** — mutadores con `require_staff`.
+- **`v_patient_notes`** — notas con autor.
+- **`v_patient_timeline`** — línea de tiempo UNIFICADA sobre hechos reales: tratamientos + ventas + abonos + dosis + notas (el front filtra por `client_id`, ordena por `ts`).
+- **`v_patient_revenue`** — abonos por mes y paciente (revenue en el tiempo).
+- **`v_patient_summary`** — resumen vivo: valor de vida, abonado, saldo, sesiones, última venta, tier.
+- **Próximos pasos NO se guardan**: el front (`buildNextSteps`) los deriva en vivo del paciente + dossier, así se auto-gestionan al pasar los días o entrar una venta.
+
 ---
 
 ## Seguridad

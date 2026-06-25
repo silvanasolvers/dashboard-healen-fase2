@@ -3,6 +3,7 @@ import {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -13,6 +14,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  Award,
   BarChart3,
   CalendarClock,
   Camera,
@@ -23,17 +25,21 @@ import {
   Dna,
   Download,
   Eye,
+  FileText,
   LayoutDashboard,
+  Lightbulb,
   Link as LinkIcon,
   LogOut,
   Menu,
   Minus,
   Package,
+  Pin,
   Plus,
   RefreshCw,
   Search,
   Sparkles,
   Syringe,
+  Trash2,
   TrendingUp,
   Users,
   Wallet,
@@ -42,21 +48,34 @@ import {
 import { startAurora } from './aurora';
 import {
   AccountingTab,
+  buildNextSteps,
+  buildPatientProductAlerts,
+  ClinicalNote,
   DateFilter,
+  daysSince,
   emptyDateFilter,
   FinanceMovement,
-  buildPatientProductAlerts,
   formatCompact,
   formatCurrency,
   formatDate,
+  formatMonth,
   InventoryItem,
   isReceivable,
   matchesDateFilter,
   matchesTreatmentFilter,
+  NextStep,
+  NOTE_KINDS,
+  NoteKind,
+  noteKindLabel,
+  noteKindTone,
+  overallSignal,
   Patient,
   patientHistory,
+  PatientDossier,
   PatientProductAlert,
+  patientSignalCounts,
   Signal,
+  SignalCounts,
   signalLabel,
   statusTone,
   stockSignal,
@@ -66,10 +85,13 @@ import {
   View,
 } from './data';
 import {
+  addNote,
   CatalogItem,
   createPatient,
+  deleteNote,
   fetchAll,
   fetchCatalog,
+  fetchDossier,
   financeEntry,
   inventoryMovement,
   MovementRow,
@@ -512,6 +534,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 patient={detailPatient}
                 onBack={() => setDetailPatient(null)}
                 onPrescribe={setPrescribe}
+                go={go}
               />
             ) : detailAlert ? (
               <AlertDetail alert={detailAlert} onBack={() => setDetailAlert(null)} />
@@ -1041,11 +1064,7 @@ function PacientesView({
                   <div className="patient-card__meta">
                     <Badge label={p.status} tone={statusTone(p.status)} />
                     <span className="patient-card__value">{formatCurrency(p.saleValue)}</span>
-                    {p.weeklySerum && (
-                      <span className="patient-card__value" style={{ color: 'var(--muted)', fontWeight: 500 }}>
-                        Suero {p.serumDay}
-                      </span>
-                    )}
+                    <SignalSummary counts={patientSignalCounts(p)} />
                   </div>
                   <div className="peptide-chips">
                     {p.peptides.map((pep, i) => (
@@ -1864,28 +1883,106 @@ function Sheet({ title, eyebrow, onClose, children }: { title: string; eyebrow: 
 
 const SIGNAL_TONE: Record<Signal, Tone> = { ok: 'success', warn: 'warning', danger: 'danger' };
 
-/** Página completa de paciente (reemplaza el viejo modal). Master-detail estilo
- *  Apple: barra de regreso + héroe + dos columnas (resumen sticky + cuerpo). */
+const NOTE_ICON: Record<NoteKind, ElementType> = {
+  nota: FileText,
+  alergia: AlertTriangle,
+  recomendacion: Lightbulb,
+  hito: Award,
+  seguimiento: CalendarClock,
+};
+const TL_ICON: Record<string, ElementType> = {
+  tratamiento: Dna,
+  venta: Wallet,
+  abono: CreditCard,
+  dosis: Syringe,
+};
+function timelineIcon(category: string): ElementType {
+  if (category.startsWith('nota_')) return NOTE_ICON[category.slice(5) as NoteKind] ?? FileText;
+  return TL_ICON[category] ?? ClipboardList;
+}
+const STEP_ICON: Record<NextStep['action'], ElementType> = {
+  recetar: Syringe,
+  cobrar: Wallet,
+  reponer: Package,
+  seguimiento: CalendarClock,
+};
+
+/** Semáforo compacto: cuántos productos del paciente están en cada color. */
+function SignalSummary({ counts, label = false }: { counts: SignalCounts; label?: boolean }) {
+  const shown = ([['danger', counts.danger], ['warn', counts.warn], ['ok', counts.ok]] as Array<[Signal, number]>).filter(
+    ([, n]) => n > 0,
+  );
+  if (!shown.length) return null;
+  return (
+    <span className="sig-summary" title="Semáforo de productos">
+      {shown.map(([s, n]) => (
+        <span key={s} className={`sig-pill sig-pill--${s}`}>
+          <span className={`dot dot--${s}`} />
+          {n}
+          {label ? ` ${signalLabel(s)}` : ''}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Página completa de paciente = ficha clínica viva con pestañas
+ *  (Resumen · Notas · Historial · Dinero). Carga el dossier al abrir. */
 function PatientDetail({
   patient,
   onBack,
   onPrescribe,
+  go,
 }: {
   patient: Patient;
   onBack: () => void;
   onPrescribe?: (p: Patient) => void;
+  go: (v: View) => void;
 }) {
-  const ref = useScrollReveal(patient.id);
-  const history = patientHistory(patient);
-  const endingSoon = patient.peptides.filter((p) => p.endsInDays <= 10).length;
-  const signal = treatmentSignal(patient.daysLeft);
+  const ref = useScrollReveal(`${patient.id}-${0}`);
+  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'dinero'>('resumen');
+  const [dossier, setDossier] = useState<PatientDossier | null>(null);
+  const [loading, setLoading] = useState(true);
+  const signal = overallSignal(patient);
+  const counts = patientSignalCounts(patient);
+
+  const reload = useCallback(async () => {
+    if (!patient.clientUuid) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const d = await fetchDossier(patient.clientUuid);
+      setDossier(d);
+    } catch {
+      setDossier(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [patient.clientUuid]);
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
+    setLoading(true);
+    setDossier(null);
+    reload();
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onBack();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onBack]);
+  }, [onBack, reload]);
+
+  const steps = buildNextSteps(patient, dossier);
+  function act(step: NextStep) {
+    if (step.action === 'recetar' && onPrescribe) onPrescribe(patient);
+    else go(step.target);
+  }
+
+  const TABS = [
+    { id: 'resumen' as const, label: 'Resumen', icon: Activity, count: undefined as number | undefined },
+    { id: 'notas' as const, label: 'Notas', icon: FileText, count: dossier?.notes.length },
+    { id: 'historial' as const, label: 'Historial', icon: ClipboardList, count: dossier?.timeline.length },
+    { id: 'dinero' as const, label: 'Dinero', icon: Wallet, count: undefined },
+  ];
 
   return (
     <div className="detail" ref={ref}>
@@ -1902,7 +1999,7 @@ function PatientDetail({
 
       <header className={`detail__hero detail__hero--${signal}`} data-reveal>
         <div className="detail__identity">
-          <span className="eyebrow">Historial del paciente</span>
+          <span className="eyebrow">Ficha clínica</span>
           <h1>{patient.name}</h1>
           <div className="detail__tags">
             <span className={`tier${patient.tier === 'VIP' ? ' tier--vip' : ''}`}>{patient.tier}</span>
@@ -1912,6 +2009,7 @@ function PatientDetail({
           <p className="detail__plan">
             {patient.plan} · <strong>{formatCurrency(patient.saleValue)}</strong>
           </p>
+          <SignalSummary counts={counts} label />
         </div>
         <div className="detail__ringwrap">
           <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={128} stroke={11} />
@@ -1919,84 +2017,441 @@ function PatientDetail({
         </div>
       </header>
 
-      <div className="detail__grid">
-        <aside className="detail__aside">
-          {onPrescribe && (
-            <button className="btn btn--primary btn--block detail__cta" data-reveal onClick={() => onPrescribe(patient)}>
-              <Syringe size={18} /> Recetar productos
+      <div className="detail__toolbar" data-reveal>
+        <div className="detail__tabs" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`detail__tab${tab === t.id ? ' is-active' : ''}`}
+              onClick={() => setTab(t.id)}
+              role="tab"
+              aria-selected={tab === t.id}
+            >
+              <t.icon size={15} /> {t.label}
+              {typeof t.count === 'number' && t.count > 0 && <small>{t.count}</small>}
             </button>
-          )}
-          <div className="fact-card" data-reveal>
-            <div className="fact">
-              <span>Inicio</span>
-              <strong>{formatDate(patient.startDate)}</strong>
-            </div>
-            <div className="fact">
-              <span>Final</span>
-              <strong>{formatDate(patient.endDate)}</strong>
-            </div>
-            <div className="fact">
-              <span>Péptidos</span>
-              <strong>{patient.peptides.length}</strong>
-            </div>
-            <div className="fact">
-              <span>Por cerrar</span>
-              <strong>{endingSoon}</strong>
-            </div>
-            {patient.weeklySerum && (
-              <div className="fact">
-                <span>Suero</span>
-                <strong>{patient.serumDay}</strong>
-              </div>
-            )}
-          </div>
-          <div className="next-steps" data-reveal>
-            <strong>Próximos pasos</strong>
-            <span>
-              {patient.daysLeft <= 12
-                ? 'Agendar cierre, confirmar continuidad y revisar inventario necesario.'
-                : 'Mantener seguimiento semanal y registrar novedades del tratamiento.'}
-            </span>
-          </div>
-        </aside>
+          ))}
+        </div>
+        {onPrescribe && (
+          <button className="btn btn--primary detail__cta" onClick={() => onPrescribe(patient)}>
+            <Syringe size={17} /> Recetar
+          </button>
+        )}
+      </div>
 
-        <main className="detail__main">
-          <section className="detail-block" data-reveal>
-            <div className="label">
-              <Syringe size={17} /> Tratamiento activo
+      {tab === 'resumen' && <ResumenPanel patient={patient} dossier={dossier} steps={steps} onAct={act} counts={counts} />}
+      {tab === 'notas' && <NotasPanel patient={patient} dossier={dossier} loading={loading} onChanged={reload} />}
+      {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
+      {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
+    </div>
+  );
+}
+
+/* ---- Próximos pasos auto-gestionados ---- */
+function NextStepsPanel({ steps, onAct }: { steps: NextStep[]; onAct: (s: NextStep) => void }) {
+  return (
+    <section className="detail-block" data-reveal>
+      <div className="label">
+        <Sparkles size={17} /> Próximos pasos
+      </div>
+      <div className="steps">
+        {steps.map((s) => {
+          const Icon = STEP_ICON[s.action];
+          return (
+            <button key={s.id} className={`step step--${s.signal}`} onClick={() => onAct(s)}>
+              <span className={`step__icon step__icon--${s.signal}`}>
+                <Icon size={17} />
+              </span>
+              <span className="step__body">
+                <strong>{s.title}</strong>
+                <span>{s.detail}</span>
+              </span>
+              <ChevronRight className="chev" size={17} />
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---- Tratamiento activo con semáforo por producto ---- */
+function TreatmentBlock({ patient }: { patient: Patient }) {
+  return (
+    <section className="detail-block" data-reveal>
+      <div className="label">
+        <Syringe size={17} /> Tratamiento activo <SignalSummary counts={patientSignalCounts(patient)} />
+      </div>
+      <div className="treatment-list">
+        {patient.peptides.length === 0 && <p className="muted-line">Sin productos en el plan vigente.</p>}
+        {patient.peptides.map((p, i) => {
+          const sig = treatmentSignal(p.endsInDays);
+          return (
+            <article key={`${p.name}-${i}`}>
+              <span className={`dot dot--${sig}`} />
+              <div>
+                <strong>{p.name}</strong>
+                <span className="treatment-list__dose">
+                  {p.dose}
+                  {p.route ? ` · ${p.route}` : ''}
+                </span>
+              </div>
+              <span className={`ti-flag ti-flag--${sig}`}>{p.endsInDays} días</span>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---- Alergias y recomendaciones (notas fijadas / clínicas clave) ---- */
+function ClinicalFlags({ dossier }: { dossier: PatientDossier | null }) {
+  const flags = (dossier?.notes ?? []).filter(
+    (n) => n.kind === 'alergia' || n.kind === 'recomendacion' || n.pinned,
+  );
+  return (
+    <section className="detail-block" data-reveal>
+      <div className="label">
+        <AlertTriangle size={17} /> Alergias y recomendaciones
+      </div>
+      {flags.length === 0 ? (
+        <p className="muted-line">Sin alergias ni recomendaciones registradas. Agrégalas en la pestaña Notas.</p>
+      ) : (
+        <div className="flag-list">
+          {flags.map((n) => {
+            const Icon = NOTE_ICON[n.kind];
+            return (
+              <div key={n.id} className={`flag flag--${noteKindTone(n.kind)}`}>
+                <Icon size={16} />
+                <div>
+                  <strong>{noteKindLabel(n.kind)}</strong>
+                  <p>{n.body}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ResumenPanel({
+  patient,
+  dossier,
+  steps,
+  onAct,
+  counts,
+}: {
+  patient: Patient;
+  dossier: PatientDossier | null;
+  steps: NextStep[];
+  onAct: (s: NextStep) => void;
+  counts: SignalCounts;
+}) {
+  const lifetime = dossier?.summary?.total_purchased ?? patient.saleValue;
+  const balance = dossier?.summary?.balance ?? 0;
+  const sessions = dossier?.summary?.sales_count ?? 0;
+  const since = daysSince(dossier?.summary?.last_sale);
+  return (
+    <div className="detail__grid">
+      <aside className="detail__aside">
+        <NextStepsPanel steps={steps} onAct={onAct} />
+        <div className="fact-card" data-reveal>
+          <div className="fact">
+            <span>Valor de vida</span>
+            <strong>{formatCompact(lifetime)}</strong>
+          </div>
+          <div className="fact">
+            <span>Saldo</span>
+            <strong className={balance > 0 ? 'fact--danger' : undefined}>{formatCompact(balance)}</strong>
+          </div>
+          <div className="fact">
+            <span>Sesiones</span>
+            <strong>{sessions}</strong>
+          </div>
+          <div className="fact">
+            <span>Última visita</span>
+            <strong className="fact__sm">{since === null ? '—' : since === 0 ? 'Hoy' : `Hace ${since}d`}</strong>
+          </div>
+          <div className="fact">
+            <span>Inicio</span>
+            <strong className="fact__sm">{formatDate(patient.startDate)}</strong>
+          </div>
+          <div className="fact">
+            <span>Cierre</span>
+            <strong className="fact__sm">{formatDate(patient.endDate)}</strong>
+          </div>
+          {patient.weeklySerum && (
+            <div className="fact">
+              <span>Suero</span>
+              <strong className="fact__sm">{patient.serumDay}</strong>
             </div>
-            <div className="treatment-list">
-              {patient.peptides.map((p, i) => (
-                <article key={`${p.name}-${i}`}>
-                  <span className={`dot dot--${treatmentSignal(p.endsInDays)}`} />
-                  <div>
-                    <strong>{p.name}</strong>
-                    <span className="treatment-list__dose">{p.dose}</span>
-                  </div>
-                  <span className="treatment-list__days">{p.endsInDays} días</span>
-                </article>
+          )}
+          <div className="fact">
+            <span>Semáforo</span>
+            <strong className="fact__sm">
+              <SignalSummary counts={counts} />
+            </strong>
+          </div>
+        </div>
+      </aside>
+      <main className="detail__main">
+        <TreatmentBlock patient={patient} />
+        <ClinicalFlags dossier={dossier} />
+      </main>
+    </div>
+  );
+}
+
+/* ---- Notas: composer + lista ---- */
+function NotasPanel({
+  patient,
+  dossier,
+  loading,
+  onChanged,
+}: {
+  patient: Patient;
+  dossier: PatientDossier | null;
+  loading: boolean;
+  onChanged: () => void;
+}) {
+  const [body, setBody] = useState('');
+  const [kind, setKind] = useState<NoteKind>('nota');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const canWrite = !!patient.clientUuid;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!patient.clientUuid || !body.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      await addNote(patient.clientUuid, body.trim(), kind, patient.treatmentId ?? null);
+      setBody('');
+      setKind('nota');
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setSaving(true);
+    try {
+      await deleteNote(id);
+      await onChanged();
+    } catch {
+      /* noop */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const notes = dossier?.notes ?? [];
+  return (
+    <div className="detail__single">
+      {canWrite && (
+        <form className="detail-block note-composer" data-reveal onSubmit={submit}>
+          <div className="label">
+            <Plus size={17} /> Nueva nota
+          </div>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Escribe una nota, alergia, recomendación o hito…"
+            rows={3}
+          />
+          <div className="note-composer__row">
+            <div className="note-kinds">
+              {NOTE_KINDS.map((k) => (
+                <button
+                  type="button"
+                  key={k.id}
+                  className={`note-kind note-kind--${k.tone}${kind === k.id ? ' is-active' : ''}`}
+                  onClick={() => setKind(k.id)}
+                >
+                  {k.label}
+                </button>
               ))}
             </div>
-          </section>
+            <button className="btn btn--primary" type="submit" disabled={saving || !body.trim()}>
+              {saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar
+            </button>
+          </div>
+          {error && <p className="note-composer__error">{error}</p>}
+        </form>
+      )}
 
-          <section className="detail-block" data-reveal>
-            <div className="label">
-              <ClipboardList size={17} /> Línea de tiempo
-            </div>
-            <div className="timeline">
-              {history.map((item) => (
-                <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
-                  <span>{item.date === '-' ? 'Sin fecha' : formatDate(item.date) || item.date}</span>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.detail}</p>
+      <section className="detail-block" data-reveal>
+        <div className="label">
+          <FileText size={17} /> Notas clínicas <small className="count-chip">{notes.length}</small>
+        </div>
+        {loading ? (
+          <p className="muted-line">Cargando historia…</p>
+        ) : notes.length === 0 ? (
+          <p className="muted-line">Aún no hay notas. Registra la primera arriba.</p>
+        ) : (
+          <div className="note-list">
+            {notes.map((n) => {
+              const Icon = NOTE_ICON[n.kind];
+              return (
+                <article key={n.id} className={`note note--${noteKindTone(n.kind)}`}>
+                  <span className="note__icon">
+                    <Icon size={16} />
+                  </span>
+                  <div className="note__body">
+                    <div className="note__top">
+                      <span className={`note__kind note__kind--${noteKindTone(n.kind)}`}>{noteKindLabel(n.kind)}</span>
+                      {n.pinned && <Pin size={12} className="note__pin" />}
+                      <span className="note__meta">
+                        {n.author} · {formatDate(n.created_at.slice(0, 10))}
+                      </span>
+                    </div>
+                    <p>{n.body}</p>
+                  </div>
+                  {canWrite && (
+                    <button className="note__del" onClick={() => remove(n.id)} aria-label="Eliminar nota">
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ---- Historial: línea de tiempo unificada (hechos reales) ---- */
+function HistorialPanel({
+  patient,
+  dossier,
+  loading,
+}: {
+  patient: Patient;
+  dossier: PatientDossier | null;
+  loading: boolean;
+}) {
+  const events = dossier?.timeline ?? [];
+  const fallback = patientHistory(patient);
+  return (
+    <div className="detail__single">
+      <section className="detail-block" data-reveal>
+        <div className="label">
+          <ClipboardList size={17} /> Historia clínica
+        </div>
+        {loading ? (
+          <p className="muted-line">Cargando historia…</p>
+        ) : events.length > 0 ? (
+          <div className="feed">
+            {events.map((ev, i) => {
+              const Icon = timelineIcon(ev.category);
+              return (
+                <div className={`feed__item feed__item--${ev.tone}`} key={`${ev.ts}-${i}`}>
+                  <span className={`feed__icon feed__icon--${ev.tone}`}>
+                    <Icon size={15} />
+                  </span>
+                  <div className="feed__body">
+                    <div className="feed__head">
+                      <strong>{ev.title}</strong>
+                      {ev.amount != null && ev.amount > 0 && <span className="feed__amount">{formatCompact(ev.amount)}</span>}
+                    </div>
+                    <p>{ev.detail}</p>
+                    <span className="feed__date">{formatDate(ev.date)}</span>
                   </div>
                 </div>
-              ))}
-            </div>
-          </section>
-        </main>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="timeline">
+            {fallback.map((item, i) => (
+              <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}-${i}`}>
+                <span>{item.date === '-' ? 'Sin fecha' : formatDate(item.date) || item.date}</span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ---- Dinero: revenue en el tiempo + KPIs ---- */
+function DineroPanel({ patient, dossier }: { patient: Patient; dossier: PatientDossier | null }) {
+  const s = dossier?.summary;
+  const revenue = dossier?.revenue ?? [];
+  const max = Math.max(1, ...revenue.map((r) => r.income));
+  const grown = useGrow();
+  return (
+    <div className="detail__single">
+      <section className="kpi-grid" data-reveal>
+        <MoneyKpi icon={TrendingUp} tone="brand" label="Valor de vida" value={s?.total_purchased ?? patient.saleValue} />
+        <MoneyKpi icon={CreditCard} tone="ok" label="Abonado" value={s?.total_paid ?? 0} />
+        <MoneyKpi icon={Wallet} tone={(s?.balance ?? 0) > 0 ? 'danger' : 'ok'} label="Saldo" value={s?.balance ?? 0} />
+        <MoneyKpi icon={Activity} tone="brand" label="Sesiones" value={s?.sales_count ?? 0} money={false} />
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label">
+          <BarChart3 size={17} /> Revenue en el tiempo
+        </div>
+        {revenue.length === 0 ? (
+          <p className="muted-line">Sin abonos registrados todavía.</p>
+        ) : (
+          <div className="rev-bars">
+            {revenue.map((r) => (
+              <div className="rev-bar" key={r.month}>
+                <span className="rev-bar__track">
+                  <span
+                    className="rev-bar__fill"
+                    style={{ height: grown ? `${Math.max(6, (r.income / max) * 100)}%` : '0%' }}
+                  />
+                </span>
+                <span className="rev-bar__val">{formatCompact(r.income)}</span>
+                <span className="rev-bar__month">{formatMonth(r.month)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function MoneyKpi({
+  icon: Icon,
+  tone,
+  label,
+  value,
+  money = true,
+}: {
+  icon: ElementType;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+  label: string;
+  value: number;
+  money?: boolean;
+}) {
+  return (
+    <div className="kpi" data-reveal>
+      <div className="kpi__top">
+        <span className={`kpi__icon kpi__icon--${tone}`}>
+          <Icon size={17} />
+        </span>
+        <span className="kpi__label">{label}</span>
       </div>
+      <span className="kpi__value">{money ? <CountUp value={value} /> : value}</span>
     </div>
   );
 }
@@ -2079,8 +2534,8 @@ function AlertDetail({ alert, onBack }: { alert: PatientProductAlert; onBack: ()
               <ClipboardList size={17} /> Histórico
             </div>
             <div className="timeline">
-              {alert.history.map((item) => (
-                <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}`}>
+              {alert.history.map((item, i) => (
+                <div className={`timeline__item timeline__item--${item.tone}`} key={`${item.date}-${item.title}-${i}`}>
                   <span>{item.date}</span>
                   <div>
                     <strong>{item.title}</strong>

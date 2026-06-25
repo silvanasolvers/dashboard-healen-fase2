@@ -625,3 +625,205 @@ export function sumBy<T>(items: T[], key: (item: T) => string, value: (item: T) 
     return acc;
   }, {});
 }
+
+/* ============================================================
+   HISTORIA CLÍNICA VIVA (notas, timeline, revenue, próximos pasos)
+   ============================================================ */
+export type NoteKind = 'nota' | 'alergia' | 'recomendacion' | 'hito' | 'seguimiento';
+
+export interface ClinicalNote {
+  id: string;
+  client_id: string;
+  treatment_id: string | null;
+  kind: NoteKind;
+  body: string;
+  pinned: boolean;
+  created_at: string;
+  author: string;
+}
+
+export interface TimelineEvent {
+  client_id: string;
+  ts: string;
+  date: string;
+  category: string; // tratamiento | venta | abono | dosis | nota_*
+  title: string;
+  detail: string;
+  amount: number | null;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+}
+
+export interface RevenuePoint {
+  client_id: string;
+  month: string; // primer día del mes
+  income: number;
+  payments: number;
+}
+
+export interface PatientSummary {
+  client_id: string;
+  code: string;
+  full_name: string;
+  phone: string | null;
+  email: string | null;
+  birthdate: string | null;
+  address: string | null;
+  notes: string | null;
+  total_purchased: number;
+  total_paid: number;
+  balance: number;
+  sales_count: number;
+  last_sale: string | null;
+  active_treatments: number;
+  tier: string;
+}
+
+export interface PatientDossier {
+  summary: PatientSummary | null;
+  notes: ClinicalNote[];
+  timeline: TimelineEvent[];
+  revenue: RevenuePoint[];
+}
+
+export interface SignalCounts {
+  ok: number;
+  warn: number;
+  danger: number;
+}
+
+/** Cuenta cuántos productos del paciente están en cada color del semáforo. */
+export function patientSignalCounts(patient: Patient): SignalCounts {
+  return patient.peptides.reduce<SignalCounts>(
+    (acc, p) => {
+      acc[treatmentSignal(p.endsInDays)] += 1;
+      return acc;
+    },
+    { ok: 0, warn: 0, danger: 0 },
+  );
+}
+
+/** Señal global del paciente = el peor de sus productos (o la del plan si no tiene). */
+export function overallSignal(patient: Patient): Signal {
+  const c = patientSignalCounts(patient);
+  if (c.danger) return 'danger';
+  if (c.warn) return 'warn';
+  if (patient.peptides.length) return 'ok';
+  return treatmentSignal(patient.daysLeft);
+}
+
+/** Días transcurridos desde una fecha ISO (yyyy-mm-dd). */
+export function daysSince(date?: string | null): number | null {
+  if (!date) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(`${String(date).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, Math.round((today.getTime() - d.getTime()) / 86400000));
+}
+
+export type NextStepAction = 'recetar' | 'cobrar' | 'reponer' | 'seguimiento';
+
+export interface NextStep {
+  id: string;
+  signal: Signal;
+  title: string;
+  detail: string;
+  action: NextStepAction;
+  target: View;
+}
+
+/** Próximos pasos AUTO-gestionados: derivados en vivo del paciente + su dossier.
+ *  Se recalculan en cada carga, así cambian solos al pasar los días o entrar una venta. */
+export function buildNextSteps(patient: Patient, dossier: PatientDossier | null): NextStep[] {
+  const steps: NextStep[] = [];
+
+  // 1. Productos por acabarse (los más urgentes primero).
+  const urgent = patient.peptides
+    .filter((p) => treatmentSignal(p.endsInDays) !== 'ok')
+    .sort((a, b) => a.endsInDays - b.endsInDays);
+  for (const p of urgent.slice(0, 2)) {
+    const sig = treatmentSignal(p.endsInDays);
+    steps.push({
+      id: `rx-${p.name}`,
+      signal: sig,
+      action: 'recetar',
+      target: 'pacientes',
+      title: sig === 'danger' ? `${p.name} se acaba en ${p.endsInDays} días` : `${p.name}: quedan ${p.endsInDays} días`,
+      detail: 'Recetar recompra y confirmar continuidad del producto.',
+    });
+  }
+
+  // 2. Plan por cerrar (si no hay ya un producto urgente que lo cubra).
+  if (patient.daysLeft <= 12 && !urgent.length) {
+    steps.push({
+      id: 'close',
+      signal: patient.daysLeft <= 5 ? 'danger' : 'warn',
+      action: 'recetar',
+      target: 'pacientes',
+      title: `El plan cierra en ${patient.daysLeft} días`,
+      detail: 'Agendar cierre, renovar plan y revisar inventario necesario.',
+    });
+  }
+
+  // 3. Saldo pendiente → cobrar.
+  const balance = dossier?.summary?.balance ?? 0;
+  if (balance > 0) {
+    steps.push({
+      id: 'pay',
+      signal: 'warn',
+      action: 'cobrar',
+      target: 'contabilidad',
+      title: `Saldo pendiente ${formatCurrency(balance)}`,
+      detail: 'Registrar abono o gestionar el cobro en caja.',
+    });
+  }
+
+  // 4. Sin compra hace mucho → seguimiento.
+  const since = daysSince(dossier?.summary?.last_sale);
+  if (since !== null && since >= 30) {
+    steps.push({
+      id: 'follow',
+      signal: 'warn',
+      action: 'seguimiento',
+      target: 'pacientes',
+      title: `Sin compra hace ${since} días`,
+      detail: 'Contactar para seguimiento y reactivación del tratamiento.',
+    });
+  }
+
+  if (!steps.length) {
+    steps.push({
+      id: 'ok',
+      signal: 'ok',
+      action: 'seguimiento',
+      target: 'pacientes',
+      title: 'Todo al día',
+      detail: 'Mantener seguimiento semanal y registrar novedades del tratamiento.',
+    });
+  }
+  return steps;
+}
+
+export const NOTE_KINDS: Array<{ id: NoteKind; label: string; tone: Tone }> = [
+  { id: 'nota', label: 'Nota', tone: 'neutral' },
+  { id: 'alergia', label: 'Alergia', tone: 'danger' },
+  { id: 'recomendacion', label: 'Recomendación', tone: 'warning' },
+  { id: 'hito', label: 'Hito', tone: 'success' },
+  { id: 'seguimiento', label: 'Seguimiento', tone: 'neutral' },
+];
+
+export function noteKindLabel(kind: NoteKind): string {
+  return NOTE_KINDS.find((k) => k.id === kind)?.label ?? 'Nota';
+}
+
+export function noteKindTone(kind: NoteKind): Tone {
+  return NOTE_KINDS.find((k) => k.id === kind)?.tone ?? 'neutral';
+}
+
+/** Mes corto "jun 26" desde una fecha ISO de primer-día-de-mes (sin el "de"). */
+export function formatMonth(value: string): string {
+  const d = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  const month = d.toLocaleDateString('es-CO', { month: 'short' }).replace('.', '');
+  return `${month} ${String(d.getFullYear()).slice(2)}`;
+}

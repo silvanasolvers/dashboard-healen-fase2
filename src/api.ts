@@ -1,7 +1,17 @@
 // Capa de acceso a datos Healen OS — lee de las vistas v_dashboard_* y
 // muta vía RPCs dash_*. Devuelve las formas que la UI ya consume.
 import { supabase } from './supabase';
-import type { FinanceMovement, InventoryItem, Patient } from './data';
+import type {
+  ClinicalNote,
+  FinanceMovement,
+  InventoryItem,
+  NoteKind,
+  Patient,
+  PatientDossier,
+  PatientSummary,
+  RevenuePoint,
+  TimelineEvent,
+} from './data';
 
 export interface MovementRow {
   id: string;
@@ -121,6 +131,51 @@ export async function prescribeCheckout(p: PrescribePayload): Promise<PrescribeR
     p_method: p.method,
     p_notes: p.notes ?? null,
   }) as Promise<PrescribeResult>;
+}
+
+// ---------- Historia clínica del paciente (carga perezosa al abrir la ficha) ----------
+export async function fetchDossier(clientUuid: string): Promise<PatientDossier> {
+  const [summary, notes, timeline, revenue] = await Promise.all([
+    supabase.from('v_patient_summary').select('*').eq('client_id', clientUuid).maybeSingle(),
+    supabase.from('v_patient_notes').select('*').eq('client_id', clientUuid),
+    supabase
+      .from('v_patient_timeline')
+      .select('*')
+      .eq('client_id', clientUuid)
+      .order('ts', { ascending: false })
+      .limit(80),
+    supabase.from('v_patient_revenue').select('*').eq('client_id', clientUuid).order('month', { ascending: true }),
+  ]);
+  if (summary.error) throw new Error(summary.error.message);
+  if (notes.error) throw new Error(notes.error.message);
+  if (timeline.error) throw new Error(timeline.error.message);
+  if (revenue.error) throw new Error(revenue.error.message);
+
+  const noteRows = (notes.data ?? []) as ClinicalNote[];
+  noteRows.sort(
+    (a, b) => Number(b.pinned) - Number(a.pinned) || (a.created_at < b.created_at ? 1 : -1),
+  );
+
+  return {
+    summary: (summary.data ?? null) as PatientSummary | null,
+    notes: noteRows,
+    timeline: (timeline.data ?? []) as TimelineEvent[],
+    revenue: (revenue.data ?? []) as RevenuePoint[],
+  };
+}
+
+export function addNote(clientUuid: string, body: string, kind: NoteKind, treatmentId?: string | null) {
+  return rpc('dash_add_note', {
+    p_client: clientUuid,
+    p_body: body,
+    p_kind: kind,
+    p_treatment: treatmentId ?? null,
+    p_pinned: null,
+  });
+}
+
+export function deleteNote(noteId: string) {
+  return rpc('dash_delete_note', { p_note: noteId });
 }
 
 // ---------- Mutaciones (1:1 con los formularios) ----------
