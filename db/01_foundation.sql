@@ -84,7 +84,9 @@ end $$;
 create or replace function require_staff()
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if auth.uid() is not null and not is_staff() then
+  -- Bloquea anon (auth.role()='anon') y autenticados sin perfil de staff.
+  -- No bloquea service role ni SQL directo (auth.role() null / auth.uid() null).
+  if auth.role() = 'anon' or (auth.uid() is not null and not is_staff()) then
     raise exception 'No autorizado: se requiere un perfil de staff activo' using errcode = '42501';
   end if;
 end $$;

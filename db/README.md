@@ -15,6 +15,7 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `06_seed.sql` | Datos demo que ejercitan el motor (idempotente) |
 | `07_dashboard.sql` | Capa dashboard: vistas `v_dashboard_*` (forma del front) + RPCs `dash_*` |
 | `08_hardening.sql` | Cierra el P0: revoca EXECUTE de anon/PUBLIC; cada mutador valida `require_staff()` |
+| `09_prescribe.sql` | Recetar=checkout: columnas de receta + `v_prescribe_catalog` + RPC `prescribe_checkout` |
 
 ## Ejecutar
 

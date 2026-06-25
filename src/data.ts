@@ -25,12 +25,15 @@ export interface DateFilter {
 export interface PeptideLine {
   name: string;
   dose: string;
+  route?: string | null;
   endsInDays: number;
   status: PatientStatus;
 }
 
 export interface Patient {
   id: string;
+  clientUuid?: string;
+  treatmentId?: string;
   name: string;
   plan: string;
   saleValue: number;

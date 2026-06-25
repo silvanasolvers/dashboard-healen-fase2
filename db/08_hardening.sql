@@ -11,6 +11,11 @@
 revoke execute on all functions in schema public from public;
 revoke execute on all functions in schema public from anon;
 
+-- 1b) Mínimo privilegio: anon no debe tener escritura sobre ninguna tabla/vista
+--     (grants colgantes por defecto de Supabase; inertes hoy por RLS + vistas no
+--      actualizables, pero se revocan explícitamente por higiene).
+revoke insert, update, delete, truncate on all tables in schema public from anon;
+
 -- 2) Re-otorgar SOLO los helpers puros que las vistas (security_invoker) y la RLS
 --    necesitan evaluar como el rol que consulta.
 grant execute on function signal_by_days(integer) to anon, authenticated;

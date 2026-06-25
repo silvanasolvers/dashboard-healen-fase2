@@ -5,7 +5,8 @@
 -- ============================================================
 
 -- ---------- Pacientes (1 fila por cliente, su tratamiento vigente) ----------
-create or replace view v_dashboard_patients as
+drop view if exists v_dashboard_patients;
+create view v_dashboard_patients as
 select distinct on (c.id)
   c.code                                              as id,
   c.full_name                                         as name,
@@ -22,10 +23,13 @@ select distinct on (c.id)
                 when 'por_finalizar' then 'Por finalizar'
                 when 'finalizado' then 'Finalizado'
                 else 'Activo' end                     as status,
+  c.id                                                as "clientUuid",
+  t.id                                                as "treatmentId",
   coalesce((
     select jsonb_agg(jsonb_build_object(
       'name', ti.name,
       'dose', ti.dose,
+      'route', ti.route,
       'endsInDays', greatest((ti.ends_on - current_date), 0),
       'status', case ti.status when 'por_finalizar' then 'Por finalizar'
                                when 'finalizado' then 'Finalizado' else 'Activo' end
@@ -37,7 +41,7 @@ join treatments t on t.client_id = c.id
 join v_client_360 cl on cl.id = c.id
 where c.active
 order by c.id, (t.status = 'activo') desc, t.end_date nulls last;
-comment on view v_dashboard_patients is 'Pacientes con su tratamiento vigente, en la forma del tipo Patient del front (camelCase, peptides jsonb).';
+comment on view v_dashboard_patients is 'Pacientes con su tratamiento vigente (incluye clientUuid + treatmentId para recetar), en la forma del tipo Patient del front.';
 
 -- ---------- Inventario (1 fila por producto, forma InventoryItem) ----------
 create or replace view v_dashboard_inventory as

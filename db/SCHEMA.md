@@ -128,6 +128,21 @@ efectivamente recibida (suma de abonos). Una venta parcial aparece como ingreso 
 y como cartera (su saldo) — no es doble conteo. Así `companyIncome` del front cuadra con
 `v_cashflow_summary.company_income`.
 
+### Recetar = checkout (`09_prescribe.sql`)
+
+En un paciente, el médico receta productos (dosis, **vía de ingesta** `route`, frecuencia,
+duración) y cobra en un acto. Soporte:
+- `treatment_items.route`/`duration_days`/`unit_price`/`instructions` + `products.default_*`
+  (dosis/vía/frecuencia/duración/cantidad sugeridas para auto-rellenar).
+- `v_prescribe_catalog` — catálogo para el prescriptor: producto, precio, stock con semáforo,
+  costo del lote líder (margen estimado) y defaults.
+- **`prescribe_checkout(p_client, p_items, p_treatment, p_plan_name, p_charge, p_payment, p_method, p_notes)`**
+  — en una transacción: anexa al tratamiento vigente (o crea uno), inserta los `treatment_items`
+  (receta clínica) y, si hay líneas cobrables, crea la venta con descuento FEFO + margen + abono.
+  Valida cantidades/precios ≥ 0, no genera venta si no hay producto cobrable, y pone `due_date`
+  a la cartera con saldo. Devuelve `{treatment_id, sale_id, code, lines, subtotal, cogs, margin, paid, balance}`.
+  Bloqueada para anon (require_staff + revoke).
+
 ---
 
 ## Seguridad

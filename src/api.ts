@@ -21,6 +21,60 @@ export interface HealenData {
   movements: MovementRow[];
 }
 
+/** Producto del catálogo de recetas (con defaults inteligentes + stock). */
+export interface CatalogItem {
+  productId: string;
+  name: string;
+  category: string;
+  unit: string;
+  salePrice: number;
+  defaultDose: string | null;
+  defaultRoute: string | null;
+  defaultFrequency: string | null;
+  defaultDurationDays: number | null;
+  defaultQuantity: number;
+  stock: number;
+  signal: 'ok' | 'warn' | 'danger';
+  status: string;
+  unitCost: number;
+}
+
+/** Una línea de la receta = checkout. */
+export interface RxLine {
+  product_id: string;
+  name: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  duration_days: number | null;
+  quantity: number;
+  unit_price: number;
+  instructions?: string;
+}
+
+export interface PrescribePayload {
+  clientUuid: string;
+  treatmentId?: string | null;
+  planName?: string;
+  charge: boolean;
+  payment: number;
+  method: string;
+  notes?: string;
+  items: RxLine[];
+}
+
+export interface PrescribeResult {
+  treatment_id: string;
+  sale_id: string | null;
+  code: string | null;
+  lines: number;
+  subtotal: number;
+  cogs: number;
+  margin: number;
+  paid: number;
+  balance: number;
+}
+
 function unwrap<T>(res: { data: T | null; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message);
   return (res.data ?? []) as T;
@@ -46,6 +100,27 @@ async function rpc(fn: string, args: Record<string, unknown>) {
   const { data, error } = await supabase.rpc(fn, args);
   if (error) throw new Error(error.message);
   return data;
+}
+
+/** Catálogo de productos para recetar (con defaults + stock). */
+export async function fetchCatalog(): Promise<CatalogItem[]> {
+  const { data, error } = await supabase.from('v_prescribe_catalog').select('*');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CatalogItem[];
+}
+
+/** Recetar + cobrar en un acto. */
+export async function prescribeCheckout(p: PrescribePayload): Promise<PrescribeResult> {
+  return rpc('prescribe_checkout', {
+    p_client: p.clientUuid,
+    p_items: p.items,
+    p_treatment: p.treatmentId ?? null,
+    p_plan_name: p.planName ?? null,
+    p_charge: p.charge,
+    p_payment: p.payment,
+    p_method: p.method,
+    p_notes: p.notes ?? null,
+  }) as Promise<PrescribeResult>;
 }
 
 // ---------- Mutaciones (1:1 con los formularios) ----------

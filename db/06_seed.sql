@@ -111,4 +111,13 @@ begin
     values ('gasto','empresa','Inventario','Compra de insumos',820000,'2026-06-21','Inventario','tarjeta_credito','Bioregen Labs',sup_bio,'purchase');
   insert into finance_entries(kind,scope,category,concept,amount,entry_date,cost_center,payment_method,person)
     values ('gasto','retiro_socio','Personal','Retiro personal del socio',450000,'2026-06-22','Personal','efectivo','Socio');
+
+  -- Defaults de receta por producto (auto-rellenan dosis/vía/frecuencia/duración al recetar).
+  -- default_quantity = viales/kits a dispensar (modesto, realista vs. el stock típico).
+  update products set default_dose='250 mg', default_route='subcutanea', default_frequency='semanal', default_duration_days=42, default_quantity=3 where id=p_nad;
+  update products set default_dose='500 mcg', default_route='subcutanea', default_frequency='diario', default_duration_days=30, default_quantity=2 where id=p_bpc;
+  update products set default_dose='10 mg', default_route='intramuscular', default_frequency='ciclo', default_duration_days=20, default_quantity=1 where id=p_epi;
+  update products set default_dose='0.25 mg', default_route='subcutanea', default_frequency='semanal', default_duration_days=56, default_quantity=2 where id=p_sema;
+  update products set default_dose='1.5 mg', default_route='subcutanea', default_frequency='semanal', default_duration_days=28, default_quantity=1 where id=p_thy;
+  update products set default_dose='1 kit', default_route='intravenosa', default_frequency='semanal', default_duration_days=28, default_quantity=2 where id=p_suero;
 end $$;

@@ -235,6 +235,21 @@ create table if not exists finance_entries (
 comment on table finance_entries is 'Libro de caja para gastos, compras a proveedor y retiros de socio (scope separa empresa de personal). Las ventas de producto viven en sales.';
 create index if not exists idx_finance_date on finance_entries(entry_date desc);
 
+-- ---------- Receta clínica: vía de ingesta, duración + defaults por producto ----------
+-- (Usados por el flujo recetar=checkout, ver 09_prescribe.sql.)
+alter table treatment_items add column if not exists route text;          -- oral, subcutanea, intramuscular...
+alter table treatment_items add column if not exists duration_days integer;
+alter table treatment_items add column if not exists unit_price numeric(14,2);
+alter table treatment_items add column if not exists instructions text;
+comment on column treatment_items.route is 'Vía de administración / forma de ingesta (oral, sublingual, subcutanea, intramuscular, intravenosa, topica, nasal, inhalada).';
+
+alter table products add column if not exists default_dose text;
+alter table products add column if not exists default_route text;
+alter table products add column if not exists default_frequency text;
+alter table products add column if not exists default_duration_days integer;
+alter table products add column if not exists default_quantity numeric(12,2);
+comment on column products.default_dose is 'Dosis sugerida al recetar este producto (auto-rellena la receta).';
+
 -- ---------- updated_at triggers ----------
 do $$
 declare t text;

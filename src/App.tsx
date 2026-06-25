@@ -1,4 +1,4 @@
-import { ElementType, FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import { ElementType, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import {
   Activity,
@@ -17,6 +17,7 @@ import {
   Link as LinkIcon,
   LogOut,
   Menu,
+  Minus,
   Package,
   Plus,
   RefreshCw,
@@ -54,14 +55,28 @@ import {
   View,
 } from './data';
 import {
+  CatalogItem,
   createPatient,
   fetchAll,
+  fetchCatalog,
   financeEntry,
   inventoryMovement,
   MovementRow,
+  prescribeCheckout,
+  PrescribeResult,
   upsertProduct,
 } from './api';
 import { Login, useSession } from './auth';
+
+const ROUTES = ['subcutanea', 'intramuscular', 'intravenosa', 'oral', 'sublingual', 'topica', 'nasal'];
+const FREQS = ['diario', '2x semana', 'semanal', 'quincenal', 'mensual', 'ciclo'];
+const PAY_METHODS: Array<{ id: string; label: string }> = [
+  { id: 'efectivo', label: 'Efectivo' },
+  { id: 'transferencia', label: 'Transferencia' },
+  { id: 'tarjeta_credito', label: 'Tarjeta' },
+  { id: 'nequi', label: 'Nequi' },
+  { id: 'daviplata', label: 'Daviplata' },
+];
 
 const REDUCED =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -229,6 +244,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(null);
+  const [prescribe, setPrescribe] = useState<Patient | null>(null);
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -397,6 +413,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 serumCount={serumCount}
                 finishingTreatments={finishingTreatments}
                 go={go}
+                onPrescribe={setPrescribe}
               />
             )}
             {view === 'pacientes' && (
@@ -407,6 +424,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 search={patientSearch}
                 setSearch={setPatientSearch}
                 addPatient={addPatient}
+                onPrescribe={setPrescribe}
               />
             )}
             {view === 'inventario' && (
@@ -455,6 +473,18 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
           ))}
         </nav>
       </div>
+      {prescribe && (
+        <PrescribeSheet
+          patient={prescribe}
+          onClose={() => setPrescribe(null)}
+          onError={(msg) => setToast({ msg, error: true })}
+          onDone={async (msg) => {
+            setPrescribe(null);
+            setToast({ msg });
+            await reload();
+          }}
+        />
+      )}
       {toast && <div className={`toast${toast.error ? ' toast--error' : ''}`}>{toast.msg}</div>}
     </>
   );
@@ -579,6 +609,7 @@ function InicioView({
   serumCount,
   finishingTreatments,
   go,
+  onPrescribe,
 }: {
   patients: Patient[];
   inventory: InventoryItem[];
@@ -589,6 +620,7 @@ function InicioView({
   serumCount: number;
   finishingTreatments: number;
   go: (v: View) => void;
+  onPrescribe: (p: Patient) => void;
 }) {
   const [selected, setSelected] = useState<Patient | null>(null);
   const urgent = [...patients].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 4);
@@ -738,7 +770,7 @@ function InicioView({
         </article>
       </section>
 
-      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} />}
+      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} onPrescribe={onPrescribe} />}
     </>
   );
 }
@@ -780,6 +812,7 @@ function PacientesView({
   search,
   setSearch,
   addPatient,
+  onPrescribe,
 }: {
   patients: Patient[];
   allPatients: Patient[];
@@ -787,6 +820,7 @@ function PacientesView({
   search: string;
   setSearch: (v: string) => void;
   addPatient: (e: FormEvent<HTMLFormElement>) => void;
+  onPrescribe: (p: Patient) => void;
 }) {
   const [sub, setSub] = useState<'pacientes' | 'alertas'>('pacientes');
   const [selected, setSelected] = useState<Patient | null>(null);
@@ -960,7 +994,7 @@ function PacientesView({
         </>
       )}
 
-      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} />}
+      {selected && <PatientSheet patient={selected} onClose={() => setSelected(null)} onPrescribe={onPrescribe} />}
       {selectedAlert && <AlertSheet alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}
     </>
   );
@@ -1713,7 +1747,15 @@ function Sheet({ title, eyebrow, onClose, children }: { title: string; eyebrow: 
   );
 }
 
-function PatientSheet({ patient, onClose }: { patient: Patient; onClose: () => void }) {
+function PatientSheet({
+  patient,
+  onClose,
+  onPrescribe,
+}: {
+  patient: Patient;
+  onClose: () => void;
+  onPrescribe?: (p: Patient) => void;
+}) {
   const history = patientHistory(patient);
   const endingSoon = patient.peptides.filter((p) => p.endsInDays <= 10).length;
   const signal = treatmentSignal(patient.daysLeft);
@@ -1729,6 +1771,18 @@ function PatientSheet({ patient, onClose }: { patient: Patient; onClose: () => v
         </div>
         <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={88} stroke={8} />
       </div>
+
+      {onPrescribe && (
+        <button
+          className="btn btn--primary btn--block rx-open"
+          onClick={() => {
+            onClose();
+            onPrescribe(patient);
+          }}
+        >
+          <Syringe size={18} /> Recetar productos
+        </button>
+      )}
 
       <div className="mini-grid">
         <article>
@@ -1901,5 +1955,413 @@ function SupportSheet({ movement, onClose }: { movement: FinanceMovement; onClos
         </div>
       )}
     </Sheet>
+  );
+}
+
+/* ============================================================
+   PRESCRIBE SHEET — recetar = checkout (command palette + RxCards)
+   ============================================================ */
+interface RxUiLine {
+  uid: string;
+  product_id: string;
+  name: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  duration_days: number | null;
+  quantity: number;
+  unit_price: number;
+  stock: number;
+  signal: 'ok' | 'warn' | 'danger';
+  unitCost: number;
+}
+
+function PrescribeSheet({
+  patient,
+  onClose,
+  onDone,
+  onError,
+}: {
+  patient: Patient;
+  onClose: () => void;
+  onDone: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState(0);
+  const [lines, setLines] = useState<RxUiLine[]>([]);
+  const [method, setMethod] = useState<string>(
+    () => (typeof localStorage !== 'undefined' && localStorage.getItem('healen_pay')) || 'efectivo',
+  );
+  const [paid, setPaid] = useState<number | null>(null); // null = pago completo
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PrescribeResult | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchCatalog().then(setCatalog).catch(() => onError('No se pudo cargar el catálogo.'));
+    const id = window.setTimeout(() => inputRef.current?.focus(), 120);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const results = q
+    ? catalog.filter((c) => `${c.name} ${c.category}`.toLowerCase().includes(q)).slice(0, 6)
+    : [];
+  useEffect(() => setHighlight(0), [query]);
+
+  const total = lines.reduce((t, l) => t + l.quantity * l.unit_price, 0);
+  const estCogs = lines.reduce((t, l) => t + l.quantity * l.unitCost, 0);
+  const estMargin = total - estCogs;
+  const marginPct = total > 0 ? Math.round((estMargin / total) * 100) : 0;
+  const marginSignal: 'ok' | 'warn' | 'danger' = marginPct >= 50 ? 'ok' : marginPct >= 25 ? 'warn' : 'danger';
+  const shortage = lines.some((l) => l.quantity > l.stock);
+  const payAmount = paid == null ? total : Math.max(0, Math.min(paid, total));
+  const canConfirm = lines.length > 0 && !shortage && !busy;
+
+  function addProduct(c: CatalogItem) {
+    if (c.signal === 'danger' || c.stock <= 0) return;
+    setLines((prev) => [
+      ...prev,
+      {
+        uid: `${c.productId}-${prev.length}-${Date.now() % 100000}`,
+        product_id: c.productId,
+        name: c.name,
+        dose: c.defaultDose || '',
+        route: c.defaultRoute || 'subcutanea',
+        frequency: c.defaultFrequency || 'semanal',
+        duration_days: c.defaultDurationDays ?? 30,
+        // cantidad inicial topada al stock disponible para no nacer en faltante
+        quantity: Math.max(1, Math.min(c.defaultQuantity || 1, c.stock)),
+        unit_price: c.salePrice,
+        stock: c.stock,
+        signal: c.signal,
+        unitCost: c.unitCost,
+      },
+    ]);
+    setQuery('');
+    inputRef.current?.focus();
+  }
+
+  function patch(uid: string, p: Partial<RxUiLine>) {
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, ...p } : l)));
+  }
+  function remove(uid: string) {
+    setLines((prev) => prev.filter((l) => l.uid !== uid));
+  }
+
+  function onKey(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, Math.max(results.length - 1, 0)));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (results[highlight]) addProduct(results[highlight]);
+    } else if (e.key === 'Backspace' && query === '' && lines.length > 0) {
+      setLines((prev) => prev.slice(0, -1));
+    }
+  }
+
+  async function confirm() {
+    if (!canConfirm) return;
+    if (!patient.clientUuid) {
+      onError('Paciente sin identificador; recarga e intenta de nuevo.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await prescribeCheckout({
+        clientUuid: patient.clientUuid,
+        treatmentId: patient.treatmentId ?? null,
+        items: lines.map((l) => ({
+          product_id: l.product_id,
+          name: l.name,
+          dose: l.dose,
+          route: l.route,
+          frequency: l.frequency,
+          duration_days: l.duration_days,
+          quantity: l.quantity,
+          unit_price: l.unit_price,
+        })),
+        charge: true,
+        payment: payAmount,
+        method,
+      });
+      if (typeof localStorage !== 'undefined') localStorage.setItem('healen_pay', method);
+      setBusy(false);
+      setResult(res);
+      window.setTimeout(() => onDone('Receta activa · venta registrada'), REDUCED ? 0 : 1100);
+    } catch (e) {
+      setBusy(false);
+      onError((e as Error).message || 'No se pudo registrar la receta.');
+    }
+  }
+
+  // ⌘/Ctrl+Enter confirma · Esc cierra. confirm() vive en un ref para no
+  // re-suscribir el listener en cada render ni capturar un closure viejo.
+  const confirmRef = useRef<() => void>(() => {});
+  confirmRef.current = confirm;
+  useEffect(() => {
+    function onWinKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        onClose();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        confirmRef.current();
+      }
+    }
+    window.addEventListener('keydown', onWinKey);
+    return () => window.removeEventListener('keydown', onWinKey);
+  }, [onClose]);
+
+  const signal = treatmentSignal(patient.daysLeft);
+
+  // Atrapa Tab dentro del sheet (a11y: el foco no se escapa al dashboard de atrás).
+  function trapTab(e: ReactKeyboardEvent<HTMLElement>) {
+    if (e.key !== 'Tab') return;
+    const f = e.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href]',
+    );
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  return (
+    <div className="scrim" onClick={onClose} role="dialog" aria-modal="true" aria-label={`Recetar a ${patient.name}`}>
+      <article className="sheet sheet--rx" onClick={(e) => e.stopPropagation()} onKeyDown={trapTab}>
+        <span className="sheet__grab" />
+        <header className="sheet__head">
+          <div>
+            <span className="eyebrow">Recetar</span>
+            <h3>{patient.name}</h3>
+          </div>
+          <button className="btn btn--icon" onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className={`sheet__hero sheet__hero--${signal} rx-hero`}>
+          <div>
+            <span>
+              {patient.id} · {patient.tier} · {patient.plan}
+            </span>
+            <strong>Receta nueva</strong>
+            <span>Los defaults clínicos ya vienen listos.</span>
+          </div>
+          <TreatmentRing daysLeft={patient.daysLeft} totalDays={patient.totalDays} size={56} stroke={6} showUnit={false} />
+        </div>
+
+        {/* Barra de comando */}
+        <div className="rx-cmdbar">
+          <Syringe size={18} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onKey}
+            placeholder="Buscar péptido, suero o insumo…"
+            aria-label="Buscar producto para recetar"
+          />
+          <kbd className="rx-kbd">↵</kbd>
+        </div>
+
+        {results.length > 0 && (
+          <div className="rx-results">
+            {results.map((c, i) => {
+              const out = c.signal === 'danger' || c.stock <= 0;
+              return (
+                <button
+                  key={c.productId}
+                  className={`rx-result${i === highlight ? ' is-active' : ''}${out ? ' is-out' : ''}`}
+                  onMouseEnter={() => setHighlight(i)}
+                  onClick={() => addProduct(c)}
+                  disabled={out}
+                >
+                  <span className={`dot dot--${c.signal}`} />
+                  <div className="rx-result__main">
+                    <strong>{c.name}</strong>
+                    <span className="rx-result__defaults">
+                      {[c.defaultDose, c.defaultRoute, c.defaultFrequency, c.defaultDurationDays ? `${c.defaultDurationDays} días` : null]
+                        .filter(Boolean)
+                        .join(' · ') || c.category}
+                    </span>
+                  </div>
+                  <div className="rx-result__meta">
+                    <span className="tnum">{formatCurrency(c.salePrice)}</span>
+                    <span>{out ? 'sin stock' : `${c.stock} ${c.unit}`}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Receta en curso */}
+        <div className="rx-lines">
+          {lines.length === 0 ? (
+            <div className="rx-empty">
+              <Syringe size={22} />
+              <p>Escribe arriba para recetar. Cada producto trae dosis, vía, frecuencia y duración listas.</p>
+            </div>
+          ) : (
+            lines.map((l) => {
+              const short = l.quantity > l.stock;
+              return (
+                <article className="rx-card" key={l.uid}>
+                  <div className="rx-card__top">
+                    <span className={`dot dot--${short ? 'danger' : l.signal}`} />
+                    <strong>{l.name}</strong>
+                    <span className="rx-card__price tnum">{formatCurrency(l.quantity * l.unit_price)}</span>
+                    <button className="btn btn--icon rx-card__x" onClick={() => remove(l.uid)} aria-label="Quitar">
+                      <X size={15} />
+                    </button>
+                  </div>
+                  <div className="rx-card__fields">
+                    <label className="rx-field">
+                      <span>Dosis</span>
+                      <input value={l.dose} onChange={(e) => patch(l.uid, { dose: e.target.value })} placeholder="250 mg" />
+                    </label>
+                    <label className="rx-field">
+                      <span>Vía</span>
+                      <select value={l.route} onChange={(e) => patch(l.uid, { route: e.target.value })}>
+                        {ROUTES.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="rx-field">
+                      <span>Frecuencia</span>
+                      <select value={l.frequency} onChange={(e) => patch(l.uid, { frequency: e.target.value })}>
+                        {FREQS.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="rx-field rx-field--sm">
+                      <span>Días</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="365"
+                        value={l.duration_days ?? ''}
+                        onChange={(e) =>
+                          patch(l.uid, {
+                            duration_days: e.target.value ? Math.min(365, Math.max(0, Number(e.target.value))) : null,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="rx-card__foot">
+                    <div className="rx-stepper">
+                      <button onClick={() => patch(l.uid, { quantity: Math.max(1, l.quantity - 1) })} aria-label="Menos">
+                        <Minus size={15} />
+                      </button>
+                      <span className="tnum">{l.quantity}</span>
+                      <button
+                        onClick={() => patch(l.uid, { quantity: Math.min(l.quantity + 1, Math.max(l.stock, 1)) })}
+                        disabled={l.quantity >= l.stock}
+                        aria-label="Más"
+                      >
+                        <Plus size={15} />
+                      </button>
+                      <em>{l.unit_price ? `${formatCurrency(l.unit_price)} c/u` : ''}</em>
+                    </div>
+                    {short ? (
+                      <span className="badge badge--danger">Faltan {l.quantity - l.stock}</span>
+                    ) : (
+                      <span className="rx-card__stock">{l.stock} en stock</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+
+        {/* Barra de checkout */}
+        <div className={`rx-checkout${result ? ' is-done' : ''}`}>
+          {result ? (
+            <div className="rx-done">
+              <span className="rx-check" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M4 12.5l5 5L20 6.5" />
+                </svg>
+              </span>
+              <div>
+                <strong>Receta activa · venta registrada</strong>
+                <span>
+                  {result.code} · margen {formatCurrency(result.margin)}
+                  {result.balance > 0 ? ` · saldo ${formatCompact(result.balance)} a cartera` : ''}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="rx-checkout__top">
+                <div className="rx-checkout__total">
+                  <span>Total</span>
+                  <strong className="tnum">
+                    <CountUp value={total} format={formatCurrency} />
+                  </strong>
+                </div>
+                <span
+                  className={`rx-margin rx-margin--${marginSignal}`}
+                  title="Margen estimado sobre el costo del lote actual; el definitivo se calcula al cobrar."
+                >
+                  {marginPct}% margen est.
+                </span>
+              </div>
+              <div className="rx-pay">
+                {PAY_METHODS.map((m) => (
+                  <button
+                    key={m.id}
+                    className={`rx-pay__chip${method === m.id ? ' is-active' : ''}`}
+                    onClick={() => setMethod(m.id)}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="rx-checkout__foot">
+                <label className="rx-paid">
+                  <span>Abonado</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={paid == null ? '' : paid}
+                    placeholder={formatCurrency(total)}
+                    onChange={(e) => setPaid(e.target.value === '' ? null : Number(e.target.value))}
+                  />
+                  {payAmount < total && <em>Saldo {formatCompact(total - payAmount)} a cartera</em>}
+                </label>
+                <button className="btn btn--primary rx-cta" onClick={confirm} disabled={!canConfirm}>
+                  <Check size={18} />
+                  {busy ? 'Recetando…' : 'Recetar y cobrar'}
+                  <kbd className="rx-kbd rx-kbd--light">⌘↵</kbd>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </article>
+    </div>
   );
 }
