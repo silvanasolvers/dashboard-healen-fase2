@@ -8,10 +8,12 @@ import type {
   FinanceMovement,
   FinanceSummary,
   InventoryItem,
+  MovementPayload,
   NoteKind,
   Patient,
   PatientDossier,
   PatientSummary,
+  Payee,
   RevenuePoint,
   TimelineEvent,
 } from './data';
@@ -264,18 +266,27 @@ export function inventoryMovement(f: FormData) {
   });
 }
 
-export function financeEntry(f: FormData) {
+/** Clientes + proveedores para el autocompletar del campo cliente/proveedor. */
+export async function fetchPayees(): Promise<Payee[]> {
+  const { data, error } = await supabase.from('v_payees').select('*').order('name');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Payee[];
+}
+
+export function financeEntry(p: MovementPayload) {
   return rpc('dash_finance_entry', {
-    p_kind: String(f.get('kind') || 'Ingreso'),
-    p_scope: String(f.get('scope') || 'Empresa'),
-    p_category: String(f.get('category') || ''),
-    p_concept: String(f.get('concept') || 'Movimiento'),
-    p_amount: Number(f.get('value')) || 0,
-    p_date: String(f.get('date') || '') || new Date().toISOString().slice(0, 10),
-    p_cost_center: String(f.get('costCenter') || 'Operacion'),
-    p_payment_method: String(f.get('paymentMethod') || 'transferencia'),
-    p_person: String(f.get('person') || ''),
-    p_attachment_url: String(f.get('attachmentUrl') || '') || null,
-    p_note: String(f.get('note') || '') || null,
+    p_kind: p.kind,
+    p_scope: p.scope || 'Empresa',
+    p_category: p.category || '',
+    p_concept: p.concept || 'Movimiento',
+    p_amount: p.value || 0,
+    p_date: p.date || new Date().toISOString().slice(0, 10),
+    p_cost_center: p.costCenter || 'Operacion',
+    p_payment_method: p.paymentMethod || 'transferencia',
+    p_person: p.person || '',
+    p_attachment_url: p.attachmentUrl || null,
+    p_note: p.note || null,
+    p_client_id: p.clientId,
+    p_supplier_id: p.supplierId,
   });
 }

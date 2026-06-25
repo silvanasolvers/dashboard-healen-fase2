@@ -1243,6 +1243,129 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .range-spin { flex-shrink: 0; }
 
 /* ============================================================
+   MOVIMIENTO DE CAJA — formulario luxury
+   ============================================================ */
+.mv { padding: clamp(18px, 2.5vw, 26px); }
+.mv__form { display: flex; flex-direction: column; gap: 16px; }
+
+/* Tipo segmentado (Ingreso / Egreso) */
+.mv__type {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  padding: 6px; border-radius: var(--r-lg); background: var(--surface-2);
+}
+.mv__type-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px; border-radius: var(--r-md); font-size: 0.95rem; font-weight: 700;
+  color: var(--muted); transition: all var(--t-fast);
+}
+.mv__type-btn:hover { color: var(--ink); }
+.mv__type-btn--in.is-active { background: var(--ok-soft); color: oklch(0.46 0.14 158); box-shadow: var(--shadow-sm); }
+.mv__type-btn--out.is-active { background: var(--danger-soft); color: var(--danger); box-shadow: var(--shadow-sm); }
+
+/* Monto grande */
+.mv__amount {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px; border-radius: var(--r-lg);
+  background: var(--surface); border: 1px solid var(--line); transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.mv__amount:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.mv__amount-cur { font-size: 1.6rem; font-weight: 700; color: var(--muted); }
+.mv__amount input {
+  flex: 1; min-width: 0; border: none; outline: none; background: none;
+  font-size: 1.9rem; font-weight: 700; letter-spacing: -0.03em; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.mv__amount input::placeholder { color: var(--line); }
+/* oculta las flechas del number */
+.mv__amount input::-webkit-outer-spin-button, .mv__amount input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.mv__amount input { -moz-appearance: textfield; }
+
+.mv__field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mv__field--full { grid-column: 1 / -1; }
+.mv__label { font-size: 0.74rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.mv__opt { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--faint); }
+.mv__input {
+  width: 100%; padding: 11px 14px; border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--surface); font: inherit; font-size: 0.92rem; color: var(--ink);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.mv__input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.mv__row { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; align-items: start; }
+
+/* Chips (categoría, medio de pago) */
+.mv__chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mv__chip {
+  padding: 8px 13px; border-radius: var(--r-pill); font-size: 0.8rem; font-weight: 600;
+  background: var(--surface-2); color: var(--muted); border: 1px solid transparent; transition: all var(--t-fast);
+}
+.mv__chip:hover { color: var(--ink); }
+.mv__chip.is-active { background: var(--brand-soft); color: var(--brand-strong); border-color: var(--brand); }
+.mv__chip-input {
+  flex: 1; min-width: 90px; padding: 8px 12px; border-radius: var(--r-pill);
+  border: 1px dashed var(--line); background: none; font: inherit; font-size: 0.8rem; color: var(--ink);
+}
+.mv__chip-input:focus { outline: none; border-color: var(--brand); border-style: solid; }
+
+.mv__more {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  font-size: 0.82rem; font-weight: 600; color: var(--brand-strong); padding: 4px 0;
+}
+.mv__more-chev { transition: transform var(--t-mid) var(--e-out); }
+.mv__more-chev.is-open { transform: rotate(180deg); }
+.mv__advanced { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-top: 2px; }
+
+.mv__actions { display: flex; gap: 10px; margin-top: 4px; }
+.mv__actions .btn--soft { flex-shrink: 0; }
+.mv__submit { flex: 1; justify-content: center; }
+.mv__submit--out { background: var(--danger); }
+.mv__submit--out:hover:not(:disabled) { background: oklch(0.55 0.2 12); }
+
+/* Payee typeahead */
+.payee { position: relative; }
+.payee__box {
+  display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+  border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.payee__box:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.payee__box svg { color: var(--brand); flex-shrink: 0; }
+.payee__box input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 0.92rem; }
+.payee__results {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 8;
+  display: flex; flex-direction: column; gap: 2px; padding: 6px;
+  background: var(--surface); border-radius: var(--r-md); border: 1px solid var(--line-soft); box-shadow: var(--shadow-lg);
+  max-height: 280px; overflow-y: auto;
+}
+.payee__result {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: var(--r-sm, 10px); text-align: left;
+  transition: background var(--t-fast);
+}
+.payee__result strong { font-size: 0.9rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payee__result:hover, .payee__result.is-active { background: var(--brand-soft); }
+.payee__badge {
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 3px 8px; border-radius: var(--r-pill); flex-shrink: 0;
+}
+.payee__badge--cliente { background: var(--brand-soft); color: var(--brand-strong); }
+.payee__badge--proveedor { background: var(--warn-soft); color: oklch(0.52 0.13 64); }
+.payee__ref { font-size: 0.74rem; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.payee-chip {
+  display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.payee-chip svg { flex-shrink: 0; }
+.payee-chip--cliente svg { color: var(--brand); }
+.payee-chip--proveedor svg { color: oklch(0.52 0.13 64); }
+.payee-chip strong { font-size: 0.92rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payee-chip__ref { font-size: 0.74rem; color: var(--muted); flex-shrink: 0; }
+.payee-chip__x { color: var(--muted); padding: 4px; border-radius: 8px; flex-shrink: 0; transition: color var(--t-fast), background var(--t-fast); }
+.payee-chip__x:hover { color: var(--danger); background: var(--danger-soft); }
+
+@media (max-width: 560px) {
+  .mv__row, .mv__advanced { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
    LOADER
    ============================================================ */
 .loader {

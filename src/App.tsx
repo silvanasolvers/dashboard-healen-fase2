@@ -17,8 +17,10 @@ import {
   Award,
   BarChart3,
   CalendarClock,
+  Building2,
   Camera,
   Check,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   CreditCard,
@@ -74,6 +76,7 @@ import {
   KV,
   MonthPoint,
   mostUrgentPeptide,
+  MovementPayload,
   NextStep,
   NOTE_KINDS,
   NoteKind,
@@ -86,6 +89,7 @@ import {
   PatientProductAlert,
   patientSignalCounts,
   PatientSummary,
+  Payee,
   RANGE_PRESETS,
   rangeForPreset,
   rangeLabel,
@@ -111,6 +115,7 @@ import {
   fetchDossier,
   fetchFinanceRows,
   fetchFinanceSummary,
+  fetchPayees,
   financeEntry,
   inventoryMovement,
   MovementRow,
@@ -490,10 +495,19 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
     runMutation(() => inventoryMovement(new FormData(form)), form, 'Movimiento registrado');
   }
 
-  function addMovement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    runMutation(() => financeEntry(new FormData(form)), form, 'Movimiento registrado');
+  async function addMovement(payload: MovementPayload): Promise<boolean> {
+    setSaving(true);
+    try {
+      await financeEntry(payload);
+      await reload();
+      notify('Movimiento registrado');
+      return true;
+    } catch (e) {
+      notify((e as Error).message || 'No se pudo registrar el movimiento.', true);
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   function go(next: View) {
@@ -1477,7 +1491,7 @@ function ContabilidadView({
   notify,
 }: {
   dataVersion: number;
-  addMovement: (e: FormEvent<HTMLFormElement>) => void;
+  addMovement: (p: MovementPayload) => Promise<boolean>;
   notify: (msg: string, error?: boolean) => void;
 }) {
   const [range, setRange] = useState<DateRange>(emptyRange);
@@ -1685,80 +1699,337 @@ function ContabilidadView({
         </button>
       </div>
 
-      {formOpen && (
-        <article className="panel" data-reveal>
-          <div className="panel__head">
-            <div>
-              <span className="eyebrow">Nuevo</span>
-              <h2>Movimiento de caja</h2>
-            </div>
-          </div>
-          <form className="form" onSubmit={addMovement}>
-            <Field label="Tipo">
-              <select name="kind">
-                <option>Ingreso</option>
-                <option>Gasto</option>
-              </select>
-            </Field>
-            <Field label="Fecha">
-              <input name="date" type="date" />
-            </Field>
-            <Field label="Cliente / proveedor">
-              <input name="person" placeholder="Nombre" />
-            </Field>
-            <Field label="Concepto">
-              <input name="concept" placeholder="Concepto" required />
-            </Field>
-            <Field label="Categoría">
-              <input name="category" placeholder="Tratamientos, inventario…" />
-            </Field>
-            <Field label="Valor">
-              <input name="value" type="number" min="0" placeholder="0" required />
-            </Field>
-            <Field label="Medio de pago">
-              <select name="paymentMethod">
-                <option>Transferencia</option>
-                <option>Efectivo</option>
-                <option>Tarjeta credito</option>
-                <option>Tarjeta debito</option>
-                <option>PSE</option>
-                <option>Nequi</option>
-                <option>Daviplata</option>
-              </select>
-            </Field>
-            <Field label="Centro de costo">
-              <select name="costCenter">
-                <option>Operacion</option>
-                <option>Inventario</option>
-                <option>Marketing</option>
-                <option>Nomina</option>
-                <option>Administrativo</option>
-                <option>Personal</option>
-              </select>
-            </Field>
-            <Field label="Clasificación">
-              <select name="scope">
-                <option>Empresa</option>
-                <option>Personal</option>
-                <option>Retiro socio</option>
-                <option>Reembolso</option>
-              </select>
-            </Field>
-            <Field label="Link soporte" full>
-              <input name="attachmentUrl" type="url" placeholder="Drive, banco, factura…" />
-            </Field>
-            <Field label="Nota" full>
-              <input name="note" placeholder="Acuerdo, abono o detalle importante" />
-            </Field>
-            <button className="btn btn--primary field--full" type="submit">
-              <Plus size={18} /> Registrar
-            </button>
-          </form>
-        </article>
-      )}
+      {formOpen && <MovementForm onSubmit={addMovement} onClose={() => setFormOpen(false)} />}
 
       {support && <SupportSheet movement={support} onClose={() => setSupport(null)} />}
     </div>
+  );
+}
+
+/* ---- Buscador de cliente / proveedor (typeahead, vínculo relacional) ---- */
+function PayeeSearch({
+  payees,
+  text,
+  onText,
+  linked,
+  onLink,
+  onClear,
+  preferKind,
+}: {
+  payees: Payee[];
+  text: string;
+  onText: (v: string) => void;
+  linked: Payee | null;
+  onLink: (p: Payee) => void;
+  onClear: () => void;
+  preferKind: 'cliente' | 'proveedor';
+}) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const q = text.trim().toLowerCase();
+  const results = q
+    ? payees
+        .filter((p) => p.name.toLowerCase().includes(q) || (p.ref ?? '').toLowerCase().includes(q))
+        .sort((a, b) => (a.kind === preferKind ? 0 : 1) - (b.kind === preferKind ? 0 : 1))
+        .slice(0, 6)
+    : [];
+  useEffect(() => setHi(0), [text]);
+
+  function onKey(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (!results.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHi((h) => Math.min(h + 1, results.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHi((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter' && results[hi]) {
+      e.preventDefault();
+      onLink(results[hi]);
+    }
+  }
+
+  if (linked) {
+    return (
+      <div className={`payee-chip payee-chip--${linked.kind}`}>
+        {linked.kind === 'cliente' ? <User size={15} /> : <Building2 size={15} />}
+        <strong>{linked.name}</strong>
+        {linked.ref && <span className="payee-chip__ref">{linked.ref}</span>}
+        <button type="button" className="payee-chip__x" onClick={onClear} aria-label="Quitar vínculo">
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="payee">
+      <div className="payee__box">
+        <Search size={16} />
+        <input
+          value={text}
+          onChange={(e) => {
+            onText(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+          onKeyDown={onKey}
+          placeholder="Buscar existente o escribir nombre…"
+        />
+      </div>
+      {open && results.length > 0 && (
+        <div className="payee__results">
+          {results.map((p, i) => (
+            <button
+              type="button"
+              key={p.id}
+              className={`payee__result${i === hi ? ' is-active' : ''}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setHi(i)}
+              onClick={() => onLink(p)}
+            >
+              <span className={`payee__badge payee__badge--${p.kind}`}>{p.kind === 'cliente' ? 'Cliente' : 'Proveedor'}</span>
+              <strong>{p.name}</strong>
+              {p.ref && <span className="payee__ref">{p.ref}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CATEGORY_SUGGEST: Record<'Ingreso' | 'Gasto', string[]> = {
+  Ingreso: ['Tratamientos', 'Productos', 'Otro'],
+  Gasto: ['Inventario', 'Nómina', 'Marketing', 'Servicios', 'Arriendo', 'Otro'],
+};
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+/* ---- Movimiento de caja: formulario luxury (segmentado + monto + payee + chips) ---- */
+function MovementForm({
+  onSubmit,
+  onClose,
+}: {
+  onSubmit: (p: MovementPayload) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [payees, setPayees] = useState<Payee[]>([]);
+  const [kind, setKind] = useState<'Ingreso' | 'Gasto'>('Ingreso');
+  const [value, setValue] = useState('');
+  const [text, setText] = useState('');
+  const [linked, setLinked] = useState<Payee | null>(null);
+  const [concept, setConcept] = useState('');
+  const [date, setDate] = useState(todayISO);
+  const [method, setMethod] = useState('transferencia');
+  const [category, setCategory] = useState('');
+  const [costCenter, setCostCenter] = useState('Operacion');
+  const [scope, setScope] = useState('Empresa');
+  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [note, setNote] = useState('');
+  const [advanced, setAdvanced] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchPayees().then(setPayees).catch(() => {});
+  }, []);
+
+  const valueNum = Number(value) || 0;
+  const canSubmit = valueNum > 0 && concept.trim() !== '' && !saving;
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    const ok = await onSubmit({
+      kind,
+      scope,
+      category: category.trim(),
+      concept: concept.trim(),
+      value: valueNum,
+      date: date || todayISO(),
+      costCenter,
+      paymentMethod: method,
+      person: linked?.name ?? text.trim(),
+      clientId: linked?.kind === 'cliente' ? linked.id : null,
+      supplierId: linked?.kind === 'proveedor' ? linked.id : null,
+      attachmentUrl: attachmentUrl.trim() || null,
+      note: note.trim() || null,
+    });
+    setSaving(false);
+    if (ok) {
+      setValue('');
+      setText('');
+      setLinked(null);
+      setConcept('');
+      setCategory('');
+      setNote('');
+      setAttachmentUrl('');
+    }
+  }
+
+  return (
+    <article className="panel mv" data-reveal>
+      <form className="mv__form" onSubmit={submit}>
+        <div className="mv__type">
+          <button
+            type="button"
+            className={`mv__type-btn mv__type-btn--in${kind === 'Ingreso' ? ' is-active' : ''}`}
+            onClick={() => setKind('Ingreso')}
+          >
+            <TrendingUp size={17} /> Ingreso
+          </button>
+          <button
+            type="button"
+            className={`mv__type-btn mv__type-btn--out${kind === 'Gasto' ? ' is-active' : ''}`}
+            onClick={() => setKind('Gasto')}
+          >
+            <CreditCard size={17} /> Egreso
+          </button>
+        </div>
+
+        <label className="mv__amount">
+          <span className="mv__amount-cur">$</span>
+          <input
+            type="number"
+            min="0"
+            step="any"
+            inputMode="numeric"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="0"
+            autoFocus
+          />
+        </label>
+
+        <div className="mv__field">
+          <label className="mv__label">
+            {kind === 'Ingreso' ? 'Cliente' : 'Proveedor'} <span className="mv__opt">· opcional</span>
+          </label>
+          <PayeeSearch
+            payees={payees}
+            text={text}
+            onText={setText}
+            linked={linked}
+            onLink={setLinked}
+            onClear={() => setLinked(null)}
+            preferKind={kind === 'Ingreso' ? 'cliente' : 'proveedor'}
+          />
+        </div>
+
+        <div className="mv__field">
+          <label className="mv__label">Concepto</label>
+          <input
+            className="mv__input"
+            value={concept}
+            onChange={(e) => setConcept(e.target.value)}
+            placeholder={kind === 'Ingreso' ? 'Abono de plan, venta de producto…' : 'Compra de insumos, servicio…'}
+            required
+          />
+        </div>
+
+        <div className="mv__field">
+          <label className="mv__label">Categoría</label>
+          <div className="mv__chips">
+            {CATEGORY_SUGGEST[kind].map((c) => (
+              <button
+                type="button"
+                key={c}
+                className={`mv__chip${category === c ? ' is-active' : ''}`}
+                onClick={() => setCategory(category === c ? '' : c)}
+              >
+                {c}
+              </button>
+            ))}
+            <input
+              className="mv__chip-input"
+              value={CATEGORY_SUGGEST[kind].includes(category) ? '' : category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Otra…"
+            />
+          </div>
+        </div>
+
+        <div className="mv__row">
+          <div className="mv__field">
+            <label className="mv__label">Fecha</label>
+            <input className="mv__input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Medio de pago</label>
+            <div className="mv__chips">
+              {PAY_METHODS.map((m) => (
+                <button
+                  type="button"
+                  key={m.id}
+                  className={`mv__chip${method === m.id ? ' is-active' : ''}`}
+                  onClick={() => setMethod(m.id)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button type="button" className="mv__more" onClick={() => setAdvanced((a) => !a)}>
+          <ChevronDown size={15} className={`mv__more-chev${advanced ? ' is-open' : ''}`} />
+          {advanced ? 'Menos opciones' : 'Más opciones'}
+        </button>
+        {advanced && (
+          <div className="mv__advanced">
+            <div className="mv__field">
+              <label className="mv__label">Centro de costo</label>
+              <select className="mv__input" value={costCenter} onChange={(e) => setCostCenter(e.target.value)}>
+                {['Operacion', 'Inventario', 'Marketing', 'Nomina', 'Administrativo', 'Personal'].map((o) => (
+                  <option key={o}>{o}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mv__field">
+              <label className="mv__label">Clasificación</label>
+              <select className="mv__input" value={scope} onChange={(e) => setScope(e.target.value)}>
+                {['Empresa', 'Personal', 'Retiro socio', 'Reembolso'].map((o) => (
+                  <option key={o}>{o}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mv__field mv__field--full">
+              <label className="mv__label">Link de soporte</label>
+              <input
+                className="mv__input"
+                type="url"
+                value={attachmentUrl}
+                onChange={(e) => setAttachmentUrl(e.target.value)}
+                placeholder="Drive, banco, factura…"
+              />
+            </div>
+            <div className="mv__field mv__field--full">
+              <label className="mv__label">Nota</label>
+              <input
+                className="mv__input"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Acuerdo, abono o detalle importante"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="mv__actions">
+          <button type="button" className="btn btn--soft" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className={`btn btn--primary mv__submit mv__submit--${kind === 'Ingreso' ? 'in' : 'out'}`}
+            type="submit"
+            disabled={!canSubmit}
+          >
+            {saving ? <span className="spinner spinner--sm" /> : <Check size={18} />}
+            Registrar {kind === 'Ingreso' ? 'ingreso' : 'egreso'}
+          </button>
+        </div>
+      </form>
+    </article>
   );
 }
 

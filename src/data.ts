@@ -955,3 +955,29 @@ export interface Analytics {
   expenses_by_category: KV[];
   monthly: MonthPoint[];
 }
+
+/** Cliente o proveedor para vincular un movimiento de caja (v_payees). */
+export interface Payee {
+  id: string;
+  kind: 'cliente' | 'proveedor';
+  name: string;
+  ref: string | null;
+  phone: string | null;
+}
+
+/** Movimiento de caja (payload del formulario rediseñado). */
+export interface MovementPayload {
+  kind: 'Ingreso' | 'Gasto';
+  scope: string;
+  category: string;
+  concept: string;
+  value: number;
+  date: string;
+  costCenter: string;
+  paymentMethod: string;
+  person: string;
+  clientId: string | null;
+  supplierId: string | null;
+  attachmentUrl: string | null;
+  note: string | null;
+}
