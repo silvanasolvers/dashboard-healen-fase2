@@ -199,6 +199,11 @@ comment on function dash_update_client is 'Actualiza la ficha de datos del pacie
 
 -- ---------- Grants + hardening (igual que 08) ----------
 grant select on v_patient_notes, v_patient_timeline, v_patient_revenue, v_patient_summary to authenticated;
+-- v_patient_notes/v_patient_timeline son security_invoker y leen de clinical_notes: el rol
+-- que consulta (authenticated) necesita SELECT propio sobre la tabla base. El grant masivo
+-- de 05 no cubre tablas creadas después, así que se concede explícito (la RLS staff_all de
+-- clinical_notes sigue restringiendo las filas a staff). No se concede a anon.
+grant select on clinical_notes to authenticated;
 grant execute on function dash_add_note(uuid, text, text, uuid, boolean) to authenticated;
 grant execute on function dash_delete_note(uuid) to authenticated;
 grant execute on function dash_update_client(uuid, text, text, text, text, date, text, text) to authenticated;
