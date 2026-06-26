@@ -14,6 +14,7 @@ import type {
   PatientDossier,
   PatientSummary,
   Payee,
+  Plan,
   ProductPayload,
   RevenuePoint,
   StockMovePayload,
@@ -303,6 +304,49 @@ export async function fetchPayees(): Promise<Payee[]> {
   const { data, error } = await supabase.from('v_payees').select('*').order('name');
   if (error) throw new Error(error.message);
   return (data ?? []) as Payee[];
+}
+
+// ---------- Planes (plantillas reutilizables de receta) ----------
+/** Una línea al guardar un plan. unit_price null = precio del día. */
+export interface PlanLineInput {
+  product_id: string;
+  name: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  duration_days: number | null;
+  quantity: number;
+  unit_price: number | null;
+  instructions?: string;
+}
+
+export interface PlanPayload {
+  planId?: string | null; // null = crear, uuid = editar
+  name: string;
+  notes?: string;
+  items: PlanLineInput[];
+}
+
+/** Lista de planes activos con sus items (carga perezosa, no va en fetchAll). */
+export async function fetchPlans(): Promise<Plan[]> {
+  const { data, error } = await supabase.from('v_plans').select('*').order('name');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Plan[];
+}
+
+/** Crea o edita un plan (reemplazo total de items). */
+export function savePlan(p: PlanPayload) {
+  return rpc('dash_save_plan', {
+    p_plan: p.planId ?? null,
+    p_name: p.name,
+    p_notes: p.notes ?? null,
+    p_items: p.items, // jsonb: mismo shape que p_items de prescribe_checkout (+ instructions)
+  }) as Promise<{ plan_id: string; items: number }>;
+}
+
+/** Archiva un plan (soft-delete). */
+export function deletePlan(planId: string) {
+  return rpc('dash_delete_plan', { p_plan: planId });
 }
 
 export function financeEntry(p: MovementPayload) {

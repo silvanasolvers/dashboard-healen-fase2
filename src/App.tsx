@@ -94,6 +94,8 @@ import {
   patientSignalCounts,
   PatientSummary,
   Payee,
+  Plan,
+  PlanItem,
   ProductPayload,
   RANGE_PRESETS,
   rangeForPreset,
@@ -123,7 +125,11 @@ import {
   fetchFinanceRows,
   fetchFinanceSummary,
   fetchPayees,
+  fetchPlans,
   financeEntry,
+  savePlan,
+  deletePlan,
+  PlanPayload,
   supportUrl,
   uploadSupport,
   inventoryMovement,
@@ -755,6 +761,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 movements={inventoryMovements}
                 addInventory={addInventory}
                 registerMovement={registerInventoryMovement}
+                notify={notify}
                 intent={intent}
                 onIntentDone={() => setIntent(null)}
               />
@@ -1357,6 +1364,7 @@ function InventarioView({
   movements,
   addInventory,
   registerMovement,
+  notify,
   intent,
   onIntentDone,
 }: {
@@ -1365,20 +1373,77 @@ function InventarioView({
   movements: MovementRow[];
   addInventory: (p: ProductPayload) => Promise<boolean>;
   registerMovement: (p: StockMovePayload) => Promise<boolean>;
+  notify: (msg: string, error?: boolean) => void;
   intent: string | null;
   onIntentDone: () => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
   const [move, setMove] = useState<{ item: InventoryItem | null; kind: 'Entrada' | 'Salida' } | null>(null);
+  const [invTab, setInvTab] = useState<'stock' | 'planes'>('stock');
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [plansLoaded, setPlansLoaded] = useState(false);
+  const [builder, setBuilder] = useState<{ plan: Plan | null } | null>(null);
   const grown = useGrow();
-  const reveal = useScrollReveal(`${productOpen}`);
+  const reveal = useScrollReveal(`${productOpen}-${invTab}-${builder ? 'b' : ''}`);
+
+  // carga perezosa de planes + catálogo la primera vez que se entra a la pestaña Planes
+  const reloadPlans = useCallback(async () => {
+    setPlansLoading(true);
+    try {
+      const [pl, cat] = await Promise.all([fetchPlans(), fetchCatalog()]);
+      setPlans(pl);
+      setCatalog(cat);
+      setPlansLoaded(true);
+    } catch {
+      notify('No se pudieron cargar los planes.', true);
+    } finally {
+      setPlansLoading(false);
+    }
+  }, [notify]);
 
   useEffect(() => {
-    if (intent === 'product') setProductOpen(true);
-    else if (intent === 'stock') setMove({ item: null, kind: 'Salida' });
-    if (intent === 'product' || intent === 'stock') onIntentDone();
+    if (invTab === 'planes' && !plansLoaded && !plansLoading) reloadPlans();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invTab]);
+
+  useEffect(() => {
+    if (intent === 'product') {
+      setInvTab('stock');
+      setProductOpen(true);
+    } else if (intent === 'stock') {
+      setInvTab('stock');
+      setMove({ item: null, kind: 'Salida' });
+    } else if (intent === 'plan') {
+      setInvTab('planes');
+      setBuilder({ plan: null });
+    }
+    if (intent === 'product' || intent === 'stock' || intent === 'plan') onIntentDone();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [intent]);
+
+  async function handleSavePlan(p: PlanPayload): Promise<boolean> {
+    try {
+      await savePlan(p);
+      notify(p.planId ? 'Plan actualizado.' : 'Plan creado.');
+      await reloadPlans();
+      return true;
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'No se pudo guardar el plan.', true);
+      return false;
+    }
+  }
+
+  async function handleArchivePlan(id: string) {
+    try {
+      await deletePlan(id);
+      notify('Plan archivado.');
+      await reloadPlans();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : 'No se pudo archivar el plan.', true);
+    }
+  }
 
   const units = inventory.reduce((t, i) => t + i.stock, 0);
   const low = inventory.filter((i) => i.stock <= i.minimum).length;
@@ -1400,6 +1465,35 @@ function InventarioView({
         <SignalKpi icon={RefreshCw} tone="danger" label="Salidas" value={outgoing} hint="Uso o ventas" />
       </section>
 
+      <div className="acct-tabs inv-tabs" data-reveal role="tablist">
+        <button
+          type="button"
+          className={`acct-tab${invTab === 'stock' ? ' is-active' : ''}`}
+          onClick={() => setInvTab('stock')}
+          role="tab"
+          aria-selected={invTab === 'stock'}
+        >
+          <span className="acct-tab__top">
+            <Package size={16} /> Stock
+          </span>
+          <strong>{inventory.length} productos</strong>
+        </button>
+        <button
+          type="button"
+          className={`acct-tab${invTab === 'planes' ? ' is-active' : ''}`}
+          onClick={() => setInvTab('planes')}
+          role="tab"
+          aria-selected={invTab === 'planes'}
+        >
+          <span className="acct-tab__top">
+            <ClipboardList size={16} /> Planes
+          </span>
+          <strong>{plansLoaded ? `${plans.length} ${plans.length === 1 ? 'plan' : 'planes'}` : 'Plantillas'}</strong>
+        </button>
+      </div>
+
+      {invTab === 'stock' && (
+        <>
       <div className="toolbar" data-reveal>
         <button className="btn btn--soft" onClick={() => setProductOpen((o) => !o)}>
           <Plus size={17} /> {productOpen ? 'Cerrar' : 'Nuevo producto'}
@@ -1516,7 +1610,470 @@ function InventarioView({
       {move && (
         <StockMoveSheet products={allInventory} preset={move} onSubmit={registerMovement} onClose={() => setMove(null)} />
       )}
+        </>
+      )}
+
+      {invTab === 'planes' && (
+        <PlanesPanel
+          plans={plans}
+          catalog={catalog}
+          loading={plansLoading}
+          loaded={plansLoaded}
+          builder={builder}
+          onNew={() => setBuilder({ plan: null })}
+          onEdit={(pl) => setBuilder({ plan: pl })}
+          onCloseBuilder={() => setBuilder(null)}
+          onSavePlan={handleSavePlan}
+          onArchivePlan={handleArchivePlan}
+        />
+      )}
     </div>
+  );
+}
+
+/* ============================================================
+   PLANES — plantillas reutilizables (lista + constructor) en Inventario
+   ============================================================ */
+function PlanesPanel({
+  plans,
+  catalog,
+  loading,
+  loaded,
+  builder,
+  onNew,
+  onEdit,
+  onCloseBuilder,
+  onSavePlan,
+  onArchivePlan,
+}: {
+  plans: Plan[];
+  catalog: CatalogItem[];
+  loading: boolean;
+  loaded: boolean;
+  builder: { plan: Plan | null } | null;
+  onNew: () => void;
+  onEdit: (p: Plan) => void;
+  onCloseBuilder: () => void;
+  onSavePlan: (p: PlanPayload) => Promise<boolean>;
+  onArchivePlan: (id: string) => void;
+}) {
+  return (
+    <>
+      <div className="toolbar" data-reveal>
+        <button className="btn btn--soft" onClick={onNew}>
+          <Plus size={17} /> Nuevo plan
+        </button>
+      </div>
+
+      {builder && (
+        <PlanBuilder plan={builder.plan} catalog={catalog} onSave={onSavePlan} onClose={onCloseBuilder} />
+      )}
+
+      <article className="panel" data-reveal>
+        <div className="panel__head">
+          <div>
+            <span className="eyebrow">Planes</span>
+            <h2>{loaded ? `${plans.length} ${plans.length === 1 ? 'plantilla' : 'plantillas'}` : 'Plantillas'}</h2>
+          </div>
+        </div>
+        <div className="plan-list">
+          {loading && !loaded ? (
+            <div className="view-loading" style={{ padding: '24px 0' }}>
+              <span className="spinner spinner--sm" />
+            </div>
+          ) : plans.length === 0 ? (
+            <div className="rx-empty">
+              <ClipboardList size={22} />
+              <p>Crea tu primer plan: agrupa los productos de un tratamiento típico (con su dosis y precio) y aplícalo de un clic al recetar.</p>
+            </div>
+          ) : (
+            plans.map((pl) => <PlanCard key={pl.id} plan={pl} onEdit={onEdit} onArchive={onArchivePlan} />)
+          )}
+        </div>
+      </article>
+    </>
+  );
+}
+
+function PlanCard({ plan, onEdit, onArchive }: { plan: Plan; onEdit: (p: Plan) => void; onArchive: (id: string) => void }) {
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <div className="plan-card">
+      <button type="button" className="plan-card__main" onClick={() => onEdit(plan)}>
+        <strong>{plan.name}</strong>
+        <span className="plan-card__meta">
+          {plan.itemCount} {plan.itemCount === 1 ? 'producto' : 'productos'} ·{' '}
+          {plan.hasDynamicPrice ? '~' : ''}
+          {formatCurrency(plan.totalEstimated)}
+          {plan.hasMissingProduct ? ' · 1+ sin catálogo' : ''}
+        </span>
+        <div className="plan-card__pills">
+          {plan.items.slice(0, 4).map((it, i) => (
+            <span key={i} className={`plan-pill plan-pill--${it.missing ? 'danger' : it.signal}`}>
+              {it.name}
+            </span>
+          ))}
+          {plan.itemCount > 4 && <span className="plan-pill plan-pill--more">+{plan.itemCount - 4}</span>}
+        </div>
+      </button>
+      <div className="plan-card__actions">
+        {confirm ? (
+          <span className="plan-confirm">
+            ¿Archivar?
+            <button
+              type="button"
+              className="plan-confirm__yes"
+              onClick={() => {
+                setConfirm(false);
+                onArchive(plan.id);
+              }}
+            >
+              Sí
+            </button>
+            <button type="button" className="plan-confirm__no" onClick={() => setConfirm(false)}>
+              No
+            </button>
+          </span>
+        ) : (
+          <>
+            <button type="button" className="btn btn--icon" onClick={() => onEdit(plan)} aria-label="Editar plan">
+              <Pencil size={15} />
+            </button>
+            <button type="button" className="btn btn--icon" onClick={() => setConfirm(true)} aria-label="Archivar plan">
+              <Trash2 size={15} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface PlanUiLine {
+  uid: string;
+  product_id: string; // '' = indicación sin producto (catálogo borrado)
+  name: string;
+  dose: string;
+  route: string;
+  frequency: string;
+  duration_days: number | null;
+  quantity: number;
+  unit_price: number | null; // null = precio del día
+  instructions: string;
+  stock: number;
+  signal: 'ok' | 'warn' | 'danger';
+}
+
+function PlanBuilder({
+  plan,
+  catalog,
+  onSave,
+  onClose,
+}: {
+  plan: Plan | null;
+  catalog: CatalogItem[];
+  onSave: (p: PlanPayload) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(plan?.name ?? '');
+  const [notes, setNotes] = useState(plan?.notes ?? '');
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState(0);
+  const [lines, setLines] = useState<PlanUiLine[]>(() =>
+    plan
+      ? plan.items.map((it, i) => ({
+          uid: `${it.product_id ?? 'ind'}-${i}-seed`,
+          product_id: it.product_id ?? '',
+          name: it.name,
+          dose: it.dose ?? '',
+          route: it.route ?? 'subcutanea',
+          frequency: it.frequency ?? 'semanal',
+          duration_days: it.duration_days,
+          quantity: it.quantity,
+          unit_price: it.unit_price,
+          instructions: it.instructions ?? '',
+          stock: it.stock,
+          signal: it.missing ? 'danger' : it.signal,
+        }))
+      : [],
+  );
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const results = q ? catalog.filter((c) => `${c.name} ${c.category}`.toLowerCase().includes(q)).slice(0, 6) : [];
+  useEffect(() => setHighlight(0), [query]);
+
+  function catPrice(productId: string): number {
+    return catalog.find((c) => c.productId === productId)?.salePrice ?? 0;
+  }
+  // precio efectivo de una línea: el fijado, o el del día (catálogo) si es dinámico
+  function linePrice(l: PlanUiLine): number {
+    return l.unit_price ?? catPrice(l.product_id);
+  }
+  const total = lines.reduce((t, l) => t + l.quantity * linePrice(l), 0);
+  const hasDynamic = lines.some((l) => l.unit_price == null);
+  const canSave = name.trim() !== '' && lines.length > 0 && !busy;
+
+  function addProduct(c: CatalogItem) {
+    // sin tope de stock ni guard de agotado: un plan es un molde atemporal
+    setLines((prev) => [
+      ...prev,
+      {
+        uid: `${c.productId}-${prev.length}-${Date.now() % 100000}`,
+        product_id: c.productId,
+        name: c.name,
+        dose: c.defaultDose || '',
+        route: c.defaultRoute || 'subcutanea',
+        frequency: c.defaultFrequency || 'semanal',
+        duration_days: c.defaultDurationDays ?? 30,
+        quantity: Math.max(1, c.defaultQuantity || 1),
+        unit_price: c.salePrice,
+        instructions: '',
+        stock: c.stock,
+        signal: c.signal,
+      },
+    ]);
+    setQuery('');
+    inputRef.current?.focus();
+  }
+
+  function patch(uid: string, p: Partial<PlanUiLine>) {
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, ...p } : l)));
+  }
+  function remove(uid: string) {
+    setLines((prev) => prev.filter((l) => l.uid !== uid));
+  }
+
+  function onKey(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(h + 1, Math.max(results.length - 1, 0)));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (results[highlight]) addProduct(results[highlight]);
+    } else if (e.key === 'Backspace' && query === '' && lines.length > 0) {
+      setLines((prev) => prev.slice(0, -1));
+    }
+  }
+
+  async function save() {
+    if (!canSave) return;
+    setBusy(true);
+    const ok = await onSave({
+      planId: plan?.id ?? null,
+      name: name.trim(),
+      notes: notes.trim() || undefined,
+      items: lines.map((l) => ({
+        product_id: l.product_id,
+        name: l.name,
+        dose: l.dose,
+        route: l.route,
+        frequency: l.frequency,
+        duration_days: l.duration_days,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        instructions: l.instructions || undefined,
+      })),
+    });
+    setBusy(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <article className="panel mv" data-reveal>
+      <div className="panel__head">
+        <div>
+          <span className="eyebrow">{plan ? 'Editar' : 'Nuevo'}</span>
+          <h2>Plan</h2>
+        </div>
+      </div>
+
+      <div className="mv__form">
+        <div className="mv__row">
+          <div className="mv__field">
+            <label className="mv__label">Nombre del plan</label>
+            <input className="mv__input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Regeneración celular base" autoFocus />
+          </div>
+          <div className="mv__field">
+            <label className="mv__label">Notas (opcional)</label>
+            <input className="mv__input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Protocolo de 8 semanas…" />
+          </div>
+        </div>
+      </div>
+
+      {/* Buscador de productos del catálogo */}
+      <div className="rx-cmdbar">
+        <Syringe size={18} />
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="Agregar péptido, suero o insumo al plan…"
+          aria-label="Buscar producto para el plan"
+        />
+        <kbd className="rx-kbd">↵</kbd>
+      </div>
+
+      {results.length > 0 && (
+        <div className="rx-results">
+          {results.map((c, i) => (
+            <button
+              key={c.productId}
+              type="button"
+              className={`rx-result${i === highlight ? ' is-active' : ''}`}
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => addProduct(c)}
+            >
+              <span className={`dot dot--${c.signal}`} />
+              <div className="rx-result__main">
+                <strong>{c.name}</strong>
+                <span className="rx-result__defaults">
+                  {[c.defaultDose, c.defaultRoute, c.defaultFrequency, c.defaultDurationDays ? `${c.defaultDurationDays} días` : null]
+                    .filter(Boolean)
+                    .join(' · ') || c.category}
+                </span>
+              </div>
+              <div className="rx-result__meta">
+                <span className="tnum">{formatCurrency(c.salePrice)}</span>
+                <span>{c.stock <= 0 ? 'sin stock' : `${c.stock} ${c.unit}`}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Líneas del plan */}
+      <div className="rx-lines">
+        {lines.length === 0 ? (
+          <div className="rx-empty">
+            <ClipboardList size={22} />
+            <p>Busca arriba y agrega los productos del plan. Cada uno trae su dosis, vía, frecuencia y precio editables.</p>
+          </div>
+        ) : (
+          lines.map((l) => {
+            const dyn = l.unit_price == null;
+            return (
+              <article className="rx-card rx-card--plan" key={l.uid}>
+                <div className="rx-card__top">
+                  <span className={`dot dot--${l.signal}`} />
+                  <strong>
+                    {l.name}
+                    {!l.product_id && <em className="rx-card__missing"> · sin catálogo</em>}
+                  </strong>
+                  <span className="rx-card__price tnum">{formatCurrency(l.quantity * linePrice(l))}</span>
+                  <button type="button" className="btn btn--icon rx-card__x" onClick={() => remove(l.uid)} aria-label="Quitar">
+                    <X size={15} />
+                  </button>
+                </div>
+                <div className="rx-card__fields">
+                  <label className="rx-field">
+                    <span>Dosis</span>
+                    <input value={l.dose} onChange={(e) => patch(l.uid, { dose: e.target.value })} placeholder="250 mg" />
+                  </label>
+                  <label className="rx-field">
+                    <span>Vía</span>
+                    <select value={l.route} onChange={(e) => patch(l.uid, { route: e.target.value })}>
+                      {ROUTES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="rx-field">
+                    <span>Frecuencia</span>
+                    <select value={l.frequency} onChange={(e) => patch(l.uid, { frequency: e.target.value })}>
+                      {FREQS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="rx-field rx-field--sm">
+                    <span>Días</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="365"
+                      value={l.duration_days ?? ''}
+                      onChange={(e) =>
+                        patch(l.uid, {
+                          duration_days: e.target.value ? Math.min(365, Math.max(0, Number(e.target.value))) : null,
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="rx-field rx-field--full">
+                  <span>Indicaciones (opcional)</span>
+                  <textarea
+                    rows={2}
+                    value={l.instructions}
+                    onChange={(e) => patch(l.uid, { instructions: e.target.value })}
+                    placeholder="Notas para el paciente…"
+                  />
+                </label>
+                <div className="rx-card__foot">
+                  <div className="rx-stepper">
+                    <button type="button" onClick={() => patch(l.uid, { quantity: Math.max(1, l.quantity - 1) })} aria-label="Menos">
+                      <Minus size={15} />
+                    </button>
+                    <span className="tnum">{l.quantity}</span>
+                    <button type="button" onClick={() => patch(l.uid, { quantity: l.quantity + 1 })} aria-label="Más">
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  <label className="rx-field rx-field--price">
+                    <span>Precio c/u</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={l.unit_price ?? ''}
+                      placeholder={String(catPrice(l.product_id) || 0)}
+                      onChange={(e) =>
+                        patch(l.uid, { unit_price: e.target.value === '' ? null : Math.max(0, Number(e.target.value)) })
+                      }
+                    />
+                  </label>
+                  {dyn ? (
+                    <span className="rx-card__auto">auto · precio del día</span>
+                  ) : (
+                    <span className="rx-card__stock">{l.stock} en stock</span>
+                  )}
+                </div>
+              </article>
+            );
+          })
+        )}
+      </div>
+
+      {/* Pie: resumen + guardar */}
+      <div className="plan-foot">
+        <div className="plan-foot__sum">
+          <span>
+            {lines.length} {lines.length === 1 ? 'producto' : 'productos'}
+          </span>
+          <strong className="tnum">
+            {hasDynamic ? '~' : ''}
+            {formatCurrency(total)}
+          </strong>
+        </div>
+        <div className="plan-foot__actions">
+          <button type="button" className="btn btn--soft" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" className="btn btn--primary" onClick={save} disabled={!canSave}>
+            {busy ? <span className="spinner spinner--sm" /> : <ClipboardList size={17} />} {plan ? 'Guardar cambios' : 'Guardar plan'}
+          </button>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -3821,6 +4378,7 @@ function PrescribeSheet({
   onError: (msg: string) => void;
 }) {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const [lines, setLines] = useState<RxUiLine[]>([]);
@@ -3833,7 +4391,12 @@ function PrescribeSheet({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchCatalog().then(setCatalog).catch(() => onError('No se pudo cargar el catálogo.'));
+    Promise.all([fetchCatalog(), fetchPlans()])
+      .then(([cat, pl]) => {
+        setCatalog(cat);
+        setPlans(pl);
+      })
+      .catch(() => onError('No se pudo cargar el catálogo.'));
     const id = window.setTimeout(() => inputRef.current?.focus(), 120);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3874,6 +4437,41 @@ function PrescribeSheet({
         unitCost: c.unitCost,
       },
     ]);
+    setQuery('');
+    inputRef.current?.focus();
+  }
+
+  // aplica un plan: agrega sus líneas (append) con dedupe por product_id, resolviendo
+  // precio/stock SIEMPRE contra el catálogo fresco (precio del día para líneas dinámicas).
+  function applyPlan(pl: Plan) {
+    setLines((prev) => {
+      const present = new Set(prev.map((l) => l.product_id).filter(Boolean));
+      const adds: RxUiLine[] = pl.items
+        .filter((it) => !it.product_id || !present.has(it.product_id))
+        .map((it, i) => {
+          const c = it.product_id ? catalog.find((x) => x.productId === it.product_id) : undefined;
+          const stock = c?.stock ?? 0;
+          const signal = c?.signal ?? 'danger';
+          const unitCost = c?.unitCost ?? it.unit_cost ?? 0;
+          const price = it.unit_price ?? c?.salePrice ?? it.sale_price ?? 0; // dinámico => precio del día
+          return {
+            uid: `${it.product_id ?? 'ind'}-plan-${pl.id}-${i}-${Date.now() % 100000}`,
+            product_id: it.product_id ?? '',
+            name: it.name,
+            dose: it.dose ?? '',
+            route: it.route ?? 'subcutanea',
+            frequency: it.frequency ?? 'semanal',
+            duration_days: it.duration_days ?? 30,
+            // cantidad topada al stock vigente (igual criterio que addProduct); sin producto => sin tope
+            quantity: it.product_id ? Math.max(1, Math.min(it.quantity, Math.max(stock, 1))) : it.quantity,
+            unit_price: price,
+            stock,
+            signal,
+            unitCost,
+          };
+        });
+      return [...prev, ...adds];
+    });
     setQuery('');
     inputRef.current?.focus();
   }
@@ -4000,6 +4598,28 @@ function PrescribeSheet({
             <SignalSummary counts={counts} />
           </div>
         </div>
+
+        {/* Aplicar un plan: carga todas sus líneas de un clic */}
+        {plans.filter((p) => p.itemCount > 0).length > 0 && (
+          <div className="rx-plans">
+            <span className="rx-plans__label">Aplicar plan</span>
+            <div className="rx-plans__chips">
+              {plans
+                .filter((p) => p.itemCount > 0)
+                .map((pl) => (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    className="rx-plan-chip"
+                    onClick={() => applyPlan(pl)}
+                    title={`${pl.itemCount} productos · ${pl.hasDynamicPrice ? '~' : ''}${formatCurrency(pl.totalEstimated)}`}
+                  >
+                    <ClipboardList size={14} /> {pl.name} <em>{pl.itemCount}</em>
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
 
         {/* Barra de comando */}
         <div className="rx-cmdbar">

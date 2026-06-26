@@ -1020,3 +1020,37 @@ export const STOCK_REASONS: Record<'Entrada' | 'Salida', string[]> = {
   Entrada: ['Llegó pedido', 'Devolución', 'Reposición', 'Ajuste'],
   Salida: ['Uso paciente', 'Venta', 'Daño', 'Regalo', 'Vencido', 'Ajuste'],
 };
+
+// ---------- Planes (plantillas reutilizables de receta) ----------
+/** Un producto dentro de un plan (espeja el jsonb de v_plans.items). */
+export interface PlanItem {
+  product_id: string | null; // null = producto borrado
+  name: string;
+  dose: string | null;
+  route: string | null;
+  frequency: string | null;
+  duration_days: number | null;
+  quantity: number;
+  unit_price: number | null; // null = precio del día
+  effective_price: number; // precio que se usaría HOY (coalesce unit_price -> sale_price)
+  sale_price: number;
+  instructions: string | null;
+  stock: number;
+  signal: 'ok' | 'warn' | 'danger';
+  unit: string;
+  unit_cost: number;
+  missing: boolean; // product_id null
+}
+
+/** Cabecera de plan con items embebidos (un row de v_plans). */
+export interface Plan {
+  id: string;
+  name: string;
+  notes: string | null;
+  itemCount: number;
+  totalEstimated: number;
+  hasDynamicPrice: boolean;
+  hasMissingProduct: boolean;
+  items: PlanItem[];
+  updatedAt: string;
+}

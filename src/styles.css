@@ -1624,6 +1624,82 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .rx-stepper em { font-size: 0.72rem; color: var(--muted); margin-left: 8px; }
 .rx-card__stock { font-size: 0.74rem; color: var(--muted); }
 
+/* ---- Planes (plantillas reutilizables) ---- */
+.inv-tabs { margin-bottom: 14px; }
+
+.plan-list { display: flex; flex-direction: column; gap: 10px; }
+.plan-card {
+  display: flex; align-items: stretch; gap: 10px;
+  border-radius: var(--r-lg); border: 1px solid var(--line-soft);
+  background: var(--surface); box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--t-fast), border-color var(--t-fast);
+}
+.plan-card:hover { box-shadow: var(--shadow-md); border-color: var(--line); }
+.plan-card__main {
+  flex: 1; min-width: 0; text-align: left; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 6px; background: transparent;
+}
+.plan-card__main strong { font-size: 0.95rem; font-weight: 600; }
+.plan-card__meta { font-size: 0.76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.plan-card__pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.plan-pill {
+  font-size: 0.68rem; font-weight: 600; padding: 2px 9px; border-radius: var(--r-pill);
+  background: var(--surface-2); color: var(--ink-soft); border-left: 3px solid var(--line);
+  max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plan-pill--ok { border-left-color: var(--ok); }
+.plan-pill--warn { border-left-color: var(--warn); }
+.plan-pill--danger { border-left-color: var(--danger); }
+.plan-pill--more { background: var(--brand-soft); color: var(--brand-strong); border-left-color: var(--brand); }
+.plan-card__actions { display: flex; align-items: center; gap: 6px; padding: 0 12px 0 0; }
+.plan-confirm { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; color: var(--muted); font-weight: 600; padding-left: 8px; }
+.plan-confirm__yes, .plan-confirm__no { padding: 5px 11px; border-radius: var(--r-pill); font-size: 0.76rem; font-weight: 700; }
+.plan-confirm__yes { background: var(--danger-soft); color: var(--danger); }
+.plan-confirm__no { background: var(--surface-2); color: var(--ink-soft); }
+
+/* Pie sticky del constructor de plan (misma superficie de marca que rx-checkout) */
+.plan-foot {
+  position: sticky; bottom: -2px; z-index: 4; margin: 8px -4px 0;
+  padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
+  border-radius: var(--r-xl); background: linear-gradient(155deg, var(--brand-strong), var(--brand));
+  color: #fff; box-shadow: var(--shadow-lg);
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+}
+.plan-foot__sum { display: flex; flex-direction: column; gap: 1px; }
+.plan-foot__sum > span { font-size: 0.74rem; color: oklch(0.97 0.02 300); }
+.plan-foot__sum strong { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.04em; }
+.plan-foot__actions { display: flex; gap: 10px; }
+.plan-foot .btn--soft { background: oklch(1 0 0 / 0.18); color: #fff; box-shadow: none; }
+.plan-foot .btn--primary { background: #fff; color: var(--brand-strong); box-shadow: none; }
+.plan-foot .btn--primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Tarjeta de item en el constructor de plan */
+.rx-card--plan .rx-card__foot { align-items: flex-end; }
+.rx-field--full { margin-bottom: 12px; }
+.rx-field--full textarea {
+  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface-2); font-size: 0.82rem; outline: none; resize: vertical; font-family: inherit;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.rx-field--full textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); background: var(--surface); }
+.rx-field--price { max-width: 130px; }
+.rx-field--price input { width: 100%; }
+.rx-card__auto { font-size: 0.72rem; color: var(--brand-strong); font-weight: 600; background: var(--brand-soft); padding: 4px 10px; border-radius: var(--r-pill); white-space: nowrap; }
+.rx-card__missing { font-style: normal; font-size: 0.74rem; color: var(--danger); font-weight: 600; }
+
+/* Chips "Aplicar plan" en el prescriptor */
+.rx-plans { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
+.rx-plans__label { font-size: 0.66rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.rx-plans__chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.rx-plan-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 13px; border-radius: var(--r-pill); font-size: 0.8rem; font-weight: 600;
+  background: var(--brand-soft); color: var(--brand-strong);
+  border: 1px solid transparent; transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+}
+.rx-plan-chip:hover { background: var(--surface); border-color: var(--brand); transform: translateY(-1px); }
+.rx-plan-chip em { font-style: normal; font-weight: 700; font-size: 0.72rem; background: var(--brand); color: #fff; border-radius: var(--r-pill); padding: 1px 7px; }
+
 /* Checkout (sticky abajo, única superficie oscura) */
 .rx-checkout {
   position: sticky;
