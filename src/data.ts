@@ -77,6 +77,8 @@ export interface InventoryItem {
   expiration: string | null;
   supplier: string;
   unitCost: number;
+  salePrice: number;
+  marginPct: number | null;
   status: InventoryStatus;
 }
 
@@ -194,6 +196,8 @@ export const initialInventory: InventoryItem[] = [
     expiration: '2026-08-18',
     supplier: 'Bioregen Labs',
     unitCost: 180000,
+    salePrice: 360000,
+    marginPct: 50,
     status: 'Bajo stock',
   },
   {
@@ -207,6 +211,8 @@ export const initialInventory: InventoryItem[] = [
     expiration: '2026-11-02',
     supplier: 'Bioregen Labs',
     unitCost: 92000,
+    salePrice: 205000,
+    marginPct: 55,
     status: 'Disponible',
   },
   {
@@ -220,6 +226,8 @@ export const initialInventory: InventoryItem[] = [
     expiration: '2026-07-14',
     supplier: 'Peptide Source',
     unitCost: 145000,
+    salePrice: 360000,
+    marginPct: 60,
     status: 'Proximo a vencer',
   },
   {
@@ -233,6 +241,8 @@ export const initialInventory: InventoryItem[] = [
     expiration: '2026-10-09',
     supplier: 'Peptide Source',
     unitCost: 210000,
+    salePrice: 520000,
+    marginPct: 60,
     status: 'Disponible',
   },
 ];
@@ -993,6 +1003,7 @@ export interface ProductPayload {
   expiration: string | null;
   supplier: string;
   unitCost: number;
+  salePrice: number;
 }
 
 /** Movimiento de stock (entrada/salida/ajuste con motivo). */

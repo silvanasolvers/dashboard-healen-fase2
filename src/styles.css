@@ -758,8 +758,12 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .inv-row + .inv-row { border-top: 1px solid var(--line-soft); }
 .inv-row__id { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .inv-row__id .dot { flex-shrink: 0; }
-.inv-row__id strong { font-size: 0.9rem; font-weight: 600; display: block; }
+.inv-row__id strong { font-size: 0.9rem; font-weight: 600; display: flex; align-items: center; gap: 7px; min-width: 0; }
 .inv-row__id span { font-size: 0.73rem; color: var(--muted); display: block; }
+.inv-mg { flex-shrink: 0; font-size: 0.64rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.inv-mg--good { background: var(--ok-soft); color: oklch(0.46 0.14 158); }
+.inv-mg--mid  { background: var(--warn-soft); color: oklch(0.52 0.13 64); }
+.inv-mg--low  { background: var(--danger-soft); color: var(--danger); }
 .inv-row__gauge { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .inv-row__gauge small { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .inv-row__gauge small strong { color: var(--ink); }
@@ -1307,6 +1311,22 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .mv__input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .mv__row { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; align-items: start; }
 .mv__row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; align-items: start; }
+
+/* margen en vivo del alta de producto (venta − costo) */
+.mv__margin {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: -4px 0 2px; padding: 9px 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface-2, var(--card));
+}
+.mv__margin-label { font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.mv__margin-val { font-size: 0.92rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.mv__margin-val em { font-style: normal; font-weight: 700; opacity: 0.7; }
+.mv__margin.is-good { border-color: color-mix(in oklab, var(--ok) 45%, var(--line)); background: var(--ok-soft); }
+.mv__margin.is-good .mv__margin-val { color: oklch(0.46 0.14 158); }
+.mv__margin.is-mid  { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); background: var(--warn-soft); }
+.mv__margin.is-mid  .mv__margin-val { color: oklch(0.52 0.13 64); }
+.mv__margin.is-low  { border-color: color-mix(in oklab, var(--danger) 45%, var(--line)); background: var(--danger-soft); }
+.mv__margin.is-low  .mv__margin-val { color: var(--danger); }
 
 /* ---- Movimiento rápido de stock (sheet) ---- */
 .sheet--quick { max-width: 460px; }

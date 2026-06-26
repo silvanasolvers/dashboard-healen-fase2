@@ -255,6 +255,7 @@ export function upsertProduct(p: ProductPayload) {
     p_expiration: p.expiration || null,
     p_supplier: p.supplier || '',
     p_unit_cost: p.unitCost || 0,
+    p_sale_price: p.salePrice || 0,
   });
 }
 

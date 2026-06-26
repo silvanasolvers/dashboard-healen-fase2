@@ -1426,13 +1426,21 @@ function InventarioView({
               const pct = grown ? Math.min(100, (item.stock / Math.max(item.minimum * 1.6, 1)) * 100) : 0;
               const last = lastByProduct[item.product];
               return (
-                <div key={item.id} className="inv-row">
+                <div key={item.productId ?? item.id} className="inv-row">
                   <div className="inv-row__id">
                     <span className={`dot dot--${signal}`} />
                     <div>
-                      <strong>{item.product}</strong>
+                      <strong>
+                        {item.product}
+                        {item.marginPct != null && (
+                          <b className={`inv-mg inv-mg--${item.marginPct >= 40 ? 'good' : item.marginPct >= 15 ? 'mid' : 'low'}`}>
+                            {item.marginPct}%
+                          </b>
+                        )}
+                      </strong>
                       <span>
-                        {item.type} · {formatCurrency(item.unitCost)} ·{' '}
+                        {item.type} · {formatCurrency(item.unitCost)}
+                        {item.salePrice > 0 && <> → {formatCurrency(item.salePrice)}</>} ·{' '}
                         {item.expiration ? `vence ${formatDate(item.expiration)}` : 's/v'}
                       </span>
                     </div>
@@ -1529,8 +1537,16 @@ function ProductForm({
   const [expiration, setExpiration] = useState('');
   const [supplier, setSupplier] = useState('');
   const [unitCost, setUnitCost] = useState('');
+  const [salePrice, setSalePrice] = useState('');
   const [saving, setSaving] = useState(false);
   const canSubmit = product.trim() !== '' && !saving;
+
+  // margen en vivo: venta − costo, para que el alta ayude con la rentabilidad
+  const costN = Number(unitCost) || 0;
+  const saleN = Number(salePrice) || 0;
+  const marginAbs = saleN - costN;
+  const marginPct = saleN > 0 ? Math.round((marginAbs / saleN) * 100) : null;
+  const marginTone = marginPct == null ? '' : marginPct >= 40 ? ' is-good' : marginPct >= 15 ? ' is-mid' : ' is-low';
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -1546,6 +1562,7 @@ function ProductForm({
       expiration: expiration || null,
       supplier: supplier.trim(),
       unitCost: Number(unitCost) || 0,
+      salePrice: Number(salePrice) || 0,
     });
     setSaving(false);
     if (ok) onClose();
@@ -1594,19 +1611,31 @@ function ProductForm({
             <input className="mv__input" type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" />
           </div>
           <div className="mv__field">
+            <label className="mv__label">Precio de venta</label>
+            <input className="mv__input" type="number" min="0" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="0" />
+          </div>
+        </div>
+        {saleN > 0 && (
+          <div className={`mv__margin${marginTone}`}>
+            <span className="mv__margin-label">Margen por unidad</span>
+            <span className="mv__margin-val">
+              {formatCurrency(marginAbs)} {marginPct != null && <em>· {marginPct}%</em>}
+            </span>
+          </div>
+        )}
+        <div className="mv__row">
+          <div className="mv__field">
             <label className="mv__label">Proveedor</label>
             <input className="mv__input" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Proveedor" />
           </div>
-        </div>
-        <div className="mv__row">
           <div className="mv__field">
             <label className="mv__label">Lote</label>
             <input className="mv__input" value={lot} onChange={(e) => setLot(e.target.value)} placeholder="Lote" />
           </div>
-          <div className="mv__field">
-            <label className="mv__label">Vencimiento</label>
-            <DatePicker value={expiration} onChange={setExpiration} placeholder="Sin vencimiento" />
-          </div>
+        </div>
+        <div className="mv__field">
+          <label className="mv__label">Vencimiento</label>
+          <DatePicker value={expiration} onChange={setExpiration} placeholder="Sin vencimiento" />
         </div>
         <div className="mv__actions">
           <button type="button" className="btn btn--soft" onClick={onClose}>
