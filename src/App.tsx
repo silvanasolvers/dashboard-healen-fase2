@@ -1666,7 +1666,13 @@ function PlanesPanel({
       </div>
 
       {builder && (
-        <PlanBuilder plan={builder.plan} catalog={catalog} onSave={onSavePlan} onClose={onCloseBuilder} />
+        <PlanBuilder
+          key={builder.plan?.id ?? 'new'}
+          plan={builder.plan}
+          catalog={catalog}
+          onSave={onSavePlan}
+          onClose={onCloseBuilder}
+        />
       )}
 
       <article className="panel" data-reveal>
@@ -4364,6 +4370,7 @@ interface RxUiLine {
   stock: number;
   signal: 'ok' | 'warn' | 'danger';
   unitCost: number;
+  instructions?: string;
 }
 
 function PrescribeSheet({
@@ -4391,12 +4398,16 @@ function PrescribeSheet({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    Promise.all([fetchCatalog(), fetchPlans()])
-      .then(([cat, pl]) => {
-        setCatalog(cat);
-        setPlans(pl);
-      })
+    // el catálogo es el núcleo del cobro; los planes son secundarios (sólo chips).
+    // Se cargan por separado para que un fallo de planes no deje el catálogo vacío.
+    fetchCatalog()
+      .then(setCatalog)
       .catch(() => onError('No se pudo cargar el catálogo.'));
+    fetchPlans()
+      .then(setPlans)
+      .catch(() => {
+        /* sin planes: recetar sigue funcionando, sólo no se muestran los chips */
+      });
     const id = window.setTimeout(() => inputRef.current?.focus(), 120);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4413,7 +4424,8 @@ function PrescribeSheet({
   const estMargin = total - estCogs;
   const marginPct = total > 0 ? Math.round((estMargin / total) * 100) : 0;
   const marginSignal: 'ok' | 'warn' | 'danger' = marginPct >= 50 ? 'ok' : marginPct >= 25 ? 'warn' : 'danger';
-  const shortage = lines.some((l) => l.quantity > l.stock);
+  // sólo las líneas con producto consumen inventario; las indicaciones (producto borrado) no topan ni bloquean
+  const shortage = lines.some((l) => l.product_id && l.quantity > l.stock);
   const payAmount = paid == null ? total : Math.max(0, Math.min(paid, total));
   const canConfirm = lines.length > 0 && !shortage && !busy;
 
@@ -4444,10 +4456,12 @@ function PrescribeSheet({
   // aplica un plan: agrega sus líneas (append) con dedupe por product_id, resolviendo
   // precio/stock SIEMPRE contra el catálogo fresco (precio del día para líneas dinámicas).
   function applyPlan(pl: Plan) {
+    // clave de dedupe: por product_id, y por nombre para las indicaciones (producto borrado, sin id)
+    const keyOf = (pid: string, name: string) => pid || `ind:${name}`;
     setLines((prev) => {
-      const present = new Set(prev.map((l) => l.product_id).filter(Boolean));
+      const present = new Set(prev.map((l) => keyOf(l.product_id, l.name)));
       const adds: RxUiLine[] = pl.items
-        .filter((it) => !it.product_id || !present.has(it.product_id))
+        .filter((it) => !present.has(keyOf(it.product_id ?? '', it.name)))
         .map((it, i) => {
           const c = it.product_id ? catalog.find((x) => x.productId === it.product_id) : undefined;
           const stock = c?.stock ?? 0;
@@ -4462,12 +4476,13 @@ function PrescribeSheet({
             route: it.route ?? 'subcutanea',
             frequency: it.frequency ?? 'semanal',
             duration_days: it.duration_days ?? 30,
-            // cantidad topada al stock vigente (igual criterio que addProduct); sin producto => sin tope
-            quantity: it.product_id ? Math.max(1, Math.min(it.quantity, Math.max(stock, 1))) : it.quantity,
+            // se preserva la cantidad del plan; sólo se topa al stock cuando hay producto Y stock real
+            quantity: it.product_id && stock > 0 ? Math.max(1, Math.min(it.quantity, stock)) : it.quantity,
             unit_price: price,
             stock,
             signal,
             unitCost,
+            instructions: it.instructions ?? '',
           };
         });
       return [...prev, ...adds];
@@ -4518,6 +4533,7 @@ function PrescribeSheet({
           duration_days: l.duration_days,
           quantity: l.quantity,
           unit_price: l.unit_price,
+          instructions: l.instructions || undefined,
         })),
         charge: true,
         payment: payAmount,
@@ -4675,7 +4691,7 @@ function PrescribeSheet({
             </div>
           ) : (
             lines.map((l) => {
-              const short = l.quantity > l.stock;
+              const short = !!l.product_id && l.quantity > l.stock;
               return (
                 <article className="rx-card" key={l.uid}>
                   <div className="rx-card__top">

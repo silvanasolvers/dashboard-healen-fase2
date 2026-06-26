@@ -108,6 +108,10 @@ order by pt.name;
 comment on view v_plans is 'Planes con items jsonb embebido (precio efectivo HOY, stock y costo), conteo, total estimado y flags (precio dinámico / producto faltante) para listar en Inventario y aplicar al recetar.';
 alter view v_plans set (security_invoker = on);
 grant select on v_plans to authenticated;
+-- v_plans es security_invoker: el rol que consulta (authenticated) necesita SELECT propio
+-- sobre las tablas base. El grant masivo de 05 no cubre tablas creadas después, así que
+-- se concede explícito aquí (la RLS staff_all sigue restringiendo las filas a staff).
+grant select on plan_templates, plan_template_items to authenticated;
 
 -- ============================================================
 -- RPC dash_save_plan: upsert atómico de cabecera + reemplazo total de items
@@ -154,6 +158,9 @@ begin
   end loop;
 
   return jsonb_build_object('plan_id', v_plan, 'items', v_pos);
+exception
+  -- choque con idx_plan_name_active (otro plan activo con el mismo nombre, incl. reactivar uno archivado)
+  when unique_violation then raise exception 'Ya existe un plan activo con ese nombre';
 end $$;
 comment on function dash_save_plan is 'Crea o edita un plan-plantilla: upsert de cabecera + reemplazo total de items (mismo shape de p_items que prescribe_checkout).';
 
