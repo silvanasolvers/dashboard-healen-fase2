@@ -654,11 +654,82 @@ export interface PatientSummary {
   tier: string;
 }
 
+export type PatientMilestoneStatus = 'pendiente' | 'en_progreso' | 'completado' | 'omitido';
+export type PatientMilestoneCategory =
+  | 'clinico'
+  | 'laboratorio'
+  | 'tratamiento'
+  | 'administrativo'
+  | 'seguimiento'
+  | 'educacion'
+  | 'renovacion'
+  | 'logistica'
+  | 'cierre'
+  | 'otro';
+
+export interface PatientMilestone {
+  id: string;
+  clientId: string;
+  treatmentId: string | null;
+  patientName: string;
+  treatmentName: string | null;
+  phase: string;
+  title: string;
+  description: string | null;
+  category: PatientMilestoneCategory;
+  modality: string | null;
+  targetDate: string | null;
+  relativeDay: number | null;
+  daysLeft: number | null;
+  status: PatientMilestoneStatus;
+  pinned: boolean;
+  position: number;
+  completedAt: string | null;
+  completedBy: string | null;
+  completionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PatientDossier {
   summary: PatientSummary | null;
   notes: ClinicalNote[];
+  milestones: PatientMilestone[];
   timeline: TimelineEvent[];
   revenue: RevenuePoint[];
+}
+
+export const MILESTONE_CATEGORIES: Array<{ id: PatientMilestoneCategory; label: string; tone: Tone }> = [
+  { id: 'seguimiento', label: 'Seguimiento', tone: 'neutral' },
+  { id: 'clinico', label: 'Clínico', tone: 'warning' },
+  { id: 'tratamiento', label: 'Tratamiento', tone: 'success' },
+  { id: 'laboratorio', label: 'Laboratorio', tone: 'warning' },
+  { id: 'logistica', label: 'Logística', tone: 'neutral' },
+  { id: 'renovacion', label: 'Renovación', tone: 'danger' },
+  { id: 'cierre', label: 'Cierre', tone: 'success' },
+  { id: 'educacion', label: 'Educación', tone: 'neutral' },
+  { id: 'administrativo', label: 'Administrativo', tone: 'neutral' },
+  { id: 'otro', label: 'Otro', tone: 'neutral' },
+];
+
+export function milestoneCategoryLabel(category: string): string {
+  return MILESTONE_CATEGORIES.find((c) => c.id === category)?.label ?? 'Hito';
+}
+
+export function milestoneStatusLabel(status: PatientMilestoneStatus): string {
+  if (status === 'completado') return 'Completado';
+  if (status === 'en_progreso') return 'En progreso';
+  if (status === 'omitido') return 'Omitido';
+  return 'Pendiente';
+}
+
+export function milestoneDueTone(daysLeft: number | null, status: PatientMilestoneStatus): Tone {
+  if (status === 'completado') return 'success';
+  if (status === 'omitido') return 'neutral';
+  if (daysLeft === null) return 'neutral';
+  if (daysLeft <= 3) return 'danger';
+  if (daysLeft <= 7) return 'warning';
+  return 'neutral';
 }
 
 export interface SignalCounts {

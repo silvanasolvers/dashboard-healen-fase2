@@ -78,6 +78,10 @@ import {
   InventoryItem,
   isReceivable,
   KV,
+  MILESTONE_CATEGORIES,
+  milestoneCategoryLabel,
+  milestoneDueTone,
+  milestoneStatusLabel,
   MonthPoint,
   mostUrgentPeptide,
   MovementPayload,
@@ -89,6 +93,7 @@ import {
   overallSignal,
   Patient,
   patientHistory,
+  PatientMilestone,
   PatientDossier,
   PatientProductAlert,
   patientSignalCounts,
@@ -114,9 +119,11 @@ import {
   View,
 } from './data';
 import {
+  addMilestone,
   addNote,
   CatalogItem,
   createPatient,
+  deleteMilestone,
   deleteNote,
   fetchAll,
   fetchAnalytics,
@@ -136,6 +143,7 @@ import {
   MovementRow,
   prescribeCheckout,
   PrescribeResult,
+  toggleMilestone,
   updateClient,
   upsertProduct,
 } from './api';
@@ -3632,6 +3640,203 @@ function ClinicalFlags({ dossier }: { dossier: PatientDossier | null }) {
   );
 }
 
+
+function milestoneDateLabel(m: PatientMilestone): string {
+  if (m.targetDate) return formatDate(m.targetDate);
+  if (m.relativeDay !== null) return `Día ${m.relativeDay}`;
+  return 'Sin fecha';
+}
+
+function milestoneDueLabel(m: PatientMilestone): string {
+  if (m.status === 'completado') return 'Completado';
+  if (m.status === 'omitido') return 'Omitido';
+  if (m.daysLeft === null) return 'Sin fecha objetivo';
+  if (m.daysLeft < 0) return `${Math.abs(m.daysLeft)} días vencido`;
+  if (m.daysLeft === 0) return 'Vence hoy';
+  if (m.daysLeft === 1) return 'Mañana';
+  return `En ${m.daysLeft} días`;
+}
+
+function MilestonesPanel({
+  patient,
+  milestones,
+  loading,
+  onChanged,
+}: {
+  patient: Patient;
+  milestones: PatientMilestone[];
+  loading: boolean;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const completed = milestones.filter((m) => m.status === 'completado').length;
+  const progress = milestones.length ? Math.round((completed / milestones.length) * 100) : 0;
+  const canWrite = !!patient.clientUuid;
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!patient.clientUuid) return;
+    const form = new FormData(e.currentTarget);
+    const title = String(form.get('title') || '').trim();
+    if (!title) return;
+    setSaving(true);
+    setError('');
+    try {
+      await addMilestone({
+        clientId: patient.clientUuid,
+        treatmentId: patient.treatmentId ?? null,
+        title,
+        description: String(form.get('description') || '').trim() || null,
+        category: String(form.get('category') || 'seguimiento'),
+        modality: String(form.get('modality') || '').trim() || null,
+        targetDate: String(form.get('targetDate') || '') || null,
+        relativeDay: form.get('relativeDay') ? Number(form.get('relativeDay')) : null,
+        phase: String(form.get('phase') || 'Fase 1').trim() || 'Fase 1',
+        pinned: form.get('pinned') === 'on',
+      });
+      e.currentTarget.reset();
+      setOpen(false);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggle(m: PatientMilestone) {
+    setSaving(true);
+    setError('');
+    try {
+      const done = m.status !== 'completado';
+      await toggleMilestone(m.id, done, done ? 'Marcado desde el dashboard.' : null);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(m: PatientMilestone) {
+    if (!window.confirm(`¿Archivar el hito “${m.title}”?`)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await deleteMilestone(m.id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo archivar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="detail-block milestones" data-reveal>
+      <div className="label">
+        <ClipboardList size={17} /> Hitos clínicos
+        <small className="count-chip">{completed}/{milestones.length}</small>
+        {canWrite && (
+          <button className="detail-block__edit" onClick={() => setOpen((v) => !v)}>
+            {open ? <X size={14} /> : <Plus size={14} />} {open ? 'Cerrar' : 'Nuevo hito'}
+          </button>
+        )}
+      </div>
+
+      <div className="milestones__progress" aria-label={`Progreso de hitos ${progress}%`}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+
+      {open && (
+        <form className="form milestone-form" onSubmit={submit}>
+          <Field label="Título" full>
+            <input name="title" placeholder="Ej. Control de tolerancia inicial" required />
+          </Field>
+          <Field label="Fase">
+            <input name="phase" placeholder="Fase 1" defaultValue="Fase 1" />
+          </Field>
+          <Field label="Categoría">
+            <select name="category" defaultValue="seguimiento">
+              {MILESTONE_CATEGORIES.map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Modalidad">
+            <input name="modality" placeholder="Chat / Telemedicina / Consulta" />
+          </Field>
+          <Field label="Fecha objetivo">
+            <input name="targetDate" type="date" />
+          </Field>
+          <Field label="Día relativo">
+            <input name="relativeDay" type="number" placeholder="Ej. 5" />
+          </Field>
+          <Field label="Objetivo" full>
+            <textarea name="description" rows={3} placeholder="Qué debe revisarse, qué variables monitorear y qué decisión se espera tomar…" />
+          </Field>
+          <label className="milestone-pin field--full">
+            <input name="pinned" type="checkbox" /> <Pin size={14} /> Fijar arriba
+          </label>
+          {error && <p className="note-composer__error field--full">{error}</p>}
+          <div className="info-form__actions field--full">
+            <button className="btn btn--primary" type="submit" disabled={saving}>
+              {saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar hito
+            </button>
+            <button className="btn btn--soft" type="button" onClick={() => setOpen(false)}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+
+      {error && !open && <p className="note-composer__error">{error}</p>}
+      {loading ? (
+        <p className="muted-line">Cargando hitos…</p>
+      ) : milestones.length === 0 ? (
+        <p className="muted-line">Aún no hay hitos para este paciente. Crea el primer checkpoint clínico.</p>
+      ) : (
+        <div className="milestone-list">
+          {milestones.map((m) => {
+            const tone = milestoneDueTone(m.daysLeft, m.status);
+            const done = m.status === 'completado';
+            return (
+              <article key={m.id} className={`milestone milestone--${tone}${done ? ' is-done' : ''}`}>
+                <button className="milestone__check" onClick={() => toggle(m)} disabled={saving} aria-label={done ? 'Desmarcar hito' : 'Completar hito'}>
+                  {done ? <Check size={17} /> : <span />}
+                </button>
+                <div className="milestone__body">
+                  <div className="milestone__top">
+                    {m.pinned && <Pin className="note__pin" size={13} />}
+                    <span className={`note__kind note__kind--${tone}`}>{milestoneCategoryLabel(m.category)}</span>
+                    <span className="note__meta">{m.phase}</span>
+                  </div>
+                  <strong>{m.title}</strong>
+                  {m.description && <p>{m.description}</p>}
+                  <div className="milestone__meta">
+                    <span><CalendarClock size={13} /> {milestoneDateLabel(m)}</span>
+                    <span className={`ti-flag ti-flag--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warn' : 'ok'}`}>{milestoneDueLabel(m)}</span>
+                    {m.modality && <span>{m.modality}</span>}
+                    <span>{milestoneStatusLabel(m.status)}</span>
+                  </div>
+                  {done && m.completedAt && (
+                    <p className="milestone__done">Cerrado {formatDate(m.completedAt)} · {m.completedBy}</p>
+                  )}
+                </div>
+                <button className="note__del" onClick={() => remove(m)} disabled={saving} aria-label="Archivar hito">
+                  <Trash2 size={15} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ResumenPanel({
   patient,
   dossier,
@@ -3698,6 +3903,7 @@ function ResumenPanel({
       <main className="detail__main">
         <TreatmentBlock patient={patient} />
         <ClinicalFlags dossier={dossier} />
+        <MilestonesPanel patient={patient} milestones={dossier?.milestones ?? []} loading={!dossier} onChanged={reload} />
       </main>
     </div>
   );

@@ -1204,6 +1204,49 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .note__del { color: var(--muted); padding: 4px; border-radius: 8px; flex-shrink: 0; align-self: flex-start; transition: color var(--t-fast), background var(--t-fast); }
 .note__del:hover { color: var(--danger); background: var(--danger-soft); }
 
+/* ---- Hitos clínicos checkeables ---- */
+.milestones__progress {
+  height: 8px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; margin: -4px 0 16px;
+}
+.milestones__progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--brand), var(--ok)); transition: width var(--t-mid) var(--e-out); }
+.milestone-form { margin-bottom: 16px; padding: 14px; border-radius: var(--r-lg); background: var(--surface-2); }
+.milestone-form textarea,
+.milestone-form input,
+.milestone-form select {
+  width: 100%; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid var(--line);
+  background: var(--surface); font: inherit; font-size: 0.88rem; color: var(--ink);
+}
+.milestone-form textarea { resize: vertical; min-height: 76px; }
+.milestone-form textarea:focus,
+.milestone-form input:focus,
+.milestone-form select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.milestone-pin { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; font-weight: 600; color: var(--muted); }
+.milestone-pin input { width: auto; }
+.milestone-list { display: flex; flex-direction: column; gap: 10px; }
+.milestone {
+  display: flex; gap: 12px; padding: 14px; border-radius: var(--r-lg); background: var(--surface-2);
+  border-left: 3px solid var(--line); transition: transform var(--t-mid) var(--e-out), background var(--t-mid), box-shadow var(--t-mid);
+}
+.milestone:hover { transform: translateY(-2px); background: var(--surface); box-shadow: var(--shadow-sm); }
+.milestone--success { border-left-color: var(--ok); }
+.milestone--warning { border-left-color: var(--warn); }
+.milestone--danger { border-left-color: var(--danger); }
+.milestone.is-done { opacity: 0.82; }
+.milestone.is-done .milestone__body > strong { text-decoration: line-through; color: var(--muted); }
+.milestone__check {
+  width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0;
+  background: var(--surface); color: var(--brand); border: 1px solid var(--line); margin-top: 1px;
+}
+.milestone__check span { width: 12px; height: 12px; border-radius: 4px; border: 2px solid var(--line); }
+.milestone.is-done .milestone__check { background: var(--ok-soft); color: oklch(0.46 0.14 158); border-color: transparent; }
+.milestone__body { flex: 1; min-width: 0; }
+.milestone__top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
+.milestone__body > strong { display: block; font-size: 0.9rem; margin-bottom: 4px; }
+.milestone__body p { font-size: 0.84rem; line-height: 1.45; color: var(--ink-soft); }
+.milestone__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; font-size: 0.74rem; color: var(--muted); }
+.milestone__meta span { display: inline-flex; align-items: center; gap: 4px; }
+.milestone__done { margin-top: 7px; color: var(--muted) !important; font-size: 0.76rem !important; }
+
 /* ---- Feed / historia clínica unificada ---- */
 .feed { display: flex; flex-direction: column; }
 .feed__item { display: flex; gap: 13px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
