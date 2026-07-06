@@ -589,7 +589,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const netProfit = companyIncome - companyExpenses;
   const lowStock = inventory.filter((i) => i.stock <= i.minimum || i.status !== 'Disponible').length;
   const serumCount = patients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
-  const finishingTreatments = patients.filter((p) => p.daysLeft <= 12 && p.status !== 'Finalizado').length;
+  const finishingTreatments = patients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
 
   const filteredPatients = patients.filter((p) =>
     `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
@@ -946,7 +946,10 @@ function InicioView({
   go: (v: View) => void;
   onOpenPatient: (p: Patient) => void;
 }) {
-  const urgent = [...patients].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 4);
+  const urgent = [...patients]
+    .filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado')
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 4);
   const stockView = [...inventory]
     .sort((a, b) => a.stock / Math.max(a.minimum, 1) - b.stock / Math.max(b.minimum, 1))
     .slice(0, 4);
