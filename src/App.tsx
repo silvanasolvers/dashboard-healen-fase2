@@ -3678,7 +3678,10 @@ function MilestonesPanel({
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!patient.clientUuid) return;
-    const form = new FormData(e.currentTarget);
+    // React nulls currentTarget after the async boundary. Keep the real form
+    // element before awaiting RPCs so reset() does not crash after a successful save.
+    const formEl = e.currentTarget;
+    const form = new FormData(formEl);
     const title = String(form.get('title') || '').trim();
     if (!title) return;
     setSaving(true);
@@ -3696,7 +3699,7 @@ function MilestonesPanel({
         phase: String(form.get('phase') || 'Fase 1').trim() || 'Fase 1',
         pinned: form.get('pinned') === 'on',
       });
-      e.currentTarget.reset();
+      formEl.reset();
       setOpen(false);
       await onChanged();
     } catch (err) {
