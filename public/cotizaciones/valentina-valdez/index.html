@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cotización Healen | Valentina Valdez</title>
+  <meta name="description" content="Cotización personalizada de prueba para Valentina Valdez — Healen Medicina Funcional y Regenerativa." />
+  <meta property="og:title" content="Cotización Healen | Valentina Valdez" />
+  <meta property="og:description" content="Propuesta premium domiciliaria de medicina funcional y regenerativa." />
+  <meta name="theme-color" content="#0b3b3a" />
+  <style>
+    :root {
+      --ink: #082725;
+      --deep: #0b3b3a;
+      --teal: #0f766e;
+      --mint: #8fdcc2;
+      --gold: #d8b46a;
+      --cream: #f8f3e9;
+      --paper: #fffdf8;
+      --muted: #66756f;
+      --line: rgba(8, 39, 37, .14);
+      --soft: rgba(143, 220, 194, .18);
+      --shadow: 0 24px 80px rgba(8, 39, 37, .16);
+      --radius: 28px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(143, 220, 194, .28), transparent 36rem),
+        linear-gradient(135deg, #f8f3e9 0%, #fbfaf5 42%, #edf8f3 100%);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    .page {
+      width: min(1120px, calc(100% - 32px));
+      margin: 24px auto 56px;
+    }
+
+    .quote-card {
+      background: rgba(255, 253, 248, .88);
+      border: 1px solid rgba(255, 255, 255, .72);
+      border-radius: 36px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(16px);
+    }
+
+    header {
+      position: relative;
+      padding: 36px clamp(24px, 5vw, 56px) 28px;
+      color: #f8f3e9;
+      background:
+        linear-gradient(120deg, rgba(11, 59, 58, .96), rgba(10, 84, 78, .92)),
+        radial-gradient(circle at 82% 12%, rgba(216, 180, 106, .45), transparent 22rem);
+    }
+
+    header::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(216, 180, 106, .9), transparent);
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 42px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .logo-shell {
+      width: 62px;
+      height: 62px;
+      border-radius: 20px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 253, 248, .95);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .18);
+      flex: 0 0 auto;
+    }
+
+    .logo-shell img { width: 46px; height: 46px; object-fit: contain; }
+
+    .brand-title { font-weight: 760; letter-spacing: .12em; text-transform: uppercase; }
+    .brand-subtitle { color: rgba(248, 243, 233, .72); font-size: 13px; margin-top: 2px; }
+
+    .badge {
+      border: 1px solid rgba(216, 180, 106, .52);
+      color: #f6e4b7;
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 13px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      background: rgba(255, 255, 255, .06);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+      gap: clamp(24px, 4vw, 54px);
+      align-items: end;
+    }
+
+    .eyebrow {
+      color: var(--mint);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin: 0 0 10px;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      font-size: clamp(42px, 7vw, 76px);
+      line-height: .92;
+      letter-spacing: -.055em;
+      text-wrap: balance;
+    }
+
+    .intro {
+      max-width: 720px;
+      margin: 22px 0 0;
+      color: rgba(248, 243, 233, .82);
+      font-size: clamp(16px, 2vw, 19px);
+    }
+
+    .summary-box {
+      background: rgba(248, 243, 233, .10);
+      border: 1px solid rgba(248, 243, 233, .20);
+      border-radius: 24px;
+      padding: 20px;
+    }
+
+    .summary-box .label {
+      color: rgba(248, 243, 233, .60);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .11em;
+    }
+
+    .summary-box .value {
+      margin-top: 5px;
+      font-size: 19px;
+      font-weight: 750;
+    }
+
+    .summary-box .big {
+      color: #ffe7a7;
+      font-size: 33px;
+      letter-spacing: -.04em;
+      margin-top: 10px;
+    }
+
+    main { padding: clamp(24px, 5vw, 56px); }
+
+    .section {
+      margin-top: 34px;
+      padding-top: 34px;
+      border-top: 1px solid var(--line);
+    }
+    .section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+    .section-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(24px, 3.2vw, 36px);
+      letter-spacing: -.04em;
+      line-height: 1.03;
+    }
+
+    .section-note { color: var(--muted); max-width: 520px; margin: 5px 0 0; }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .meta, .clinical-note, .footer-card {
+      background: rgba(255, 255, 255, .62);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 18px;
+    }
+
+    .meta span, .line-item small { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .10em; }
+    .meta strong { display: block; margin-top: 6px; font-size: 16px; }
+
+    .items {
+      display: grid;
+      gap: 12px;
+    }
+
+    .line-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      gap: 18px;
+      align-items: center;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.50));
+    }
+
+    .line-item h3 { margin: 0 0 5px; font-size: 17px; }
+    .line-item p { margin: 0; color: var(--muted); }
+    .price { text-align: right; font-weight: 780; font-size: 18px; }
+
+    .totals {
+      width: min(460px, 100%);
+      margin-left: auto;
+      margin-top: 20px;
+      display: grid;
+      gap: 10px;
+    }
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      padding: 0 4px;
+    }
+    .grand-total {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 16px;
+      padding: 18px 20px;
+      border-radius: 22px;
+      color: #fff8e6;
+      background: linear-gradient(120deg, var(--deep), #0e625c);
+      box-shadow: 0 16px 36px rgba(11, 59, 58, .18);
+    }
+    .grand-total strong { font-size: 28px; letter-spacing: -.04em; }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .pill-list li {
+      border: 1px solid rgba(15, 118, 110, .22);
+      background: rgba(143, 220, 194, .14);
+      color: var(--deep);
+      border-radius: 999px;
+      padding: 10px 13px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .clinical-note h3 { margin: 0 0 8px; }
+    .clinical-note p, .clinical-note li { color: var(--muted); }
+    .clinical-note ul { margin: 10px 0 0; padding-left: 20px; }
+
+    .disclaimer {
+      margin-top: 26px;
+      border-radius: 22px;
+      padding: 18px 20px;
+      background: rgba(216, 180, 106, .14);
+      border: 1px solid rgba(216, 180, 106, .32);
+      color: #695126;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+    .button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      min-height: 46px;
+      padding: 0 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: white;
+      background: var(--deep);
+      font-weight: 760;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .button.secondary { color: var(--deep); background: rgba(15, 118, 110, .10); border: 1px solid rgba(15, 118, 110, .18); }
+
+    footer {
+      display: grid;
+      grid-template-columns: 1.3fr .7fr;
+      gap: 16px;
+      margin-top: 34px;
+    }
+
+    .footer-card strong { display: block; margin-bottom: 6px; }
+    .footer-card p { margin: 0; color: var(--muted); }
+
+    @media (max-width: 840px) {
+      .hero-grid, .two-col, footer { grid-template-columns: 1fr; }
+      .meta-grid { grid-template-columns: 1fr 1fr; }
+      .line-item { grid-template-columns: 1fr; }
+      .price { text-align: left; }
+      .brand-row { align-items: flex-start; flex-direction: column; }
+    }
+
+    @media (max-width: 560px) {
+      .page { width: min(100% - 18px, 1120px); margin-top: 9px; }
+      header, main { padding-left: 20px; padding-right: 20px; }
+      .meta-grid { grid-template-columns: 1fr; }
+      .quote-card { border-radius: 26px; }
+    }
+
+    @media print {
+      body { background: white; }
+      .page { width: 100%; margin: 0; }
+      .quote-card { box-shadow: none; border-radius: 0; }
+      .actions { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <article class="quote-card" aria-label="Cotización personalizada Healen">
+      <header>
+        <div class="brand-row">
+          <div class="brand">
+            <div class="logo-shell"><img src="/healen-logo.png" alt="Logo Healen" /></div>
+            <div>
+              <div class="brand-title">Healen</div>
+              <div class="brand-subtitle">Medicina funcional · regenerativa · premium domiciliaria</div>
+            </div>
+          </div>
+          <div class="badge">Cotización de prueba</div>
+        </div>
+
+        <div class="hero-grid">
+          <div>
+            <p class="eyebrow">Propuesta personalizada</p>
+            <h1>Valentina Valdez</h1>
+            <p class="intro">Programa premium de evaluación regenerativa a domicilio, diseñado como experiencia inicial para mapear biomarcadores, prioridades clínicas y ruta de intervención basada en evidencia.</p>
+          </div>
+          <aside class="summary-box" aria-label="Resumen de cotización">
+            <div class="label">Inversión estimada</div>
+            <div class="value">Chequeo regenerativo premium</div>
+            <div class="big">$2.980.000 COP</div>
+            <div class="label" style="margin-top: 12px;">Vigencia: 7 días</div>
+          </aside>
+        </div>
+      </header>
+
+      <main>
+        <section class="section">
+          <div class="meta-grid">
+            <div class="meta"><span>Paciente</span><strong>Valentina Valdez</strong></div>
+            <div class="meta"><span>Cotización</span><strong>HEA-TEST-001</strong></div>
+            <div class="meta"><span>Fecha</span><strong>7 julio 2026</strong></div>
+            <div class="meta"><span>Modalidad</span><strong>Domicilio premium</strong></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2>Alcance incluido</h2>
+              <p class="section-note">Cotización demostrativa para validar formato, branding y experiencia de entrega digital.</p>
+            </div>
+          </div>
+          <div class="items">
+            <div class="line-item">
+              <div>
+                <small>01 · Evaluación clínica</small>
+                <h3>Consulta médica funcional/regenerativa inicial</h3>
+                <p>Anamnesis dirigida, antecedentes, objetivos, síntomas, medicamentos/suplementos y priorización clínica.</p>
+              </div>
+              <div class="price">$480.000</div>
+            </div>
+            <div class="line-item">
+              <div>
+                <small>02 · Toma domiciliaria</small>
+                <h3>Servicio premium de laboratorio en casa</h3>
+                <p>Coordinación, toma de muestras, cadena logística y acompañamiento operativo Healen.</p>
+              </div>
+              <div class="price">$350.000</div>
+            </div>
+            <div class="line-item">
+              <div>
+                <small>03 · Panel avanzado</small>
+                <h3>Biomarcadores metabólicos, inflamatorios y hormonales</h3>
+                <p>Perfil base avanzado para riesgo cardiometabólico, inflamación, hígado, riñón, tiroides y estado nutricional.</p>
+              </div>
+              <div class="price">$1.650.000</div>
+            </div>
+            <div class="line-item">
+              <div>
+                <small>04 · Informe</small>
+                <h3>Reporte médico interpretativo + ruta inicial</h3>
+                <p>Lectura integrada de resultados, prioridades clínicas, recomendaciones iniciales y próximos pasos.</p>
+              </div>
+              <div class="price">$500.000</div>
+            </div>
+          </div>
+
+          <div class="totals" aria-label="Totales">
+            <div class="total-row"><span>Subtotal</span><strong>$2.980.000 COP</strong></div>
+            <div class="total-row"><span>Descuento prueba</span><strong>$0 COP</strong></div>
+            <div class="grand-total"><span>Total estimado</span><strong>$2.980.000</strong></div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2>Componentes clínicos sugeridos</h2>
+              <p class="section-note">Estos componentes se ajustan después de la entrevista médica y disponibilidad del laboratorio aliado.</p>
+            </div>
+          </div>
+          <ul class="pill-list">
+            <li>Hemograma completo</li>
+            <li>Perfil lipídico avanzado</li>
+            <li>Glucosa, insulina, HOMA-IR</li>
+            <li>HbA1c</li>
+            <li>Función hepática y renal</li>
+            <li>Vitamina D, B12, ferritina</li>
+            <li>TSH, T3 libre, T4 libre</li>
+            <li>PCR ultrasensible</li>
+            <li>Homocisteína</li>
+            <li>Perfil hormonal según indicación</li>
+          </ul>
+        </section>
+
+        <section class="section two-col">
+          <div class="clinical-note">
+            <h3>Proceso de atención</h3>
+            <ul>
+              <li>Confirmación de datos y objetivo de salud.</li>
+              <li>Programación de visita domiciliaria.</li>
+              <li>Toma de muestras y trazabilidad.</li>
+              <li>Entrega de resultados e informe médico.</li>
+              <li>Diseño de plan terapéutico si aplica.</li>
+            </ul>
+          </div>
+          <div class="clinical-note">
+            <h3>Condiciones</h3>
+            <ul>
+              <li>Valores sujetos a confirmación del panel final.</li>
+              <li>No incluye medicamentos, péptidos ni terapias posteriores.</li>
+              <li>Esta cotización es una prueba de formato digital Healen.</li>
+              <li>Pago y agenda se confirman por canal oficial Healen.</li>
+            </ul>
+          </div>
+        </section>
+
+        <div class="disclaimer">
+          <strong>Nota médica:</strong> esta propuesta no reemplaza una consulta médica formal ni constituye prescripción. Todo protocolo se define después de valoración clínica, consentimiento informado y revisión de resultados.
+        </div>
+
+        <div class="actions">
+          <button class="button" onclick="window.print()">Descargar / imprimir PDF</button>
+          <a class="button secondary" href="https://wa.me/573004139697?text=Hola%20Healen%2C%20quiero%20validar%20la%20cotizaci%C3%B3n%20HEA-TEST-001" target="_blank" rel="noreferrer">Contactar a Healen</a>
+        </div>
+
+        <footer>
+          <div class="footer-card">
+            <strong>Healen · Medicina personalizada basada en datos</strong>
+            <p>Evaluación funcional, medicina regenerativa, biomarcadores avanzados y seguimiento longitudinal.</p>
+          </div>
+          <div class="footer-card">
+            <strong>Contacto</strong>
+            <p>WhatsApp: 300 413 9697<br />Medellín, Colombia</p>
+          </div>
+        </footer>
+      </main>
+    </article>
+  </div>
+</body>
+</html>
