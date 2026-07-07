@@ -1158,8 +1158,8 @@ type AgendaEvent = {
 
 const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
   {
-    id: 'agenda-guillermo-leon-quintero-2027-07-06',
-    date: '2027-07-06',
+    id: 'agenda-guillermo-leon-quintero-2026-07-07',
+    date: '2026-07-07',
     time: '09:00',
     title: 'Consulta de seguimiento',
     detail: 'Seguimiento de tratamiento de péptidos, revisión de exámenes y sueroterapia.',
@@ -1167,7 +1167,7 @@ const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
     patientName: 'Guillermo Leon Quintero',
     fullName: 'Guillermo Leon Quintero Ocampo',
     documentId: '70698732',
-    agendaLabel: 'Martes 6 de julio',
+    agendaLabel: 'Martes 7 de julio',
     services: [
       'Consulta por seguimiento de tratamiento de péptidos',
       'Revisión de exámenes',
