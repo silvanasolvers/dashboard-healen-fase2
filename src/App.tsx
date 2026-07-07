@@ -1175,6 +1175,18 @@ const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
     ],
     tone: 'brand',
   },
+  {
+    id: 'agenda-maria-bula-2026-07-08',
+    date: '2026-07-08',
+    time: '09:00',
+    title: 'Entrega de péptidos',
+    detail: 'Visita en casa para entrega de péptidos.',
+    kind: 'consulta',
+    patientName: 'Maria Bula',
+    agendaLabel: 'Miércoles 8 de julio',
+    services: ['Entrega de péptidos', 'Visita en casa'],
+    tone: 'brand',
+  },
 ];
 
 const WEEKDAY_INDEX: Record<string, number> = {
