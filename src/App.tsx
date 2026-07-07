@@ -166,6 +166,7 @@ const REDUCED =
 
 const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> = [
   { id: 'inicio', label: 'Inicio', short: 'Hoy', icon: LayoutDashboard },
+  { id: 'agenda', label: 'Agenda', short: 'Agenda', icon: CalendarClock },
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
   { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
   { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
@@ -174,6 +175,7 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
 
 const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
   inicio: { eyebrow: 'Healen OS', title: 'Hoy en el centro' },
+  agenda: { eyebrow: 'Operación clínica', title: 'Agenda' },
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
   inventario: { eyebrow: 'Insumos', title: 'Inventario' },
   contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
@@ -748,6 +750,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 onOpenPatient={setDetailPatient}
               />
             )}
+            {view === 'agenda' && <AgendaView patients={patients} onOpenPatient={setDetailPatient} />}
             {view === 'pacientes' && (
               <PacientesView
                 patients={filteredPatients}
@@ -1131,6 +1134,283 @@ function Priority({
       </span>
       <ChevronRight className="chev" size={18} />
     </button>
+  );
+}
+
+/* ============================================================
+   AGENDA
+   ============================================================ */
+type AgendaEvent = {
+  id: string;
+  date: string;
+  time: string;
+  title: string;
+  detail: string;
+  kind: 'suero' | 'control' | 'cierre' | 'peptido' | 'consulta';
+  patient?: Patient;
+  patientName: string;
+  documentId?: string;
+  fullName?: string;
+  agendaLabel?: string;
+  services?: string[];
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+};
+
+const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
+  {
+    id: 'agenda-guillermo-leon-quintero-2027-07-06',
+    date: '2027-07-06',
+    time: '09:00',
+    title: 'Consulta de seguimiento',
+    detail: 'Seguimiento de tratamiento de péptidos, revisión de exámenes y sueroterapia.',
+    kind: 'consulta',
+    patientName: 'Guillermo Leon Quintero',
+    fullName: 'Guillermo Leon Quintero Ocampo',
+    documentId: '70698732',
+    agendaLabel: 'Martes 6 de julio',
+    services: [
+      'Consulta por seguimiento de tratamiento de péptidos',
+      'Revisión de exámenes',
+      'Sueroterapia de ácido fólico y vitamina B12',
+    ],
+    tone: 'brand',
+  },
+];
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  domingo: 0,
+  lunes: 1,
+  martes: 2,
+  miercoles: 3,
+  miércoles: 3,
+  jueves: 4,
+  viernes: 5,
+  sabado: 6,
+  sábado: 6,
+};
+
+function isoLocal(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function addDaysLocal(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function agendaDayLabel(value: string) {
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function agendaKindLabel(kind: AgendaEvent['kind']) {
+  const labels: Record<AgendaEvent['kind'], string> = {
+    suero: 'suero',
+    control: 'control',
+    cierre: 'cierre',
+    peptido: 'péptido',
+    consulta: 'consulta',
+  };
+  return labels[kind];
+}
+
+function buildAgendaEvents(patients: Patient[], horizon = 14): AgendaEvent[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = isoLocal(today);
+  const end = addDaysLocal(today, horizon);
+  const events: AgendaEvent[] = [];
+
+  patients
+    .filter((p) => p.status !== 'Finalizado')
+    .forEach((patient, idx) => {
+      if (patient.weeklySerum) {
+        const normalized = patient.serumDay.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const weekday = WEEKDAY_INDEX[normalized];
+        if (weekday !== undefined) {
+          for (let offset = 0; offset <= horizon; offset += 1) {
+            const date = addDaysLocal(today, offset);
+            if (date.getDay() !== weekday) continue;
+            const iso = isoLocal(date);
+            events.push({
+              id: `suero-${patient.id}-${iso}`,
+              date: iso,
+              time: idx % 2 === 0 ? '09:00' : '11:30',
+              title: 'Suero semanal',
+              detail: `${patient.plan} · preparar insumos y consentimiento`,
+              kind: 'suero',
+              patient,
+              patientName: patient.name,
+              tone: 'brand',
+            });
+          }
+        }
+      }
+
+      const closeDate = new Date(`${patient.endDate}T00:00:00`);
+      if (!Number.isNaN(closeDate.getTime()) && closeDate >= today && closeDate <= end) {
+        events.push({
+          id: `cierre-${patient.id}`,
+          date: patient.endDate,
+          time: '16:00',
+          title: 'Cierre de tratamiento',
+          detail: 'Revisar evolución, recompra y próximos pasos',
+          kind: 'cierre',
+          patient,
+          patientName: patient.name,
+          tone: patient.daysLeft <= 5 ? 'danger' : 'warn',
+        });
+      }
+
+      patient.peptides.forEach((line, lineIdx) => {
+        if (line.endsInDays < 0 || line.endsInDays > horizon || line.status === 'Finalizado') return;
+        const date = addDaysLocal(today, line.endsInDays);
+        const iso = isoLocal(date);
+        events.push({
+          id: `peptido-${patient.id}-${lineIdx}-${iso}`,
+          date: iso,
+          time: '14:00',
+          title: `${line.name} por terminar`,
+          detail: `${line.dose}${line.route ? ` · ${line.route}` : ''}`,
+          kind: 'peptido',
+          patient,
+          patientName: patient.name,
+          tone: line.endsInDays <= 5 ? 'danger' : 'warn',
+        });
+      });
+
+      if (patient.daysLeft <= 7 && patient.endDate >= todayIso) {
+        const followDate = isoLocal(addDaysLocal(today, Math.max(0, Math.min(patient.daysLeft - 2, horizon))));
+        events.push({
+          id: `control-${patient.id}`,
+          date: followDate,
+          time: '10:30',
+          title: 'Control y seguimiento',
+          detail: 'Llamar antes del cierre para medir adherencia y síntomas',
+          kind: 'control',
+          patient,
+          patientName: patient.name,
+          tone: patient.daysLeft <= 3 ? 'danger' : 'warn',
+        });
+      }
+    });
+
+  return events.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+}
+
+function AgendaView({ patients, onOpenPatient }: { patients: Patient[]; onOpenPatient: (p: Patient) => void }) {
+  const today = isoLocal(new Date());
+  const generatedEvents = buildAgendaEvents(patients);
+  const events = [...MANUAL_AGENDA_EVENTS, ...generatedEvents].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+  );
+  const defaultDate = MANUAL_AGENDA_EVENTS[0]?.date ?? today;
+  const [selectedDate, setSelectedDate] = useState(defaultDate);
+  const todayEvents = events.filter((e) => e.date === today);
+  const selectedEvents = events.filter((e) => e.date === selectedDate);
+  const urgent = events.filter((e) => e.tone === 'danger').length;
+  const days = Array.from(new Set([today, ...events.map((e) => e.date)])).sort();
+
+  return (
+    <div className="view-wrap agenda" data-reveal>
+      <section className="agenda-hero" data-reveal>
+        <div>
+          <span className="eyebrow">Agenda inteligente</span>
+          <h1>Calendario clínico sugerido por tratamientos activos.</h1>
+          <p>
+            Centraliza sueros, controles, cierres de tratamiento y péptidos por terminar para que el equipo sepa a quién atender,
+            preparar o llamar.
+          </p>
+        </div>
+        <div className="agenda-hero__stats">
+          <article>
+            <strong>{todayEvents.length}</strong>
+            <span>eventos hoy</span>
+          </article>
+          <article>
+            <strong>{events.length}</strong>
+            <span>eventos en agenda</span>
+          </article>
+          <article>
+            <strong>{urgent}</strong>
+            <span>urgentes</span>
+          </article>
+        </div>
+      </section>
+
+      <section className="agenda-layout">
+        <article className="panel agenda-calendar" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Filtro</span>
+              <h2>Día de trabajo</h2>
+            </div>
+            <DatePicker value={selectedDate} onChange={setSelectedDate} placeholder="Seleccionar día" />
+          </div>
+          <div className="agenda-days">
+            {[selectedDate, ...days.filter((d) => d !== selectedDate)].slice(0, 10).map((date) => {
+              const count = events.filter((e) => e.date === date).length;
+              const manual = MANUAL_AGENDA_EVENTS.find((e) => e.date === date);
+              return (
+                <button key={date} className={`agenda-day${selectedDate === date ? ' is-active' : ''}`} onClick={() => setSelectedDate(date)}>
+                  <span>{date === today ? 'Hoy' : manual?.agendaLabel ?? agendaDayLabel(date)}</span>
+                  <strong>{count}</strong>
+                </button>
+              );
+            })}
+          </div>
+        </article>
+
+        <article className="panel agenda-list" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">{agendaDayLabel(selectedDate)}</span>
+              <h2>Programación</h2>
+            </div>
+            <span className="count-chip">{selectedEvents.length}</span>
+          </div>
+          {selectedEvents.length ? (
+            selectedEvents.map((event) => (
+              <button
+                key={event.id}
+                className={`agenda-card agenda-card--${event.tone}${event.patient ? '' : ' agenda-card--manual'}`}
+                onClick={() => {
+                  if (event.patient) onOpenPatient(event.patient);
+                }}
+              >
+                <span className="agenda-card__time">{event.time}</span>
+                <span className="agenda-card__body">
+                  <strong>{event.title}</strong>
+                  <span>{event.patientName} · {event.detail}</span>
+                  {event.fullName && <em>{event.fullName} · CC {event.documentId}</em>}
+                  {event.services && (
+                    <ul className="agenda-card__services">
+                      {event.services.map((service) => (
+                        <li key={service}>{service}</li>
+                      ))}
+                    </ul>
+                  )}
+                </span>
+                <Badge label={agendaKindLabel(event.kind)} tone={event.tone === 'danger' ? 'danger' : event.tone === 'warn' ? 'warning' : 'success'} />
+                {event.patient && <ChevronRight size={17} />}
+              </button>
+            ))
+          ) : (
+            <div className="agenda-empty">
+              <CalendarClock size={24} />
+              <strong>Sin eventos sugeridos</strong>
+              <span>Ese día no tiene sueros, controles ni cierres derivados de los tratamientos activos.</span>
+            </div>
+          )}
+        </article>
+      </section>
+    </div>
   );
 }
 

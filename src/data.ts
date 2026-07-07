@@ -2,7 +2,7 @@
 // Centro de medicina regenerativa: pacientes con planes de péptidos/sueros,
 // inventario clínico, y caja separada empresa vs. socio.
 
-export type View = 'inicio' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
+export type View = 'inicio' | 'agenda' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
 export type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
 export type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 export type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
