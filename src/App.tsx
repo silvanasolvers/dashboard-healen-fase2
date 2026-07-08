@@ -3707,6 +3707,29 @@ function TreatmentStatus({ patient, counts, signal }: { patient: Patient; counts
   );
 }
 
+type InflammationStage = { grade: string; phase: string; tone: 'danger' | 'warn' | 'ok' };
+
+function patientInflammationStage(patient: Patient, dossier: PatientDossier | null): InflammationStage | null {
+  const searchable = [
+    patient.plan,
+    dossier?.summary?.notes,
+    ...(dossier?.notes ?? []).map((n) => n.body),
+    ...(dossier?.milestones ?? []).flatMap((m) => [m.phase, m.title, m.description ?? '']),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const gradeMatch = searchable.match(/grado\s*(\d+)\s*(?:de\s*)?inflamaci[oó]n/i);
+  if (!gradeMatch) return null;
+
+  const grade = Number(gradeMatch[1]);
+  const tone: InflammationStage['tone'] = grade >= 2 ? 'danger' : grade === 1 ? 'warn' : 'ok';
+  const phaseMatch = searchable.match(/fase\s+cl[ií]nica\s*:\s*([^\.\n]+)/i);
+  const phase = phaseMatch?.[1]?.trim() || (patient.plan.toLowerCase().includes('fase 1') ? 'Ciclo 1 de inicio' : patient.plan);
+
+  return { grade: `Grado ${grade} de inflamación`, phase, tone };
+}
+
 /** Página completa de paciente = ficha clínica viva con pestañas
  *  (Resumen · Notas · Historial · Dinero). Carga el dossier al abrir. */
 function PatientDetail({
@@ -3753,6 +3776,7 @@ function PatientDetail({
   }, [onBack, reload]);
 
   const steps = buildNextSteps(patient, dossier);
+  const inflammationStage = patientInflammationStage(patient, dossier);
   function act(step: NextStep) {
     if (step.action === 'recetar' && onPrescribe) onPrescribe(patient);
     else go(step.target);
@@ -3790,6 +3814,15 @@ function PatientDetail({
           <p className="detail__plan">
             {patient.plan} · <strong>{formatCurrency(patient.saleValue)}</strong>
           </p>
+          {inflammationStage && (
+            <div className={`detail__phase-alert detail__phase-alert--${inflammationStage.tone}`}>
+              <AlertTriangle size={16} />
+              <div>
+                <strong>{inflammationStage.grade}</strong>
+                <span>{inflammationStage.phase}</span>
+              </div>
+            </div>
+          )}
         </div>
         <TreatmentStatus patient={patient} counts={counts} signal={signal} />
       </header>

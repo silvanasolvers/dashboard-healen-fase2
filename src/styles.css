@@ -997,6 +997,34 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 }
 .detail__plan { margin-top: 12px; font-size: 0.92rem; color: var(--ink-soft); }
 .detail__plan strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.detail__phase-alert {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--danger) 26%, transparent);
+  background: linear-gradient(135deg, color-mix(in oklab, var(--danger-soft) 88%, white), rgba(255,255,255,0.72));
+  color: var(--danger);
+  box-shadow: 0 12px 30px color-mix(in oklab, var(--danger) 12%, transparent);
+}
+.detail__phase-alert svg { flex-shrink: 0; }
+.detail__phase-alert div { display: flex; flex-direction: column; gap: 1px; }
+.detail__phase-alert strong { font-size: 0.9rem; letter-spacing: -0.01em; }
+.detail__phase-alert span { font-size: 0.76rem; font-weight: 700; color: color-mix(in oklab, var(--danger) 78%, var(--ink)); }
+.detail__phase-alert--warn {
+  border-color: color-mix(in oklab, var(--warn) 30%, transparent);
+  background: linear-gradient(135deg, var(--warn-soft), rgba(255,255,255,0.72));
+  color: oklch(0.52 0.13 64);
+}
+.detail__phase-alert--warn span { color: oklch(0.42 0.12 64); }
+.detail__phase-alert--ok {
+  border-color: color-mix(in oklab, var(--ok) 30%, transparent);
+  background: linear-gradient(135deg, var(--ok-soft), rgba(255,255,255,0.72));
+  color: oklch(0.46 0.14 158);
+}
+.detail__phase-alert--ok span { color: oklch(0.38 0.13 158); }
 .detail__ringwrap { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
 .detail__ringcap {
   font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;
