@@ -1156,35 +1156,19 @@ type AgendaEvent = {
   tone: 'ok' | 'warn' | 'danger' | 'brand';
 };
 
+const MANUAL_ONLY_AGENDA_DATES = new Set(['2026-07-07']);
+
 const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
   {
-    id: 'agenda-guillermo-leon-quintero-2026-07-07',
-    date: '2026-07-07',
-    time: '09:00',
-    title: 'Consulta de seguimiento',
-    detail: 'Seguimiento de tratamiento de péptidos, revisión de exámenes y sueroterapia.',
-    kind: 'consulta',
-    patientName: 'Guillermo Leon Quintero',
-    fullName: 'Guillermo Leon Quintero Ocampo',
-    documentId: '70698732',
-    agendaLabel: 'Martes 7 de julio',
-    services: [
-      'Consulta por seguimiento de tratamiento de péptidos',
-      'Revisión de exámenes',
-      'Sueroterapia de ácido fólico y vitamina B12',
-    ],
-    tone: 'brand',
-  },
-  {
-    id: 'agenda-maria-luisa-2026-07-07',
+    id: 'agenda-maria-paula-2026-07-07',
     date: '2026-07-07',
     time: '09:00',
     title: 'Entrega de péptidos',
-    detail: 'Visita en casa para entrega de péptidos.',
+    detail: 'Entrega de péptidos realizada.',
     kind: 'consulta',
-    patientName: 'Maria Luisa',
+    patientName: 'Maria Paula',
     agendaLabel: 'Martes 7 de julio',
-    services: ['Entrega de péptidos', 'Visita en casa'],
+    services: ['Entrega de péptidos'],
     tone: 'brand',
   },
 ];
@@ -1318,7 +1302,7 @@ function buildAgendaEvents(patients: Patient[], horizon = 14): AgendaEvent[] {
 
 function AgendaView({ patients, onOpenPatient }: { patients: Patient[]; onOpenPatient: (p: Patient) => void }) {
   const today = isoLocal(new Date());
-  const generatedEvents = buildAgendaEvents(patients);
+  const generatedEvents = buildAgendaEvents(patients).filter((event) => !MANUAL_ONLY_AGENDA_DATES.has(event.date));
   const events = [...MANUAL_AGENDA_EVENTS, ...generatedEvents].sort(
     (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
   );
