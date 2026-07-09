@@ -1171,6 +1171,18 @@ const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
     services: ['Entrega de péptidos'],
     tone: 'brand',
   },
+  {
+    id: 'agenda-miguel-23-2026-07-10',
+    date: '2026-07-10',
+    time: '11:00',
+    title: 'Entrega de péptidos',
+    detail: 'Entrega de péptidos programada.',
+    kind: 'consulta',
+    patientName: 'Miguel 23',
+    agendaLabel: 'Viernes 10 de julio',
+    services: ['Entrega de péptidos'],
+    tone: 'brand',
+  },
 ];
 
 const WEEKDAY_INDEX: Record<string, number> = {
