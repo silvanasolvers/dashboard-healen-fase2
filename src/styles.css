@@ -1879,6 +1879,14 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .agenda-hero__stats strong { font-size: 1.75rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .agenda-hero__stats span { color: oklch(0.96 0.02 300 / 0.88); font-size: 0.82rem; font-weight: 600; text-align: right; }
 .agenda-layout { display: grid; grid-template-columns: 0.82fr 1.18fr; gap: clamp(18px, 2.5vw, 26px); align-items: start; }
+.agenda-calendar {
+  position: relative;
+  z-index: 45;
+  overflow: visible;
+}
+.agenda-calendar .dp,
+.agenda-calendar .date-picker { position: relative; z-index: 46; }
+.agenda-calendar .dp__pop { z-index: 90; }
 .agenda-calendar .date-picker { min-width: 190px; }
 .agenda-days { display: flex; flex-direction: column; gap: 8px; }
 .agenda-day {
@@ -1908,7 +1916,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
-.agenda-list { min-width: 0; }
+.agenda-list { min-width: 0; position: relative; z-index: 1; }
 .agenda-card {
   width: 100%;
   display: grid;
