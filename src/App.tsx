@@ -121,6 +121,7 @@ import {
 import {
   addMilestone,
   addNote,
+  AppointmentRow,
   CatalogItem,
   createPatient,
   deleteMilestone,
@@ -521,6 +522,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [inventoryMovements, setInventoryMovements] = useState<MovementRow[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [finance, setFinance] = useState<FinanceMovement[]>([]);
 
   const [patientSearch, setPatientSearch] = useState('');
@@ -536,6 +538,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
       setInventory(data.inventory);
       setFinance(data.finance);
       setInventoryMovements(data.movements);
+      setAppointments(data.appointments);
       setDataVersion((v) => v + 1);
       setLoadError(false);
     } catch {
@@ -602,7 +605,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const finishingTreatments = patients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
 
   const filteredPatients = patients.filter((p) =>
-    `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
+    `${p.id} ${p.name} ${p.documentId ?? ''} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
   );
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
@@ -750,7 +753,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 onOpenPatient={setDetailPatient}
               />
             )}
-            {view === 'agenda' && <AgendaView patients={patients} onOpenPatient={setDetailPatient} />}
+            {view === 'agenda' && <AgendaView patients={patients} appointments={appointments} onOpenPatient={setDetailPatient} />}
             {view === 'pacientes' && (
               <PacientesView
                 patients={filteredPatients}
@@ -1156,35 +1159,6 @@ type AgendaEvent = {
   tone: 'ok' | 'warn' | 'danger' | 'brand';
 };
 
-const MANUAL_ONLY_AGENDA_DATES = new Set(['2026-07-07']);
-
-const MANUAL_AGENDA_EVENTS: AgendaEvent[] = [
-  {
-    id: 'agenda-maria-paula-2026-07-07',
-    date: '2026-07-07',
-    time: '09:00',
-    title: 'Entrega de péptidos',
-    detail: 'Entrega de péptidos realizada.',
-    kind: 'consulta',
-    patientName: 'Maria Paula',
-    agendaLabel: 'Martes 7 de julio',
-    services: ['Entrega de péptidos'],
-    tone: 'brand',
-  },
-  {
-    id: 'agenda-miguel-23-2026-07-10',
-    date: '2026-07-10',
-    time: '11:00',
-    title: 'Entrega de péptidos',
-    detail: 'Entrega de péptidos programada.',
-    kind: 'consulta',
-    patientName: 'Miguel 23',
-    agendaLabel: 'Viernes 10 de julio',
-    services: ['Entrega de péptidos'],
-    tone: 'brand',
-  },
-];
-
 const WEEKDAY_INDEX: Record<string, number> = {
   domingo: 0,
   lunes: 1,
@@ -1312,13 +1286,34 @@ function buildAgendaEvents(patients: Patient[], horizon = 14): AgendaEvent[] {
   return events.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
 }
 
-function AgendaView({ patients, onOpenPatient }: { patients: Patient[]; onOpenPatient: (p: Patient) => void }) {
+function appointmentToAgendaEvent(row: AppointmentRow, patients: Patient[]): AgendaEvent {
+  const patient = patients.find((p) => p.clientUuid === row.clientUuid || p.id === row.patientId);
+  return {
+    id: row.id,
+    date: row.date,
+    time: row.time || '12:00',
+    title: row.title,
+    detail: row.detail || row.eventType || 'Evento de agenda',
+    kind: row.kind,
+    patient,
+    patientName: row.patientName || patient?.name || 'Evento operativo',
+    fullName: row.documentId ? row.patientName || patient?.name || undefined : undefined,
+    documentId: row.documentId || patient?.documentId || undefined,
+    services: row.title ? [row.title] : undefined,
+    tone: row.tone,
+  };
+}
+
+function AgendaView({ patients, appointments, onOpenPatient }: { patients: Patient[]; appointments: AppointmentRow[]; onOpenPatient: (p: Patient) => void }) {
   const today = isoLocal(new Date());
-  const generatedEvents = buildAgendaEvents(patients).filter((event) => !MANUAL_ONLY_AGENDA_DATES.has(event.date));
-  const events = [...MANUAL_AGENDA_EVENTS, ...generatedEvents].sort(
+  const persistedEvents = appointments.map((row) => appointmentToAgendaEvent(row, patients));
+  const generatedEvents = buildAgendaEvents(patients).filter(
+    (event) => !persistedEvents.some((persisted) => persisted.date === event.date && persisted.patient?.id === event.patient?.id),
+  );
+  const events = [...persistedEvents, ...generatedEvents].sort(
     (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
   );
-  const defaultDate = MANUAL_AGENDA_EVENTS[0]?.date ?? today;
+  const defaultDate = events.find((event) => event.date >= today)?.date ?? events[0]?.date ?? today;
   const [selectedDate, setSelectedDate] = useState(defaultDate);
   const todayEvents = events.filter((e) => e.date === today);
   const selectedEvents = events.filter((e) => e.date === selectedDate);
@@ -1364,7 +1359,7 @@ function AgendaView({ patients, onOpenPatient }: { patients: Patient[]; onOpenPa
           <div className="agenda-days">
             {[selectedDate, ...days.filter((d) => d !== selectedDate)].slice(0, 10).map((date) => {
               const count = events.filter((e) => e.date === date).length;
-              const manual = MANUAL_AGENDA_EVENTS.find((e) => e.date === date);
+              const manual = events.find((e) => e.date === date && e.agendaLabel);
               return (
                 <button key={date} className={`agenda-day${selectedDate === date ? ' is-active' : ''}`} onClick={() => setSelectedDate(date)}>
                   <span>{date === today ? 'Hoy' : manual?.agendaLabel ?? agendaDayLabel(date)}</span>
@@ -1474,7 +1469,7 @@ function PacientesView({
       <div className="toolbar" data-reveal>
         <div className="search">
           <Search size={17} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar paciente, plan o ID" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por ID Healen, nombre, cédula o plan" />
         </div>
         <div className="segmented">
           <button className={`segmented__btn${sub === 'pacientes' ? ' is-active' : ''}`} onClick={() => setSub('pacientes')}>
@@ -1549,7 +1544,7 @@ function PacientesView({
                     <div>
                       <div className="patient-card__name">{p.name}</div>
                       <div className="patient-card__sub">
-                        {p.id} · {p.plan}
+                        {p.id} · {p.documentId ? `CC ${p.documentId} · ` : 'Sin cédula · '}{p.plan}
                       </div>
                     </div>
                     <span className={`tier${p.tier === 'VIP' ? ' tier--vip' : ''}`}>{p.tier}</span>

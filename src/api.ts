@@ -34,11 +34,30 @@ export interface MovementRow {
   reason: string;
 }
 
+export interface AppointmentRow {
+  id: string;
+  date: string;
+  time: string;
+  title: string;
+  detail: string;
+  kind: 'suero' | 'control' | 'cierre' | 'peptido' | 'consulta';
+  patientId?: string | null;
+  clientUuid?: string | null;
+  patientName?: string | null;
+  documentId?: string | null;
+  eventType?: string | null;
+  status?: string | null;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+  sourceOriginalDate?: string | null;
+  sourceCorrectedDate?: string | null;
+}
+
 export interface HealenData {
   patients: Patient[];
   inventory: InventoryItem[];
   finance: FinanceMovement[];
   movements: MovementRow[];
+  appointments: AppointmentRow[];
 }
 
 /** Producto del catálogo de recetas (con defaults inteligentes + stock). */
@@ -102,17 +121,19 @@ function unwrap<T>(res: { data: T | null; error: { message: string } | null }): 
 
 /** Carga todo el estado del dashboard en paralelo. */
 export async function fetchAll(): Promise<HealenData> {
-  const [patients, inventory, finance, movements] = await Promise.all([
+  const [patients, inventory, finance, movements, appointments] = await Promise.all([
     supabase.from('v_dashboard_patients').select('*'),
     supabase.from('v_dashboard_inventory').select('*'),
     supabase.from('v_dashboard_finance').select('*').order('date', { ascending: false }),
     supabase.from('v_dashboard_inventory_movements').select('*').limit(20),
+    supabase.from('v_dashboard_appointments').select('*').order('date', { ascending: true }).order('time', { ascending: true }),
   ]);
   return {
     patients: unwrap<Patient[]>(patients),
     inventory: unwrap<InventoryItem[]>(inventory),
     finance: unwrap<FinanceMovement[]>(finance),
     movements: unwrap<MovementRow[]>(movements),
+    appointments: unwrap<AppointmentRow[]>(appointments),
   };
 }
 

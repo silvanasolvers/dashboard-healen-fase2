@@ -27,6 +27,7 @@ export interface Patient {
   id: string;
   clientUuid?: string;
   treatmentId?: string;
+  documentId?: string | null;
   name: string;
   plan: string;
   saleValue: number;
