@@ -1313,12 +1313,13 @@ function AgendaView({ patients, appointments, onOpenPatient }: { patients: Patie
   const events = [...persistedEvents, ...generatedEvents].sort(
     (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
   );
-  const defaultDate = events.find((event) => event.date >= today)?.date ?? events[0]?.date ?? today;
+  const upcomingEvents = events.filter((event) => event.date >= today);
+  const defaultDate = upcomingEvents.find((event) => event.date === today)?.date ?? upcomingEvents[0]?.date ?? today;
   const [selectedDate, setSelectedDate] = useState(defaultDate);
-  const todayEvents = events.filter((e) => e.date === today);
+  const todayEvents = upcomingEvents.filter((e) => e.date === today);
   const selectedEvents = events.filter((e) => e.date === selectedDate);
-  const urgent = events.filter((e) => e.tone === 'danger').length;
-  const days = Array.from(new Set([today, ...events.map((e) => e.date)])).sort();
+  const urgent = upcomingEvents.filter((e) => e.tone === 'danger').length;
+  const days = Array.from(new Set([today, ...upcomingEvents.map((e) => e.date)])).sort();
 
   return (
     <div className="view-wrap agenda" data-reveal>
@@ -1337,8 +1338,8 @@ function AgendaView({ patients, appointments, onOpenPatient }: { patients: Patie
             <span>eventos hoy</span>
           </article>
           <article>
-            <strong>{events.length}</strong>
-            <span>eventos en agenda</span>
+            <strong>{upcomingEvents.length}</strong>
+            <span>eventos vigentes</span>
           </article>
           <article>
             <strong>{urgent}</strong>
