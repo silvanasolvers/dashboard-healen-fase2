@@ -636,6 +636,89 @@ export interface RevenuePoint {
   payments: number;
 }
 
+export interface RelatedTreatmentItem {
+  id: string;
+  name: string;
+  dose: string | null;
+  route: string | null;
+  schedule: string | null;
+  plannedQuantity: number | null;
+  dispensedQuantity: number | null;
+  startsOn: string | null;
+  endsOn: string | null;
+  status: string | null;
+  unitPrice: number | null;
+  instructions: string | null;
+}
+
+export interface RelatedTreatment {
+  id: string;
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  status: string | null;
+  salePrice: number | null;
+  weeklySerum: boolean | null;
+  serumDay: string | null;
+  notes: string | null;
+  items: RelatedTreatmentItem[];
+}
+
+export interface RelatedPayment {
+  id: string;
+  amount: number;
+  method: string | null;
+  paidAt: string | null;
+  note: string | null;
+}
+
+export interface RelatedSale {
+  id: string;
+  code: string | null;
+  treatmentId: string | null;
+  saleDate: string | null;
+  total: number;
+  subtotal: number | null;
+  cogsTotal: number | null;
+  margin: number | null;
+  dueDate: string | null;
+  status: string | null;
+  notes: string | null;
+  paid: number;
+  balance: number;
+  payments: RelatedPayment[];
+}
+
+export interface RelatedAppointment {
+  id: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  eventType: string | null;
+  status: string | null;
+  service: string | null;
+  notes: string | null;
+  sourceOriginalDate: string | null;
+  sourceCorrectedDate: string | null;
+}
+
+export interface RelatedPerson {
+  id: string;
+  relationshipType: string;
+  notes: string | null;
+  relatedClientId: string;
+  relatedCode: string | null;
+  relatedName: string;
+  direction: string;
+}
+
+export interface PatientRelated {
+  client_id: string;
+  treatments: RelatedTreatment[];
+  sales: RelatedSale[];
+  appointments: RelatedAppointment[];
+  relationships: RelatedPerson[];
+}
+
 export interface PatientSummary {
   client_id: string;
   code: string;
@@ -698,6 +781,7 @@ export interface PatientDossier {
   milestones: PatientMilestone[];
   timeline: TimelineEvent[];
   revenue: RevenuePoint[];
+  related: PatientRelated | null;
 }
 
 export const MILESTONE_CATEGORIES: Array<{ id: PatientMilestoneCategory; label: string; tone: Tone }> = [

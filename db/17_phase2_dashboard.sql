@@ -174,3 +174,130 @@ from finance_entries f
 where coalesce(f.reference_type, 'manual') <> 'sale';
 comment on view v_dashboard_finance is 'Finance movements using real payment dates, explicit receivable rows, and manual cash entries excluding sale-linked duplicates.';
 alter view v_dashboard_finance set (security_invoker = on);
+
+-- ---------- Dossier completo por paciente: relaciones, tratamientos, ventas, pagos y agenda ----------
+drop view if exists v_patient_related;
+create view v_patient_related as
+select
+  c.id as client_id,
+  coalesce(treatments.items, '[]'::jsonb) as treatments,
+  coalesce(sales.items, '[]'::jsonb) as sales,
+  coalesce(appointments.items, '[]'::jsonb) as appointments,
+  coalesce(relationships.items, '[]'::jsonb) as relationships
+from clients c
+left join lateral (
+  select jsonb_agg(jsonb_build_object(
+    'id', t.id,
+    'name', t.name,
+    'startDate', t.start_date,
+    'endDate', t.end_date,
+    'status', t.status,
+    'salePrice', t.sale_price,
+    'weeklySerum', t.weekly_serum,
+    'serumDay', t.serum_day,
+    'notes', t.notes,
+    'items', coalesce(ti.items, '[]'::jsonb)
+  ) order by t.start_date desc nulls last, t.created_at desc) as items
+  from treatments t
+  left join lateral (
+    select jsonb_agg(jsonb_build_object(
+      'id', ti.id,
+      'name', ti.name,
+      'dose', ti.dose,
+      'route', ti.route,
+      'schedule', ti.schedule,
+      'plannedQuantity', ti.planned_quantity,
+      'dispensedQuantity', ti.dispensed_quantity,
+      'startsOn', ti.starts_on,
+      'endsOn', ti.ends_on,
+      'status', ti.status,
+      'unitPrice', ti.unit_price,
+      'instructions', ti.instructions
+    ) order by ti.starts_on nulls last, ti.created_at) as items
+    from treatment_items ti
+    where ti.treatment_id = t.id
+  ) ti on true
+  where t.client_id = c.id
+) treatments on true
+left join lateral (
+  select jsonb_agg(jsonb_build_object(
+    'id', s.id,
+    'code', s.code,
+    'treatmentId', s.treatment_id,
+    'saleDate', s.sale_date,
+    'total', s.total,
+    'subtotal', s.subtotal,
+    'cogsTotal', s.cogs_total,
+    'margin', s.margin,
+    'dueDate', s.due_date,
+    'status', s.status,
+    'notes', s.notes,
+    'paid', coalesce(pay.paid, 0),
+    'balance', greatest(s.total - coalesce(pay.paid, 0), 0),
+    'payments', coalesce(pay.items, '[]'::jsonb)
+  ) order by s.sale_date desc nulls last, s.created_at desc) as items
+  from sales s
+  left join lateral (
+    select sum(p.amount) as paid,
+           jsonb_agg(jsonb_build_object(
+             'id', p.id,
+             'amount', p.amount,
+             'method', p.method,
+             'paidAt', p.paid_at,
+             'note', p.note
+           ) order by p.paid_at) as items
+    from payments p
+    where p.sale_id = s.id
+  ) pay on true
+  where s.client_id = c.id
+) sales on true
+left join lateral (
+  select jsonb_agg(jsonb_build_object(
+    'id', a.id,
+    'startsAt', a.starts_at,
+    'endsAt', a.ends_at,
+    'eventType', a.event_type,
+    'status', a.status,
+    'service', a.service,
+    'notes', a.notes,
+    'sourceOriginalDate', a.source_original_date,
+    'sourceCorrectedDate', a.source_corrected_date
+  ) order by a.starts_at desc nulls last, a.created_at desc) as items
+  from appointments a
+  where a.client_id = c.id
+) appointments on true
+left join lateral (
+  select jsonb_agg(jsonb_build_object(
+    'id', r.id,
+    'relationshipType', r.relationship_type,
+    'notes', r.notes,
+    'relatedClientId', other.id,
+    'relatedCode', other.code,
+    'relatedName', other.full_name,
+    'direction', case when r.client_id = c.id then 'principal' else 'relacionado' end
+  ) order by other.full_name) as items
+  from patient_relationships r
+  join clients other on other.id = case when r.client_id = c.id then r.related_client_id else r.client_id end
+  where r.client_id = c.id or r.related_client_id = c.id
+) relationships on true
+where c.active;
+comment on view v_patient_related is 'Complete patient-related dossier arrays for Phase 2: treatments/items, sales/payments, appointments, and relationships/beneficiaries.';
+alter view v_patient_related set (security_invoker = on);
+
+-- ---------- RLS hardening for Phase 2 additive tables ----------
+alter table if exists appointments enable row level security;
+alter table if exists patient_relationships enable row level security;
+alter table if exists import_batches enable row level security;
+alter table if exists import_source_map enable row level security;
+
+drop policy if exists staff_all on appointments;
+create policy staff_all on appointments for all to authenticated using (is_staff()) with check (is_staff());
+
+drop policy if exists staff_all on patient_relationships;
+create policy staff_all on patient_relationships for all to authenticated using (is_staff()) with check (is_staff());
+
+drop policy if exists staff_all on import_batches;
+create policy staff_all on import_batches for all to authenticated using (is_staff()) with check (is_staff());
+
+drop policy if exists staff_all on import_source_map;
+create policy staff_all on import_source_map for all to authenticated using (is_staff()) with check (is_staff());

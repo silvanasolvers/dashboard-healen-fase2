@@ -3751,7 +3751,7 @@ function PatientDetail({
   go: (v: View) => void;
 }) {
   const ref = useScrollReveal(`${patient.id}-${0}`);
-  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'dinero'>('resumen');
+  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero'>('resumen');
   const [dossier, setDossier] = useState<PatientDossier | null>(null);
   const [loading, setLoading] = useState(true);
   const signal = overallSignal(patient);
@@ -3793,6 +3793,7 @@ function PatientDetail({
     { id: 'resumen' as const, label: 'Resumen', icon: Activity, count: undefined as number | undefined },
     { id: 'notas' as const, label: 'Notas', icon: FileText, count: dossier?.notes.length },
     { id: 'historial' as const, label: 'Historial', icon: ClipboardList, count: dossier?.timeline.length },
+    { id: 'relacionado' as const, label: 'Relacionado', icon: LinkIcon, count: dossier?.related ? dossier.related.treatments.length + dossier.related.sales.length + dossier.related.appointments.length + dossier.related.relationships.length : undefined },
     { id: 'dinero' as const, label: 'Dinero', icon: Wallet, count: undefined },
   ];
 
@@ -3861,6 +3862,7 @@ function PatientDetail({
       )}
       {tab === 'notas' && <NotasPanel patient={patient} dossier={dossier} loading={loading} onChanged={reload} />}
       {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
+      {tab === 'relacionado' && <RelacionadoPanel dossier={dossier} loading={loading} />}
       {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
     </div>
   );
@@ -4581,6 +4583,129 @@ function HistorialPanel({
                 <div>
                   <strong>{item.title}</strong>
                   <p>{item.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ---- Relacionado: tratamientos, ventas, pagos, agenda y beneficiarios importados ---- */
+function RelacionadoPanel({ dossier, loading }: { dossier: PatientDossier | null; loading: boolean }) {
+  const related = dossier?.related;
+  const treatments = related?.treatments ?? [];
+  const sales = related?.sales ?? [];
+  const appointments = related?.appointments ?? [];
+  const relationships = related?.relationships ?? [];
+
+  if (loading) {
+    return (
+      <div className="detail__single">
+        <section className="detail-block" data-reveal>
+          <div className="label"><LinkIcon size={17} /> Información relacionada</div>
+          <p className="muted-line">Cargando relaciones, tratamientos, cartera y agenda…</p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="detail__single">
+      <section className="kpi-grid" data-reveal>
+        <MoneyKpi icon={Syringe} tone="brand" label="Tratamientos" value={treatments.length} money={false} />
+        <MoneyKpi icon={Wallet} tone="ok" label="Ventas" value={sales.length} money={false} />
+        <MoneyKpi icon={CalendarClock} tone="warn" label="Agenda" value={appointments.length} money={false} />
+        <MoneyKpi icon={Users} tone="brand" label="Relaciones" value={relationships.length} money={false} />
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Syringe size={17} /> Tratamientos e insumos</div>
+        {treatments.length === 0 ? <p className="muted-line">Sin tratamientos asociados.</p> : (
+          <div className="note-list">
+            {treatments.map((t) => (
+              <article key={t.id} className="note note--success">
+                <span className="note__icon"><Syringe size={16} /></span>
+                <div className="note__body">
+                  <div className="note__top">
+                    <span className="note__kind note__kind--success">{t.status ?? 'tratamiento'}</span>
+                    <span className="note__meta">{t.startDate ? formatDate(t.startDate) : 'Sin inicio'} → {t.endDate ? formatDate(t.endDate) : 'Sin cierre'}</span>
+                  </div>
+                  <strong>{t.name}</strong>
+                  <p>{formatCurrency(t.salePrice ?? 0)}{t.weeklySerum ? ` · suero ${t.serumDay ?? ''}` : ''}</p>
+                  {t.notes && <p>{t.notes}</p>}
+                  {t.items.length > 0 && (
+                    <ul className="agenda-card__services">
+                      {t.items.map((item) => (
+                        <li key={item.id}>{item.name}{item.dose ? ` · ${item.dose}` : ''}{item.route ? ` · ${item.route}` : ''}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Wallet size={17} /> Ventas, pagos y cartera</div>
+        {sales.length === 0 ? <p className="muted-line">Sin ventas asociadas.</p> : (
+          <div className="note-list">
+            {sales.map((s) => (
+              <article key={s.id} className={`note note--${s.balance > 0 ? 'warning' : 'success'}`}>
+                <span className="note__icon"><Wallet size={16} /></span>
+                <div className="note__body">
+                  <div className="note__top">
+                    <span className={`note__kind note__kind--${s.balance > 0 ? 'warning' : 'success'}`}>{s.status ?? 'venta'}</span>
+                    <span className="note__meta">{s.saleDate ? formatDate(s.saleDate) : 'Sin fecha'} · {s.code ?? 'sin código'}</span>
+                  </div>
+                  <strong>{formatCurrency(s.total)}</strong>
+                  <p>Abonado {formatCurrency(s.paid)} · Saldo {formatCurrency(s.balance)}</p>
+                  {s.notes && <p>{s.notes}</p>}
+                  {s.payments.length > 0 && (
+                    <ul className="agenda-card__services">
+                      {s.payments.map((p) => (
+                        <li key={p.id}>{formatCurrency(p.amount)} · {p.method ?? 'método no registrado'} · {p.paidAt ? formatDate(p.paidAt.slice(0, 10)) : 'sin fecha'}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><CalendarClock size={17} /> Agenda importada</div>
+        {appointments.length === 0 ? <p className="muted-line">Sin agenda asociada.</p> : (
+          <div className="timeline">
+            {appointments.map((a) => (
+              <div className="timeline__item timeline__item--neutral" key={a.id}>
+                <span>{a.startsAt ? formatDate(a.startsAt.slice(0, 10)) : 'Sin fecha'}</span>
+                <div>
+                  <strong>{a.service || a.eventType || 'Evento'}</strong>
+                  <p>{a.notes || a.status || 'Sin nota'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Users size={17} /> Beneficiarios y relaciones</div>
+        {relationships.length === 0 ? <p className="muted-line">Sin relaciones asociadas.</p> : (
+          <div className="flag-list">
+            {relationships.map((r) => (
+              <div key={r.id} className="flag flag--neutral">
+                <Users size={16} />
+                <div>
+                  <strong>{r.relatedCode ? `${r.relatedCode} · ` : ''}{r.relatedName}</strong>
+                  <p>{r.relationshipType}{r.notes ? ` · ${r.notes}` : ''}</p>
                 </div>
               </div>
             ))}

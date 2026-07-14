@@ -14,6 +14,7 @@ import type {
   PatientDossier,
   PatientMilestone,
   PatientMilestoneCategory,
+  PatientRelated,
   PatientSummary,
   Payee,
   Plan,
@@ -166,7 +167,7 @@ export async function prescribeCheckout(p: PrescribePayload): Promise<PrescribeR
 
 // ---------- Historia clínica del paciente (carga perezosa al abrir la ficha) ----------
 export async function fetchDossier(clientUuid: string): Promise<PatientDossier> {
-  const [summary, notes, milestones, timeline, revenue] = await Promise.all([
+  const [summary, notes, milestones, timeline, revenue, related] = await Promise.all([
     supabase.from('v_patient_summary').select('*').eq('client_id', clientUuid).maybeSingle(),
     supabase.from('v_patient_notes').select('*').eq('client_id', clientUuid),
     supabase.from('v_patient_milestones').select('*').eq('clientId', clientUuid),
@@ -177,12 +178,14 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
       .order('ts', { ascending: false })
       .limit(80),
     supabase.from('v_patient_revenue').select('*').eq('client_id', clientUuid).order('month', { ascending: true }),
+    supabase.from('v_patient_related').select('*').eq('client_id', clientUuid).maybeSingle(),
   ]);
   if (summary.error) throw new Error(summary.error.message);
   if (notes.error) throw new Error(notes.error.message);
   if (milestones.error) throw new Error(milestones.error.message);
   if (timeline.error) throw new Error(timeline.error.message);
   if (revenue.error) throw new Error(revenue.error.message);
+  if (related.error) throw new Error(related.error.message);
 
   const noteRows = (notes.data ?? []) as ClinicalNote[];
   noteRows.sort(
@@ -195,6 +198,7 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
     milestones: (milestones.data ?? []) as PatientMilestone[],
     timeline: (timeline.data ?? []) as TimelineEvent[],
     revenue: (revenue.data ?? []) as RevenuePoint[],
+    related: (related.data ?? null) as PatientRelated | null,
   };
 }
 
