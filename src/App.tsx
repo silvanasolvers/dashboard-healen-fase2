@@ -175,8 +175,18 @@ const PAY_METHODS: Array<{ id: string; label: string }> = [
 const REDUCED =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+const HOME_PEPTIDE_PATIENT_IDS = new Set([
+  'HLN-006', // Maria Luisa Bula
+  'HLN-007', // Miguel Ángel González Delgado
+  'HLN-008', // Olga Liliana Gaona Rangel
+  'HLN-018', // Alejandra Saldarriaga / Tata
+  'HLN-038', // Carolina Huertas
+  'HLN-079', // Flavio Miranda
+  'HLN-188', // Gabriel Piedrahita Borrero
+]);
+
 const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> = [
-  { id: 'inicio', label: 'Inicio', short: 'Hoy', icon: LayoutDashboard },
+  { id: 'inicio', label: 'Inicio', short: 'Péptidos', icon: LayoutDashboard },
   { id: 'crm', label: 'CRM', short: 'CRM', icon: MessageCircle },
   { id: 'agenda', label: 'Agenda', short: 'Agenda', icon: CalendarClock },
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
@@ -186,7 +196,7 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
 ];
 
 const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
-  inicio: { eyebrow: 'Healen OS', title: 'Hoy en el centro' },
+  inicio: { eyebrow: 'Healen OS', title: 'Pacientes péptidos TOP' },
   crm: { eyebrow: 'Relaciones', title: 'CRM' },
   agenda: { eyebrow: 'Operación clínica', title: 'Agenda' },
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
@@ -613,8 +623,9 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const personalOut = finance.filter((m) => m.scope !== 'Empresa').reduce((t, m) => t + m.value, 0);
   const netProfit = companyIncome - companyExpenses;
   const lowStock = inventory.filter((i) => i.stock <= i.minimum || i.status !== 'Disponible').length;
-  const serumCount = patients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
-  const finishingTreatments = patients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
+  const homePeptidePatients = patients.filter((p) => HOME_PEPTIDE_PATIENT_IDS.has(p.id));
+  const serumCount = homePeptidePatients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
+  const finishingTreatments = homePeptidePatients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
 
   const filteredPatients = patients.filter((p) =>
     `${p.id} ${p.name} ${p.documentId ?? ''} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
@@ -753,7 +764,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
               <>
             {view === 'inicio' && (
               <InicioView
-                patients={patients}
+                patients={homePeptidePatients}
                 inventory={inventory}
                 companyIncome={companyIncome}
                 netProfit={netProfit}
@@ -973,10 +984,13 @@ function InicioView({
   go: (v: View) => void;
   onOpenPatient: (p: Patient) => void;
 }) {
-  const urgent = [...patients]
-    .filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado')
-    .sort((a, b) => a.daysLeft - b.daysLeft)
-    .slice(0, 4);
+  const featuredPatients = [...patients]
+    .sort((a, b) => {
+      if (a.status === 'Finalizado' && b.status !== 'Finalizado') return 1;
+      if (a.status !== 'Finalizado' && b.status === 'Finalizado') return -1;
+      return a.daysLeft - b.daysLeft;
+    })
+    .slice(0, 8);
   const stockView = [...inventory]
     .sort((a, b) => a.stock / Math.max(a.minimum, 1) - b.stock / Math.max(b.minimum, 1))
     .slice(0, 4);
@@ -986,13 +1000,13 @@ function InicioView({
     <>
       <section className="hero" data-reveal>
         <div className="hero__intro">
-          <span className="eyebrow">Healen OS · Centro de mando</span>
-          <h1>Quién está por terminar, qué falta y cuánto entró.</h1>
-          <p>Un vistazo y sabes qué vender, qué reponer y a quién llamar. Sin perseguir datos en chats ni cuadernos.</p>
+          <span className="eyebrow">Healen OS · Péptidos TOP</span>
+          <h1>Solo pacientes con plan de péptidos, compras y seguimiento.</h1>
+          <p>Inicio enfocado en los pacientes actualizados con protocolos de péptidos para revisar pagos, cierre de ciclo y recompra sin mezclar pacientes básicos.</p>
           <div className="hero__chips">
             <span className="hero__chip">
               <span className="dot dot--warn" />
-              {finishingTreatments} por terminar
+              {patients.length} pacientes péptidos
             </span>
             <span className="hero__chip">
               <span className="dot dot--danger" />
@@ -1007,13 +1021,13 @@ function InicioView({
 
         <article className="panel today">
           <div className="today__head">
-            <h2>Por terminar primero</h2>
+            <h2>Pacientes péptidos actualizados</h2>
             <button className="alert-card__more" onClick={() => go('pacientes')}>
               Ver todos <ChevronRight size={15} />
             </button>
           </div>
           <div className="today__rings">
-            {urgent.map((p) => (
+            {featuredPatients.map((p) => (
               <button key={p.id} className="urgent-ring" onClick={() => onOpenPatient(p)}>
                 <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={72} stroke={6} />
                 <span className="urgent-ring__name">{p.name.split(' ')[0]}</span>
