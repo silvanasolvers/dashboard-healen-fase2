@@ -9,7 +9,7 @@ Sistema integrado: **clientes ↔ tratamientos ↔ inventario (por lotes, FEFO) 
 
 - **Project ref:** `densirbwpzsmugoeramc`
 - **REST:** `https://densirbwpzsmugoeramc.supabase.co/rest/v1/`
-- **SQL versionado:** `db/01_foundation.sql` … `db/17_phase2_dashboard.sql`
+- **SQL versionado:** `db/01_foundation.sql` … `db/18_crm_view_hardening.sql`
   (incluye las dos migraciones `16_*`; correr en orden con
   `python3 db/run.py <archivo>` y nunca ejecutar `06_seed.sql` sobre producción).
 - **Front conectado:** el dashboard React consume las vistas `v_dashboard_*` y las RPCs

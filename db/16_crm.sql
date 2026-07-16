@@ -1714,6 +1714,7 @@ revoke all on crm_contacts, crm_contact_identities, crm_opportunities, crm_impor
   crm_import_candidates, crm_contact_evidence, crm_change_audit from public, anon, authenticated;
 grant select on crm_contacts, crm_contact_identities, crm_opportunities, crm_import_runs,
   crm_import_candidates, crm_contact_evidence, crm_change_audit to authenticated;
+revoke all on v_crm_contacts, v_crm_review_queue from public, anon;
 grant select on v_crm_contacts, v_crm_review_queue to authenticated;
 
 -- Helpers/internas no son API pública.

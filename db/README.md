@@ -20,6 +20,7 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `16_crm.sql` | CRM WhatsApp: contactos, pipeline, staging, matching exacto, revisión y auditoría |
 | `16_patient_milestones.sql` | Hitos clínicos/operativos estructurados y auditables por paciente |
 | `17_phase2_dashboard.sql` | Agenda, dossier relacionado y vistas de dashboard para Fase 2 |
+| `18_crm_view_hardening.sql` | Revoca explícitamente acceso anon/PUBLIC a las vistas CRM |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar
