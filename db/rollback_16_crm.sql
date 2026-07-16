@@ -1,5 +1,5 @@
 -- ============================================================
--- HEALEN OS · Rollback exclusivo de 16_crm.sql
+-- HEALEN OS · Rollback manual exclusivo de 16_crm.sql
 --
 -- DESTRUCTIVO: elimina únicamente objetos y datos del CRM WhatsApp.
 -- No modifica clients, treatments, clinical_notes, sales ni inventario.

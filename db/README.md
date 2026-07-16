@@ -18,7 +18,9 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `09_prescribe.sql` | Recetar=checkout: columnas de receta + `v_prescribe_catalog` + RPC `prescribe_checkout` |
 | `10_clinical.sql`–`15_plans.sql` | Historia clínica, reportes, pagos, storage, precios y plantillas de receta |
 | `16_crm.sql` | CRM WhatsApp: contactos, pipeline, staging, matching exacto, revisión y auditoría |
-| `16_crm_rollback.sql` | Rollback destructivo y exclusivo del CRM; preserva dominio clínico/financiero |
+| `16_patient_milestones.sql` | Hitos clínicos/operativos estructurados y auditables por paciente |
+| `17_phase2_dashboard.sql` | Agenda, dossier relacionado y vistas de dashboard para Fase 2 |
+| `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar
 
@@ -30,7 +32,7 @@ for f in db/[0-9][0-9]_*.sql; do python3 db/run.py "$f"; done
 HEALEN_SBP=... python3 db/run.py db/16_crm.sql
 
 # Solo ante rollback total del CRM (elimina sus datos)
-HEALEN_SBP=... python3 db/run.py db/16_crm_rollback.sql
+HEALEN_SBP=... python3 db/run.py db/rollback_16_crm.sql
 ```
 
 `run.py` ejecuta SQL contra la base vía la Supabase Management API. El token se

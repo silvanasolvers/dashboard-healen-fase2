@@ -2,7 +2,7 @@
 // Centro de medicina regenerativa: pacientes con planes de péptidos/sueros,
 // inventario clínico, y caja separada empresa vs. socio.
 
-export type View = 'inicio' | 'crm' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
+export type View = 'inicio' | 'agenda' | 'crm' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
 export type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
 export type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 export type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
@@ -135,6 +135,7 @@ export interface Patient {
   id: string;
   clientUuid?: string;
   treatmentId?: string;
+  documentId?: string | null;
   name: string;
   plan: string;
   saleValue: number;
@@ -743,6 +744,89 @@ export interface RevenuePoint {
   payments: number;
 }
 
+export interface RelatedTreatmentItem {
+  id: string;
+  name: string;
+  dose: string | null;
+  route: string | null;
+  schedule: string | null;
+  plannedQuantity: number | null;
+  dispensedQuantity: number | null;
+  startsOn: string | null;
+  endsOn: string | null;
+  status: string | null;
+  unitPrice: number | null;
+  instructions: string | null;
+}
+
+export interface RelatedTreatment {
+  id: string;
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  status: string | null;
+  salePrice: number | null;
+  weeklySerum: boolean | null;
+  serumDay: string | null;
+  notes: string | null;
+  items: RelatedTreatmentItem[];
+}
+
+export interface RelatedPayment {
+  id: string;
+  amount: number;
+  method: string | null;
+  paidAt: string | null;
+  note: string | null;
+}
+
+export interface RelatedSale {
+  id: string;
+  code: string | null;
+  treatmentId: string | null;
+  saleDate: string | null;
+  total: number;
+  subtotal: number | null;
+  cogsTotal: number | null;
+  margin: number | null;
+  dueDate: string | null;
+  status: string | null;
+  notes: string | null;
+  paid: number;
+  balance: number;
+  payments: RelatedPayment[];
+}
+
+export interface RelatedAppointment {
+  id: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  eventType: string | null;
+  status: string | null;
+  service: string | null;
+  notes: string | null;
+  sourceOriginalDate: string | null;
+  sourceCorrectedDate: string | null;
+}
+
+export interface RelatedPerson {
+  id: string;
+  relationshipType: string;
+  notes: string | null;
+  relatedClientId: string;
+  relatedCode: string | null;
+  relatedName: string;
+  direction: string;
+}
+
+export interface PatientRelated {
+  client_id: string;
+  treatments: RelatedTreatment[];
+  sales: RelatedSale[];
+  appointments: RelatedAppointment[];
+  relationships: RelatedPerson[];
+}
+
 export interface PatientSummary {
   client_id: string;
   code: string;
@@ -762,11 +846,83 @@ export interface PatientSummary {
   tier: string;
 }
 
+export type PatientMilestoneStatus = 'pendiente' | 'en_progreso' | 'completado' | 'omitido';
+export type PatientMilestoneCategory =
+  | 'clinico'
+  | 'laboratorio'
+  | 'tratamiento'
+  | 'administrativo'
+  | 'seguimiento'
+  | 'educacion'
+  | 'renovacion'
+  | 'logistica'
+  | 'cierre'
+  | 'otro';
+
+export interface PatientMilestone {
+  id: string;
+  clientId: string;
+  treatmentId: string | null;
+  patientName: string;
+  treatmentName: string | null;
+  phase: string;
+  title: string;
+  description: string | null;
+  category: PatientMilestoneCategory;
+  modality: string | null;
+  targetDate: string | null;
+  relativeDay: number | null;
+  daysLeft: number | null;
+  status: PatientMilestoneStatus;
+  pinned: boolean;
+  position: number;
+  completedAt: string | null;
+  completedBy: string | null;
+  completionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PatientDossier {
   summary: PatientSummary | null;
   notes: ClinicalNote[];
+  milestones: PatientMilestone[];
   timeline: TimelineEvent[];
   revenue: RevenuePoint[];
+  related: PatientRelated | null;
+}
+
+export const MILESTONE_CATEGORIES: Array<{ id: PatientMilestoneCategory; label: string; tone: Tone }> = [
+  { id: 'seguimiento', label: 'Seguimiento', tone: 'neutral' },
+  { id: 'clinico', label: 'Clínico', tone: 'warning' },
+  { id: 'tratamiento', label: 'Tratamiento', tone: 'success' },
+  { id: 'laboratorio', label: 'Laboratorio', tone: 'warning' },
+  { id: 'logistica', label: 'Logística', tone: 'neutral' },
+  { id: 'renovacion', label: 'Renovación', tone: 'danger' },
+  { id: 'cierre', label: 'Cierre', tone: 'success' },
+  { id: 'educacion', label: 'Educación', tone: 'neutral' },
+  { id: 'administrativo', label: 'Administrativo', tone: 'neutral' },
+  { id: 'otro', label: 'Otro', tone: 'neutral' },
+];
+
+export function milestoneCategoryLabel(category: string): string {
+  return MILESTONE_CATEGORIES.find((c) => c.id === category)?.label ?? 'Hito';
+}
+
+export function milestoneStatusLabel(status: PatientMilestoneStatus): string {
+  if (status === 'completado') return 'Completado';
+  if (status === 'en_progreso') return 'En progreso';
+  if (status === 'omitido') return 'Omitido';
+  return 'Pendiente';
+}
+
+export function milestoneDueTone(daysLeft: number | null, status: PatientMilestoneStatus): Tone {
+  if (status === 'completado') return 'success';
+  if (status === 'omitido') return 'neutral';
+  if (daysLeft === null) return 'neutral';
+  if (daysLeft <= 3) return 'danger';
+  if (daysLeft <= 7) return 'warning';
+  return 'neutral';
 }
 
 export interface SignalCounts {

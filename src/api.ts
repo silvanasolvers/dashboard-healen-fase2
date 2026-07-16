@@ -17,6 +17,9 @@ import type {
   NoteKind,
   Patient,
   PatientDossier,
+  PatientMilestone,
+  PatientMilestoneCategory,
+  PatientRelated,
   PatientSummary,
   Payee,
   Plan,
@@ -118,11 +121,30 @@ export interface MovementRow {
   reason: string;
 }
 
+export interface AppointmentRow {
+  id: string;
+  date: string;
+  time: string;
+  title: string;
+  detail: string;
+  kind: 'suero' | 'control' | 'cierre' | 'peptido' | 'consulta';
+  patientId?: string | null;
+  clientUuid?: string | null;
+  patientName?: string | null;
+  documentId?: string | null;
+  eventType?: string | null;
+  status?: string | null;
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+  sourceOriginalDate?: string | null;
+  sourceCorrectedDate?: string | null;
+}
+
 export interface HealenData {
   patients: Patient[];
   inventory: InventoryItem[];
   finance: FinanceMovement[];
   movements: MovementRow[];
+  appointments: AppointmentRow[];
 }
 
 /** Producto del catálogo de recetas (con defaults inteligentes + stock). */
@@ -186,17 +208,19 @@ function unwrap<T>(res: { data: T | null; error: { message: string } | null }): 
 
 /** Carga todo el estado del dashboard en paralelo. */
 export async function fetchAll(): Promise<HealenData> {
-  const [patients, inventory, finance, movements] = await Promise.all([
+  const [patients, inventory, finance, movements, appointments] = await Promise.all([
     supabase.from('v_dashboard_patients').select('*'),
     supabase.from('v_dashboard_inventory').select('*'),
     supabase.from('v_dashboard_finance').select('*').order('date', { ascending: false }),
     supabase.from('v_dashboard_inventory_movements').select('*').limit(20),
+    supabase.from('v_dashboard_appointments').select('*').order('date', { ascending: true }).order('time', { ascending: true }),
   ]);
   return {
     patients: unwrap<Patient[]>(patients),
     inventory: unwrap<InventoryItem[]>(inventory),
     finance: unwrap<FinanceMovement[]>(finance),
     movements: unwrap<MovementRow[]>(movements),
+    appointments: unwrap<AppointmentRow[]>(appointments),
   };
 }
 
@@ -319,9 +343,10 @@ export async function prescribeCheckout(p: PrescribePayload): Promise<PrescribeR
 
 // ---------- Historia clínica del paciente (carga perezosa al abrir la ficha) ----------
 export async function fetchDossier(clientUuid: string): Promise<PatientDossier> {
-  const [summary, notes, timeline, revenue] = await Promise.all([
+  const [summary, notes, milestones, timeline, revenue, related] = await Promise.all([
     supabase.from('v_patient_summary').select('*').eq('client_id', clientUuid).maybeSingle(),
     supabase.from('v_patient_notes').select('*').eq('client_id', clientUuid),
+    supabase.from('v_patient_milestones').select('*').eq('clientId', clientUuid),
     supabase
       .from('v_patient_timeline')
       .select('*')
@@ -329,11 +354,14 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
       .order('ts', { ascending: false })
       .limit(80),
     supabase.from('v_patient_revenue').select('*').eq('client_id', clientUuid).order('month', { ascending: true }),
+    supabase.from('v_patient_related').select('*').eq('client_id', clientUuid).maybeSingle(),
   ]);
   if (summary.error) throw new Error(summary.error.message);
   if (notes.error) throw new Error(notes.error.message);
+  if (milestones.error) throw new Error(milestones.error.message);
   if (timeline.error) throw new Error(timeline.error.message);
   if (revenue.error) throw new Error(revenue.error.message);
+  if (related.error) throw new Error(related.error.message);
 
   const noteRows = (notes.data ?? []) as ClinicalNote[];
   noteRows.sort(
@@ -343,8 +371,10 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
   return {
     summary: (summary.data ?? null) as PatientSummary | null,
     notes: noteRows,
+    milestones: (milestones.data ?? []) as PatientMilestone[],
     timeline: (timeline.data ?? []) as TimelineEvent[],
     revenue: (revenue.data ?? []) as RevenuePoint[],
+    related: (related.data ?? null) as PatientRelated | null,
   };
 }
 
@@ -360,6 +390,46 @@ export function addNote(clientUuid: string, body: string, kind: NoteKind, treatm
 
 export function deleteNote(noteId: string) {
   return rpc('dash_delete_note', { p_note: noteId });
+}
+
+export interface MilestonePayload {
+  clientId: string;
+  treatmentId?: string | null;
+  title: string;
+  description?: string | null;
+  category?: PatientMilestoneCategory | string;
+  modality?: string | null;
+  targetDate?: string | null;
+  relativeDay?: number | null;
+  phase?: string | null;
+  pinned?: boolean;
+}
+
+export function addMilestone(p: MilestonePayload) {
+  return rpc('dash_add_milestone', {
+    p_client: p.clientId,
+    p_treatment: p.treatmentId ?? null,
+    p_title: p.title,
+    p_description: p.description ?? null,
+    p_category: p.category ?? 'seguimiento',
+    p_modality: p.modality ?? null,
+    p_target_date: p.targetDate || null,
+    p_relative_day: p.relativeDay ?? null,
+    p_phase: p.phase || 'Fase 1',
+    p_pinned: p.pinned ?? false,
+  });
+}
+
+export function toggleMilestone(milestoneId: string, done: boolean, note?: string | null) {
+  return rpc('dash_toggle_milestone', {
+    p_milestone: milestoneId,
+    p_done: done,
+    p_note: note ?? null,
+  });
+}
+
+export function deleteMilestone(milestoneId: string) {
+  return rpc('dash_delete_milestone', { p_milestone: milestoneId });
 }
 
 export interface ClientFields {

@@ -85,6 +85,10 @@ import {
   InventoryItem,
   isReceivable,
   KV,
+  MILESTONE_CATEGORIES,
+  milestoneCategoryLabel,
+  milestoneDueTone,
+  milestoneStatusLabel,
   MonthPoint,
   mostUrgentPeptide,
   MovementPayload,
@@ -96,6 +100,7 @@ import {
   overallSignal,
   Patient,
   patientHistory,
+  PatientMilestone,
   PatientDossier,
   PatientProductAlert,
   patientSignalCounts,
@@ -121,9 +126,12 @@ import {
   View,
 } from './data';
 import {
+  addMilestone,
   addNote,
+  AppointmentRow,
   CatalogItem,
   createPatient,
+  deleteMilestone,
   deleteNote,
   fetchAll,
   fetchAnalytics,
@@ -146,6 +154,7 @@ import {
   prescribeCheckout,
   PrescribeResult,
   reviewCrmCandidate,
+  toggleMilestone,
   updateClient,
   upsertProduct,
 } from './api';
@@ -169,6 +178,7 @@ const REDUCED =
 const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> = [
   { id: 'inicio', label: 'Inicio', short: 'Hoy', icon: LayoutDashboard },
   { id: 'crm', label: 'CRM', short: 'CRM', icon: MessageCircle },
+  { id: 'agenda', label: 'Agenda', short: 'Agenda', icon: CalendarClock },
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
   { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
   { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
@@ -178,6 +188,7 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
 const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
   inicio: { eyebrow: 'Healen OS', title: 'Hoy en el centro' },
   crm: { eyebrow: 'Relaciones', title: 'CRM' },
+  agenda: { eyebrow: 'Operación clínica', title: 'Agenda' },
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
   inventario: { eyebrow: 'Insumos', title: 'Inventario' },
   contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
@@ -523,6 +534,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [inventoryMovements, setInventoryMovements] = useState<MovementRow[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [finance, setFinance] = useState<FinanceMovement[]>([]);
 
   const [patientSearch, setPatientSearch] = useState('');
@@ -538,6 +550,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
       setInventory(data.inventory);
       setFinance(data.finance);
       setInventoryMovements(data.movements);
+      setAppointments(data.appointments);
       setDataVersion((v) => v + 1);
       setLoadError(false);
     } catch {
@@ -601,10 +614,10 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const netProfit = companyIncome - companyExpenses;
   const lowStock = inventory.filter((i) => i.stock <= i.minimum || i.status !== 'Disponible').length;
   const serumCount = patients.filter((p) => p.weeklySerum && p.status !== 'Finalizado').length;
-  const finishingTreatments = patients.filter((p) => p.daysLeft <= 12 && p.status !== 'Finalizado').length;
+  const finishingTreatments = patients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
 
   const filteredPatients = patients.filter((p) =>
-    `${p.id} ${p.name} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
+    `${p.id} ${p.name} ${p.documentId ?? ''} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
   );
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
@@ -753,6 +766,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
               />
             )}
             {view === 'crm' && <CrmView notify={notify} />}
+            {view === 'agenda' && <AgendaView patients={patients} appointments={appointments} onOpenPatient={setDetailPatient} />}
             {view === 'pacientes' && (
               <PacientesView
                 patients={filteredPatients}
@@ -959,7 +973,10 @@ function InicioView({
   go: (v: View) => void;
   onOpenPatient: (p: Patient) => void;
 }) {
-  const urgent = [...patients].sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 4);
+  const urgent = [...patients]
+    .filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado')
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .slice(0, 4);
   const stockView = [...inventory]
     .sort((a, b) => a.stock / Math.max(a.minimum, 1) - b.stock / Math.max(b.minimum, 1))
     .slice(0, 4);
@@ -1721,6 +1738,284 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
   );
 }
 
+/* ============================================================
+   AGENDA
+   ============================================================ */
+type AgendaEvent = {
+  id: string;
+  date: string;
+  time: string;
+  title: string;
+  detail: string;
+  kind: 'suero' | 'control' | 'cierre' | 'peptido' | 'consulta';
+  patient?: Patient;
+  patientName: string;
+  documentId?: string;
+  fullName?: string;
+  agendaLabel?: string;
+  services?: string[];
+  tone: 'ok' | 'warn' | 'danger' | 'brand';
+};
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  domingo: 0,
+  lunes: 1,
+  martes: 2,
+  miercoles: 3,
+  miércoles: 3,
+  jueves: 4,
+  viernes: 5,
+  sabado: 6,
+  sábado: 6,
+};
+
+function isoLocal(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function addDaysLocal(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function agendaDayLabel(value: string) {
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function agendaKindLabel(kind: AgendaEvent['kind']) {
+  const labels: Record<AgendaEvent['kind'], string> = {
+    suero: 'suero',
+    control: 'control',
+    cierre: 'cierre',
+    peptido: 'péptido',
+    consulta: 'consulta',
+  };
+  return labels[kind];
+}
+
+function buildAgendaEvents(patients: Patient[], horizon = 14): AgendaEvent[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = isoLocal(today);
+  const end = addDaysLocal(today, horizon);
+  const events: AgendaEvent[] = [];
+
+  patients
+    .filter((p) => p.status !== 'Finalizado')
+    .forEach((patient, idx) => {
+      if (patient.weeklySerum) {
+        const normalized = patient.serumDay.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const weekday = WEEKDAY_INDEX[normalized];
+        if (weekday !== undefined) {
+          for (let offset = 0; offset <= horizon; offset += 1) {
+            const date = addDaysLocal(today, offset);
+            if (date.getDay() !== weekday) continue;
+            const iso = isoLocal(date);
+            events.push({
+              id: `suero-${patient.id}-${iso}`,
+              date: iso,
+              time: idx % 2 === 0 ? '09:00' : '11:30',
+              title: 'Suero semanal',
+              detail: `${patient.plan} · preparar insumos y consentimiento`,
+              kind: 'suero',
+              patient,
+              patientName: patient.name,
+              tone: 'brand',
+            });
+          }
+        }
+      }
+
+      const closeDate = new Date(`${patient.endDate}T00:00:00`);
+      if (!Number.isNaN(closeDate.getTime()) && closeDate >= today && closeDate <= end) {
+        events.push({
+          id: `cierre-${patient.id}`,
+          date: patient.endDate,
+          time: '16:00',
+          title: 'Cierre de tratamiento',
+          detail: 'Revisar evolución, recompra y próximos pasos',
+          kind: 'cierre',
+          patient,
+          patientName: patient.name,
+          tone: patient.daysLeft <= 5 ? 'danger' : 'warn',
+        });
+      }
+
+      patient.peptides.forEach((line, lineIdx) => {
+        if (line.endsInDays < 0 || line.endsInDays > horizon || line.status === 'Finalizado') return;
+        const date = addDaysLocal(today, line.endsInDays);
+        const iso = isoLocal(date);
+        events.push({
+          id: `peptido-${patient.id}-${lineIdx}-${iso}`,
+          date: iso,
+          time: '14:00',
+          title: `${line.name} por terminar`,
+          detail: `${line.dose}${line.route ? ` · ${line.route}` : ''}`,
+          kind: 'peptido',
+          patient,
+          patientName: patient.name,
+          tone: line.endsInDays <= 5 ? 'danger' : 'warn',
+        });
+      });
+
+      if (patient.daysLeft <= 7 && patient.endDate >= todayIso) {
+        const followDate = isoLocal(addDaysLocal(today, Math.max(0, Math.min(patient.daysLeft - 2, horizon))));
+        events.push({
+          id: `control-${patient.id}`,
+          date: followDate,
+          time: '10:30',
+          title: 'Control y seguimiento',
+          detail: 'Llamar antes del cierre para medir adherencia y síntomas',
+          kind: 'control',
+          patient,
+          patientName: patient.name,
+          tone: patient.daysLeft <= 3 ? 'danger' : 'warn',
+        });
+      }
+    });
+
+  return events.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+}
+
+function appointmentToAgendaEvent(row: AppointmentRow, patients: Patient[]): AgendaEvent {
+  const patient = patients.find((p) => p.clientUuid === row.clientUuid || p.id === row.patientId);
+  return {
+    id: row.id,
+    date: row.date,
+    time: row.time || '12:00',
+    title: row.title,
+    detail: row.detail || row.eventType || 'Evento de agenda',
+    kind: row.kind,
+    patient,
+    patientName: row.patientName || patient?.name || 'Evento operativo',
+    fullName: row.documentId ? row.patientName || patient?.name || undefined : undefined,
+    documentId: row.documentId || patient?.documentId || undefined,
+    services: row.title ? [row.title] : undefined,
+    tone: row.tone,
+  };
+}
+
+function AgendaView({ patients, appointments, onOpenPatient }: { patients: Patient[]; appointments: AppointmentRow[]; onOpenPatient: (p: Patient) => void }) {
+  const today = isoLocal(new Date());
+  const persistedEvents = appointments.map((row) => appointmentToAgendaEvent(row, patients));
+  const generatedEvents = buildAgendaEvents(patients).filter(
+    (event) => !persistedEvents.some((persisted) => persisted.date === event.date && persisted.patient?.id === event.patient?.id),
+  );
+  const events = [...persistedEvents, ...generatedEvents].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+  );
+  const upcomingEvents = events.filter((event) => event.date >= today);
+  const defaultDate = upcomingEvents.find((event) => event.date === today)?.date ?? upcomingEvents[0]?.date ?? today;
+  const [selectedDate, setSelectedDate] = useState(defaultDate);
+  const todayEvents = upcomingEvents.filter((e) => e.date === today);
+  const selectedEvents = events.filter((e) => e.date === selectedDate);
+  const urgent = upcomingEvents.filter((e) => e.tone === 'danger').length;
+  const days = Array.from(new Set([today, ...upcomingEvents.map((e) => e.date)])).sort();
+
+  return (
+    <div className="view-wrap agenda" data-reveal>
+      <section className="agenda-hero" data-reveal>
+        <div>
+          <span className="eyebrow">Agenda inteligente</span>
+          <h1>Calendario clínico sugerido por tratamientos activos.</h1>
+          <p>
+            Centraliza sueros, controles, cierres de tratamiento y péptidos por terminar para que el equipo sepa a quién atender,
+            preparar o llamar.
+          </p>
+        </div>
+        <div className="agenda-hero__stats">
+          <article>
+            <strong>{todayEvents.length}</strong>
+            <span>eventos hoy</span>
+          </article>
+          <article>
+            <strong>{upcomingEvents.length}</strong>
+            <span>eventos vigentes</span>
+          </article>
+          <article>
+            <strong>{urgent}</strong>
+            <span>urgentes</span>
+          </article>
+        </div>
+      </section>
+
+      <section className="agenda-layout">
+        <article className="panel agenda-calendar" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">Filtro</span>
+              <h2>Día de trabajo</h2>
+            </div>
+            <DatePicker value={selectedDate} onChange={setSelectedDate} placeholder="Seleccionar día" />
+          </div>
+          <div className="agenda-days">
+            {[selectedDate, ...days.filter((d) => d !== selectedDate)].slice(0, 10).map((date) => {
+              const count = events.filter((e) => e.date === date).length;
+              const manual = events.find((e) => e.date === date && e.agendaLabel);
+              return (
+                <button key={date} className={`agenda-day${selectedDate === date ? ' is-active' : ''}`} onClick={() => setSelectedDate(date)}>
+                  <span>{date === today ? 'Hoy' : manual?.agendaLabel ?? agendaDayLabel(date)}</span>
+                  <strong>{count}</strong>
+                </button>
+              );
+            })}
+          </div>
+        </article>
+
+        <article className="panel agenda-list" data-reveal>
+          <div className="panel__head">
+            <div>
+              <span className="eyebrow">{agendaDayLabel(selectedDate)}</span>
+              <h2>Programación</h2>
+            </div>
+            <span className="count-chip">{selectedEvents.length}</span>
+          </div>
+          {selectedEvents.length ? (
+            selectedEvents.map((event) => (
+              <button
+                key={event.id}
+                className={`agenda-card agenda-card--${event.tone}${event.patient ? '' : ' agenda-card--manual'}`}
+                onClick={() => {
+                  if (event.patient) onOpenPatient(event.patient);
+                }}
+              >
+                <span className="agenda-card__time">{event.time}</span>
+                <span className="agenda-card__body">
+                  <strong>{event.title}</strong>
+                  <span>{event.patientName} · {event.detail}</span>
+                  {event.fullName && <em>{event.fullName} · CC {event.documentId}</em>}
+                  {event.services && (
+                    <ul className="agenda-card__services">
+                      {event.services.map((service) => (
+                        <li key={service}>{service}</li>
+                      ))}
+                    </ul>
+                  )}
+                </span>
+                <Badge label={agendaKindLabel(event.kind)} tone={event.tone === 'danger' ? 'danger' : event.tone === 'warn' ? 'warning' : 'success'} />
+                {event.patient && <ChevronRight size={17} />}
+              </button>
+            ))
+          ) : (
+            <div className="agenda-empty">
+              <CalendarClock size={24} />
+              <strong>Sin eventos sugeridos</strong>
+              <span>Ese día no tiene sueros, controles ni cierres derivados de los tratamientos activos.</span>
+            </div>
+          )}
+        </article>
+      </section>
+    </div>
+  );
+}
+
 function CrmEmpty({ icon: Icon, title, text }: { icon: ElementType; title: string; text: string }) {
   return (
     <section className="panel crm-empty" data-reveal>
@@ -1783,7 +2078,7 @@ function PacientesView({
       <div className="toolbar" data-reveal>
         <div className="search">
           <Search size={17} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar paciente, plan o ID" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por ID Healen, nombre, cédula o plan" />
         </div>
         <div className="segmented">
           <button className={`segmented__btn${sub === 'pacientes' ? ' is-active' : ''}`} onClick={() => setSub('pacientes')}>
@@ -1858,7 +2153,7 @@ function PacientesView({
                     <div>
                       <div className="patient-card__name">{p.name}</div>
                       <div className="patient-card__sub">
-                        {p.id} · {p.plan}
+                        {p.id} · {p.documentId ? `CC ${p.documentId} · ` : 'Sin cédula · '}{p.plan}
                       </div>
                     </div>
                     <span className={`tier${p.tier === 'VIP' ? ' tier--vip' : ''}`}>{p.tier}</span>
@@ -4028,6 +4323,29 @@ function TreatmentStatus({ patient, counts, signal }: { patient: Patient; counts
   );
 }
 
+type InflammationStage = { grade: string; phase: string; tone: 'danger' | 'warn' | 'ok' };
+
+function patientInflammationStage(patient: Patient, dossier: PatientDossier | null): InflammationStage | null {
+  const searchable = [
+    patient.plan,
+    dossier?.summary?.notes,
+    ...(dossier?.notes ?? []).map((n) => n.body),
+    ...(dossier?.milestones ?? []).flatMap((m) => [m.phase, m.title, m.description ?? '']),
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const gradeMatch = searchable.match(/grado\s*(\d+)\s*(?:de\s*)?inflamaci[oó]n/i);
+  if (!gradeMatch) return null;
+
+  const grade = Number(gradeMatch[1]);
+  const tone: InflammationStage['tone'] = grade >= 2 ? 'danger' : grade === 1 ? 'warn' : 'ok';
+  const phaseMatch = searchable.match(/fase\s+cl[ií]nica\s*:\s*([^\.\n]+)/i);
+  const phase = phaseMatch?.[1]?.trim() || (patient.plan.toLowerCase().includes('fase 1') ? 'Ciclo 1 de inicio' : patient.plan);
+
+  return { grade: `Grado ${grade} de inflamación`, phase, tone };
+}
+
 /** Página completa de paciente = ficha clínica viva con pestañas
  *  (Resumen · Notas · Historial · Dinero). Carga el dossier al abrir. */
 function PatientDetail({
@@ -4042,7 +4360,7 @@ function PatientDetail({
   go: (v: View) => void;
 }) {
   const ref = useScrollReveal(`${patient.id}-${0}`);
-  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'dinero'>('resumen');
+  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero'>('resumen');
   const [dossier, setDossier] = useState<PatientDossier | null>(null);
   const [loading, setLoading] = useState(true);
   const signal = overallSignal(patient);
@@ -4074,6 +4392,7 @@ function PatientDetail({
   }, [onBack, reload]);
 
   const steps = buildNextSteps(patient, dossier);
+  const inflammationStage = patientInflammationStage(patient, dossier);
   function act(step: NextStep) {
     if (step.action === 'recetar' && onPrescribe) onPrescribe(patient);
     else go(step.target);
@@ -4083,6 +4402,7 @@ function PatientDetail({
     { id: 'resumen' as const, label: 'Resumen', icon: Activity, count: undefined as number | undefined },
     { id: 'notas' as const, label: 'Notas', icon: FileText, count: dossier?.notes.length },
     { id: 'historial' as const, label: 'Historial', icon: ClipboardList, count: dossier?.timeline.length },
+    { id: 'relacionado' as const, label: 'Relacionado', icon: LinkIcon, count: dossier?.related ? dossier.related.treatments.length + dossier.related.sales.length + dossier.related.appointments.length + dossier.related.relationships.length : undefined },
     { id: 'dinero' as const, label: 'Dinero', icon: Wallet, count: undefined },
   ];
 
@@ -4111,6 +4431,15 @@ function PatientDetail({
           <p className="detail__plan">
             {patient.plan} · <strong>{formatCurrency(patient.saleValue)}</strong>
           </p>
+          {inflammationStage && (
+            <div className={`detail__phase-alert detail__phase-alert--${inflammationStage.tone}`}>
+              <AlertTriangle size={16} />
+              <div>
+                <strong>{inflammationStage.grade}</strong>
+                <span>{inflammationStage.phase}</span>
+              </div>
+            </div>
+          )}
         </div>
         <TreatmentStatus patient={patient} counts={counts} signal={signal} />
       </header>
@@ -4142,6 +4471,7 @@ function PatientDetail({
       )}
       {tab === 'notas' && <NotasPanel patient={patient} dossier={dossier} loading={loading} onChanged={reload} />}
       {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
+      {tab === 'relacionado' && <RelacionadoPanel dossier={dossier} loading={loading} />}
       {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
     </div>
   );
@@ -4237,6 +4567,206 @@ function ClinicalFlags({ dossier }: { dossier: PatientDossier | null }) {
   );
 }
 
+
+function milestoneDateLabel(m: PatientMilestone): string {
+  if (m.targetDate) return formatDate(m.targetDate);
+  if (m.relativeDay !== null) return `Día ${m.relativeDay}`;
+  return 'Sin fecha';
+}
+
+function milestoneDueLabel(m: PatientMilestone): string {
+  if (m.status === 'completado') return 'Completado';
+  if (m.status === 'omitido') return 'Omitido';
+  if (m.daysLeft === null) return 'Sin fecha objetivo';
+  if (m.daysLeft < 0) return `${Math.abs(m.daysLeft)} días vencido`;
+  if (m.daysLeft === 0) return 'Vence hoy';
+  if (m.daysLeft === 1) return 'Mañana';
+  return `En ${m.daysLeft} días`;
+}
+
+function MilestonesPanel({
+  patient,
+  milestones,
+  loading,
+  onChanged,
+}: {
+  patient: Patient;
+  milestones: PatientMilestone[];
+  loading: boolean;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const completed = milestones.filter((m) => m.status === 'completado').length;
+  const progress = milestones.length ? Math.round((completed / milestones.length) * 100) : 0;
+  const canWrite = !!patient.clientUuid;
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!patient.clientUuid) return;
+    // React nulls currentTarget after the async boundary. Keep the real form
+    // element before awaiting RPCs so reset() does not crash after a successful save.
+    const formEl = e.currentTarget;
+    const form = new FormData(formEl);
+    const title = String(form.get('title') || '').trim();
+    if (!title) return;
+    setSaving(true);
+    setError('');
+    try {
+      await addMilestone({
+        clientId: patient.clientUuid,
+        treatmentId: patient.treatmentId ?? null,
+        title,
+        description: String(form.get('description') || '').trim() || null,
+        category: String(form.get('category') || 'seguimiento'),
+        modality: String(form.get('modality') || '').trim() || null,
+        targetDate: String(form.get('targetDate') || '') || null,
+        relativeDay: form.get('relativeDay') ? Number(form.get('relativeDay')) : null,
+        phase: String(form.get('phase') || 'Fase 1').trim() || 'Fase 1',
+        pinned: form.get('pinned') === 'on',
+      });
+      formEl.reset();
+      setOpen(false);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggle(m: PatientMilestone) {
+    setSaving(true);
+    setError('');
+    try {
+      const done = m.status !== 'completado';
+      await toggleMilestone(m.id, done, done ? 'Marcado desde el dashboard.' : null);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo actualizar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(m: PatientMilestone) {
+    if (!window.confirm(`¿Archivar el hito “${m.title}”?`)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await deleteMilestone(m.id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo archivar el hito');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="detail-block milestones" data-reveal>
+      <div className="label">
+        <ClipboardList size={17} /> Hitos clínicos
+        <small className="count-chip">{completed}/{milestones.length}</small>
+        {canWrite && (
+          <button className="detail-block__edit" onClick={() => setOpen((v) => !v)}>
+            {open ? <X size={14} /> : <Plus size={14} />} {open ? 'Cerrar' : 'Nuevo hito'}
+          </button>
+        )}
+      </div>
+
+      <div className="milestones__progress" aria-label={`Progreso de hitos ${progress}%`}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+
+      {open && (
+        <form className="form milestone-form" onSubmit={submit}>
+          <Field label="Título" full>
+            <input name="title" placeholder="Ej. Control de tolerancia inicial" required />
+          </Field>
+          <Field label="Fase">
+            <input name="phase" placeholder="Fase 1" defaultValue="Fase 1" />
+          </Field>
+          <Field label="Categoría">
+            <select name="category" defaultValue="seguimiento">
+              {MILESTONE_CATEGORIES.map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Modalidad">
+            <input name="modality" placeholder="Chat / Telemedicina / Consulta" />
+          </Field>
+          <Field label="Fecha objetivo">
+            <input name="targetDate" type="date" />
+          </Field>
+          <Field label="Día relativo">
+            <input name="relativeDay" type="number" placeholder="Ej. 5" />
+          </Field>
+          <Field label="Objetivo" full>
+            <textarea name="description" rows={3} placeholder="Qué debe revisarse, qué variables monitorear y qué decisión se espera tomar…" />
+          </Field>
+          <label className="milestone-pin field--full">
+            <input name="pinned" type="checkbox" /> <Pin size={14} /> Fijar arriba
+          </label>
+          {error && <p className="note-composer__error field--full">{error}</p>}
+          <div className="info-form__actions field--full">
+            <button className="btn btn--primary" type="submit" disabled={saving}>
+              {saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar hito
+            </button>
+            <button className="btn btn--soft" type="button" onClick={() => setOpen(false)}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+
+      {error && !open && <p className="note-composer__error">{error}</p>}
+      {loading ? (
+        <p className="muted-line">Cargando hitos…</p>
+      ) : milestones.length === 0 ? (
+        <p className="muted-line">Aún no hay hitos para este paciente. Crea el primer checkpoint clínico.</p>
+      ) : (
+        <div className="milestone-list">
+          {milestones.map((m) => {
+            const tone = milestoneDueTone(m.daysLeft, m.status);
+            const done = m.status === 'completado';
+            return (
+              <article key={m.id} className={`milestone milestone--${tone}${done ? ' is-done' : ''}`}>
+                <button className="milestone__check" onClick={() => toggle(m)} disabled={saving} aria-label={done ? 'Desmarcar hito' : 'Completar hito'}>
+                  {done ? <Check size={17} /> : <span />}
+                </button>
+                <div className="milestone__body">
+                  <div className="milestone__top">
+                    {m.pinned && <Pin className="note__pin" size={13} />}
+                    <span className={`note__kind note__kind--${tone}`}>{milestoneCategoryLabel(m.category)}</span>
+                    <span className="note__meta">{m.phase}</span>
+                  </div>
+                  <strong>{m.title}</strong>
+                  {m.description && <p>{m.description}</p>}
+                  <div className="milestone__meta">
+                    <span><CalendarClock size={13} /> {milestoneDateLabel(m)}</span>
+                    <span className={`ti-flag ti-flag--${tone === 'danger' ? 'danger' : tone === 'warning' ? 'warn' : 'ok'}`}>{milestoneDueLabel(m)}</span>
+                    {m.modality && <span>{m.modality}</span>}
+                    <span>{milestoneStatusLabel(m.status)}</span>
+                  </div>
+                  {done && m.completedAt && (
+                    <p className="milestone__done">Cerrado {formatDate(m.completedAt)} · {m.completedBy}</p>
+                  )}
+                </div>
+                <button className="note__del" onClick={() => remove(m)} disabled={saving} aria-label="Archivar hito">
+                  <Trash2 size={15} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ResumenPanel({
   patient,
   dossier,
@@ -4303,6 +4833,7 @@ function ResumenPanel({
       <main className="detail__main">
         <TreatmentBlock patient={patient} />
         <ClinicalFlags dossier={dossier} />
+        <MilestonesPanel patient={patient} milestones={dossier?.milestones ?? []} loading={!dossier} onChanged={reload} />
       </main>
     </div>
   );
@@ -4661,6 +5192,129 @@ function HistorialPanel({
                 <div>
                   <strong>{item.title}</strong>
                   <p>{item.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ---- Relacionado: tratamientos, ventas, pagos, agenda y beneficiarios importados ---- */
+function RelacionadoPanel({ dossier, loading }: { dossier: PatientDossier | null; loading: boolean }) {
+  const related = dossier?.related;
+  const treatments = related?.treatments ?? [];
+  const sales = related?.sales ?? [];
+  const appointments = related?.appointments ?? [];
+  const relationships = related?.relationships ?? [];
+
+  if (loading) {
+    return (
+      <div className="detail__single">
+        <section className="detail-block" data-reveal>
+          <div className="label"><LinkIcon size={17} /> Información relacionada</div>
+          <p className="muted-line">Cargando relaciones, tratamientos, cartera y agenda…</p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="detail__single">
+      <section className="kpi-grid" data-reveal>
+        <MoneyKpi icon={Syringe} tone="brand" label="Tratamientos" value={treatments.length} money={false} />
+        <MoneyKpi icon={Wallet} tone="ok" label="Ventas" value={sales.length} money={false} />
+        <MoneyKpi icon={CalendarClock} tone="warn" label="Agenda" value={appointments.length} money={false} />
+        <MoneyKpi icon={Users} tone="brand" label="Relaciones" value={relationships.length} money={false} />
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Syringe size={17} /> Tratamientos e insumos</div>
+        {treatments.length === 0 ? <p className="muted-line">Sin tratamientos asociados.</p> : (
+          <div className="note-list">
+            {treatments.map((t) => (
+              <article key={t.id} className="note note--success">
+                <span className="note__icon"><Syringe size={16} /></span>
+                <div className="note__body">
+                  <div className="note__top">
+                    <span className="note__kind note__kind--success">{t.status ?? 'tratamiento'}</span>
+                    <span className="note__meta">{t.startDate ? formatDate(t.startDate) : 'Sin inicio'} → {t.endDate ? formatDate(t.endDate) : 'Sin cierre'}</span>
+                  </div>
+                  <strong>{t.name}</strong>
+                  <p>{formatCurrency(t.salePrice ?? 0)}{t.weeklySerum ? ` · suero ${t.serumDay ?? ''}` : ''}</p>
+                  {t.notes && <p>{t.notes}</p>}
+                  {t.items.length > 0 && (
+                    <ul className="agenda-card__services">
+                      {t.items.map((item) => (
+                        <li key={item.id}>{item.name}{item.dose ? ` · ${item.dose}` : ''}{item.route ? ` · ${item.route}` : ''}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Wallet size={17} /> Ventas, pagos y cartera</div>
+        {sales.length === 0 ? <p className="muted-line">Sin ventas asociadas.</p> : (
+          <div className="note-list">
+            {sales.map((s) => (
+              <article key={s.id} className={`note note--${s.balance > 0 ? 'warning' : 'success'}`}>
+                <span className="note__icon"><Wallet size={16} /></span>
+                <div className="note__body">
+                  <div className="note__top">
+                    <span className={`note__kind note__kind--${s.balance > 0 ? 'warning' : 'success'}`}>{s.status ?? 'venta'}</span>
+                    <span className="note__meta">{s.saleDate ? formatDate(s.saleDate) : 'Sin fecha'} · {s.code ?? 'sin código'}</span>
+                  </div>
+                  <strong>{formatCurrency(s.total)}</strong>
+                  <p>Abonado {formatCurrency(s.paid)} · Saldo {formatCurrency(s.balance)}</p>
+                  {s.notes && <p>{s.notes}</p>}
+                  {s.payments.length > 0 && (
+                    <ul className="agenda-card__services">
+                      {s.payments.map((p) => (
+                        <li key={p.id}>{formatCurrency(p.amount)} · {p.method ?? 'método no registrado'} · {p.paidAt ? formatDate(p.paidAt.slice(0, 10)) : 'sin fecha'}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><CalendarClock size={17} /> Agenda importada</div>
+        {appointments.length === 0 ? <p className="muted-line">Sin agenda asociada.</p> : (
+          <div className="timeline">
+            {appointments.map((a) => (
+              <div className="timeline__item timeline__item--neutral" key={a.id}>
+                <span>{a.startsAt ? formatDate(a.startsAt.slice(0, 10)) : 'Sin fecha'}</span>
+                <div>
+                  <strong>{a.service || a.eventType || 'Evento'}</strong>
+                  <p>{a.notes || a.status || 'Sin nota'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="detail-block" data-reveal>
+        <div className="label"><Users size={17} /> Beneficiarios y relaciones</div>
+        {relationships.length === 0 ? <p className="muted-line">Sin relaciones asociadas.</p> : (
+          <div className="flag-list">
+            {relationships.map((r) => (
+              <div key={r.id} className="flag flag--neutral">
+                <Users size={16} />
+                <div>
+                  <strong>{r.relatedCode ? `${r.relatedCode} · ` : ''}{r.relatedName}</strong>
+                  <p>{r.relationshipType}{r.notes ? ` · ${r.notes}` : ''}</p>
                 </div>
               </div>
             ))}
