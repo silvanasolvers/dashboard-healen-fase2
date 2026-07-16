@@ -65,6 +65,13 @@ import {
   buildNextSteps,
   buildPatientProductAlerts,
   ClinicalNote,
+  CrmContact,
+  CrmContactType,
+  CrmReviewCandidate,
+  CrmStage,
+  CRM_STAGES,
+  crmContactTypeLabel,
+  crmStageLabel,
   DateRange,
   daysSince,
   emptyRange,
@@ -121,6 +128,8 @@ import {
   fetchAll,
   fetchAnalytics,
   fetchCatalog,
+  fetchCrmContacts,
+  fetchCrmReviewQueue,
   fetchDossier,
   fetchFinanceRows,
   fetchFinanceSummary,
@@ -136,6 +145,7 @@ import {
   MovementRow,
   prescribeCheckout,
   PrescribeResult,
+  reviewCrmCandidate,
   updateClient,
   upsertProduct,
 } from './api';
@@ -158,6 +168,7 @@ const REDUCED =
 
 const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> = [
   { id: 'inicio', label: 'Inicio', short: 'Hoy', icon: LayoutDashboard },
+  { id: 'crm', label: 'CRM', short: 'CRM', icon: MessageCircle },
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
   { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
   { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
@@ -166,6 +177,7 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
 
 const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
   inicio: { eyebrow: 'Healen OS', title: 'Hoy en el centro' },
+  crm: { eyebrow: 'Relaciones', title: 'CRM' },
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
   inventario: { eyebrow: 'Insumos', title: 'Inventario' },
   contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
@@ -740,6 +752,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 onOpenPatient={setDetailPatient}
               />
             )}
+            {view === 'crm' && <CrmView notify={notify} />}
             {view === 'pacientes' && (
               <PacientesView
                 patients={filteredPatients}
@@ -1120,6 +1133,601 @@ function Priority({
       </span>
       <ChevronRight className="chev" size={18} />
     </button>
+  );
+}
+
+/* ============================================================
+   CRM — contactos, pipeline y revisión humana
+   ============================================================ */
+type CrmTab = 'contacts' | 'pipeline' | 'review';
+type CrmTypeFilter = 'all' | 'patients' | Exclude<CrmContactType, 'patient'>;
+
+const CRM_FIELD_LABELS: Record<string, string> = {
+  name: 'Nombre',
+  full_name: 'Nombre',
+  phone: 'Teléfono',
+  email: 'Correo',
+  city: 'Ciudad',
+  address: 'Dirección',
+  birthdate: 'Fecha de nacimiento',
+  document_id: 'Documento',
+  interests: 'Intereses',
+  suggestedStage: 'Etapa sugerida',
+  suggested_stage: 'Etapa sugerida',
+  client_match: 'Vinculación con registro actual',
+  client_id: 'Registro vinculado',
+  client_name: 'Nombre en la base actual',
+  client_code: 'Código en la base actual',
+  client_has_treatment: 'Tiene tratamiento',
+  client_conflict_count: 'Coincidencias exactas',
+  contact_type: 'Clasificación',
+  lifecycle_stage: 'Estado del contacto',
+  current_opportunity_stage: 'Etapa comercial',
+};
+
+function crmConfidencePct(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return Math.round(Math.max(0, Math.min(100, value <= 1 ? value * 100 : value)));
+}
+
+function crmConfidenceTone(value: number): Tone {
+  const pct = crmConfidencePct(value) ?? 0;
+  if (pct >= 90) return 'success';
+  if (pct >= 70) return 'warning';
+  return 'danger';
+}
+
+function crmDisplayValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return 'Vacío';
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.length ? value.map(crmDisplayValue).join(', ') : 'Vacío';
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized.length > 320 ? `${serialized.slice(0, 317)}…` : serialized;
+  } catch {
+    return 'Dato estructurado';
+  }
+}
+
+function crmCandidateChanges(candidate: CrmReviewCandidate) {
+  const keys = Array.from(new Set([...Object.keys(candidate.currentData), ...Object.keys(candidate.proposedData)])).sort();
+  return keys.map((key) => ({
+    key,
+    current: candidate.currentData[key],
+    proposed: candidate.proposedData[key],
+  }));
+}
+
+function crmMatchTarget(candidate: CrmReviewCandidate): string {
+  const data = candidate.proposedData;
+  const conflictCount = Number(data.client_conflict_count);
+  if (Number.isFinite(conflictCount) && conflictCount > 1) {
+    return `${conflictCount} registros exactos; requiere revisión`;
+  }
+  const target = data.client_name ?? data.full_name ?? data.display_name ?? data.client_code ?? data.client_id;
+  return target === null || target === undefined ? 'Sin coincidencia nominada' : crmDisplayValue(target);
+}
+
+function crmMatchContext(candidate: CrmReviewCandidate): string {
+  const data = candidate.proposedData;
+  const conflictCount = Number(data.client_conflict_count);
+  if (Number.isFinite(conflictCount) && conflictCount > 1) {
+    return 'No se vinculará automáticamente con ninguno de esos registros.';
+  }
+  const treatment = data.client_has_treatment === true
+    ? 'Paciente: tiene tratamiento real'
+    : 'Contacto sin tratamiento: permanece como lead';
+  const code = data.client_code ? `Código ${crmDisplayValue(data.client_code)}` : null;
+  return [code, treatment].filter(Boolean).join(' · ');
+}
+
+function crmWhen(value: string | null): string {
+  if (!value) return 'Sin registro';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('es-CO', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function crmTypeTone(contact: CrmContact): Tone {
+  if (contact.isPatient) return 'success';
+  if (contact.contactType === 'lead') return 'warning';
+  return 'neutral';
+}
+
+function crmTypeLabel(contact: CrmContact): string {
+  if (contact.isPatient) return 'Paciente con tratamiento';
+  // Defensa visual: aun si un dato legado estuviera mal clasificado como
+  // patient, sin tratamiento no se presenta como paciente.
+  return contact.contactType === 'patient' ? 'Contacto CRM' : crmContactTypeLabel(contact.contactType);
+}
+
+function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void }) {
+  const [tab, setTab] = useState<CrmTab>('contacts');
+  const [contacts, setContacts] = useState<CrmContact[]>([]);
+  const [reviews, setReviews] = useState<CrmReviewCandidate[]>([]);
+  const [selected, setSelected] = useState<CrmContact | null>(null);
+  const [search, setSearch] = useState('');
+  const [stage, setStage] = useState<'all' | CrmStage>('all');
+  const [type, setType] = useState<CrmTypeFilter>('all');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const reveal = useScrollReveal(`${tab}-${loading}-${selected?.id ?? ''}`);
+
+  const load = useCallback(async (quiet = false) => {
+    if (quiet) setRefreshing(true);
+    else setLoading(true);
+    setError('');
+    try {
+      const [contactRows, reviewRows] = await Promise.all([fetchCrmContacts(), fetchCrmReviewQueue()]);
+      setContacts(contactRows);
+      setReviews(reviewRows);
+      setSelected((current) =>
+        current ? contactRows.find((contact) => contact.id === current.id) ?? null : null,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el CRM.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const normalizedSearch = search.trim().toLocaleLowerCase('es');
+  const filtered = contacts.filter((contact) => {
+    const matchesSearch =
+      !normalizedSearch ||
+      [contact.displayName, contact.phone, contact.email, contact.city, contact.summary, ...contact.tags]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase('es')
+        .includes(normalizedSearch);
+    const matchesStage = stage === 'all' || contact.stage === stage;
+    const matchesType =
+      type === 'all' ||
+      (type === 'patients' ? contact.isPatient : !contact.isPatient && contact.contactType === type);
+    return matchesSearch && matchesStage && matchesType;
+  });
+
+  const patientCount = contacts.filter((contact) => contact.isPatient).length;
+  const leadCount = contacts.filter((contact) => !contact.isPatient && contact.contactType === 'lead').length;
+  const pipelineContacts = contacts.filter((contact) => !contact.isPatient && contact.contactType === 'lead');
+  const activePipeline = pipelineContacts.filter(
+    (contact) => contact.stage !== 'lost' && contact.stage !== 'converted',
+  ).length;
+
+  async function decide(candidate: CrmReviewCandidate, decision: 'approved' | 'rejected') {
+    setReviewing(candidate.id);
+    try {
+      await reviewCrmCandidate(candidate.id, decision, candidate.lockVersion);
+      setReviews((queue) => queue.filter((item) => item.id !== candidate.id));
+      // Una aprobación puede completar el contacto o vincularlo con un cliente;
+      // refrescamos la vista derivada antes de mostrar el resultado.
+      const nextContacts = await fetchCrmContacts();
+      setContacts(nextContacts);
+      notify(decision === 'approved' ? 'Candidato aprobado y auditado' : 'Candidato descartado');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'No se pudo revisar el candidato.', true);
+    } finally {
+      setReviewing(null);
+    }
+  }
+
+  if (selected) {
+    return <CrmContactDetail contact={selected} onBack={() => setSelected(null)} />;
+  }
+
+  if (loading) {
+    return (
+      <div className="view-loading" ref={reveal}>
+        <span className="spinner" /> Cargando contactos y oportunidades…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="crm-state panel" ref={reveal} data-reveal>
+        <span className="kpi__icon kpi__icon--danger"><AlertTriangle size={20} /></span>
+        <div>
+          <h2>No pudimos cargar el CRM</h2>
+          <p>{error}</p>
+        </div>
+        <button className="btn btn--primary" onClick={() => load()}>
+          <RefreshCw size={17} /> Reintentar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="view-wrap" ref={reveal}>
+      <div className="crm-tabs" data-reveal role="tablist" aria-label="Secciones CRM">
+        <button className={`crm-tab${tab === 'contacts' ? ' is-active' : ''}`} onClick={() => setTab('contacts')} role="tab" aria-selected={tab === 'contacts'}>
+          <Users size={17} /> Contactos <small>{contacts.length}</small>
+        </button>
+        <button className={`crm-tab${tab === 'pipeline' ? ' is-active' : ''}`} onClick={() => setTab('pipeline')} role="tab" aria-selected={tab === 'pipeline'}>
+          <TrendingUp size={17} /> Pipeline <small>{activePipeline}</small>
+        </button>
+        <button className={`crm-tab${tab === 'review' ? ' is-active' : ''}`} onClick={() => setTab('review')} role="tab" aria-selected={tab === 'review'}>
+          <ClipboardList size={17} /> Por revisar <small>{reviews.length}</small>
+        </button>
+        <button className="btn btn--icon crm-refresh" onClick={() => load(true)} disabled={refreshing} aria-label="Actualizar CRM" title="Actualizar CRM">
+          {refreshing ? <span className="spinner spinner--sm" /> : <RefreshCw size={17} />}
+        </button>
+      </div>
+
+      <section className="kpi-grid" data-reveal>
+        <SignalKpi icon={Users} tone="brand" label="Contactos" value={contacts.length} hint="Identidades únicas en CRM" />
+        <SignalKpi icon={UserPlus} tone="warn" label="Leads" value={leadCount} hint="Contactos comerciales" />
+        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={patientCount} hint="Solo con tratamiento registrado" />
+        <SignalKpi icon={ClipboardList} tone={reviews.length ? 'warn' : 'ok'} label="Por revisar" value={reviews.length} hint="Cambios aún no aplicados" />
+      </section>
+
+      {tab === 'contacts' && (
+        <>
+          <CrmFilters
+            search={search}
+            setSearch={setSearch}
+            stage={stage}
+            setStage={setStage}
+            type={type}
+            setType={setType}
+            count={filtered.length}
+          />
+          <CrmContactsTable contacts={filtered} total={contacts.length} onOpen={setSelected} />
+        </>
+      )}
+
+      {tab === 'pipeline' && (
+        pipelineContacts.length === 0 ? (
+          <CrmEmpty icon={TrendingUp} title="El pipeline está vacío" text="Los contactos clasificados como leads aparecerán aquí; pacientes, equipo y proveedores permanecen fuera del embudo comercial." />
+        ) : (
+          <CrmPipeline contacts={pipelineContacts} onOpen={setSelected} />
+        )
+      )}
+
+      {tab === 'review' && (
+        <CrmReviewQueue candidates={reviews} reviewing={reviewing} onDecision={decide} />
+      )}
+    </div>
+  );
+}
+
+function CrmFilters({
+  search,
+  setSearch,
+  stage,
+  setStage,
+  type,
+  setType,
+  count,
+}: {
+  search: string;
+  setSearch: (value: string) => void;
+  stage: 'all' | CrmStage;
+  setStage: (value: 'all' | CrmStage) => void;
+  type: CrmTypeFilter;
+  setType: (value: CrmTypeFilter) => void;
+  count: number;
+}) {
+  return (
+    <div className="crm-filters" data-reveal>
+      <div className="search">
+        <Search size={17} />
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nombre, teléfono, correo o interés" />
+        {search && (
+          <button className="crm-clear" onClick={() => setSearch('')} aria-label="Limpiar búsqueda"><X size={15} /></button>
+        )}
+      </div>
+      <label className="crm-select">
+        <span>Tipo</span>
+        <select value={type} onChange={(event) => setType(event.target.value as CrmTypeFilter)}>
+          <option value="all">Todos</option>
+          <option value="lead">Leads</option>
+          <option value="patients">Pacientes con tratamiento</option>
+          <option value="supplier">Proveedores</option>
+          <option value="staff">Equipo</option>
+          <option value="partner">Aliados</option>
+          <option value="personal">Personal / no comercial</option>
+          <option value="group_only">Solo en grupos</option>
+          <option value="other">Otros</option>
+          <option value="unknown">Sin clasificar</option>
+        </select>
+      </label>
+      <label className="crm-select">
+        <span>Etapa</span>
+        <select value={stage} onChange={(event) => setStage(event.target.value as 'all' | CrmStage)}>
+          <option value="all">Todas</option>
+          {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+      </label>
+      <span className="crm-result-count">{count} resultado{count === 1 ? '' : 's'}</span>
+    </div>
+  );
+}
+
+function CrmContactsTable({ contacts, total, onOpen }: { contacts: CrmContact[]; total: number; onOpen: (contact: CrmContact) => void }) {
+  if (total === 0) {
+    return <CrmEmpty icon={Users} title="Aún no hay contactos" text="Cuando termine la importación de WhatsApp, todos aparecerán aquí sin convertirse automáticamente en pacientes." />;
+  }
+  if (contacts.length === 0) {
+    return <CrmEmpty icon={Search} title="Sin coincidencias" text="Prueba otra búsqueda o limpia los filtros." />;
+  }
+  return (
+    <section className="panel crm-list-panel" data-reveal>
+      <div className="table-wrap">
+        <table className="table crm-table">
+          <thead>
+            <tr>
+              <th>Contacto</th>
+              <th>Clasificación</th>
+              <th>Etapa</th>
+              <th>Actividad</th>
+              <th>Próxima acción</th>
+              <th aria-label="Abrir" />
+            </tr>
+          </thead>
+          <tbody>
+            {contacts.map((contact) => (
+              <tr key={contact.id}>
+                <td data-label="Contacto">
+                  <button className="crm-person" onClick={() => onOpen(contact)}>
+                    <span className="crm-avatar">{contact.displayName.slice(0, 1).toUpperCase()}</span>
+                    <span>
+                      <strong>{contact.displayName}</strong>
+                      <small>{contact.phone || contact.email || 'Sin datos de contacto'}</small>
+                    </span>
+                  </button>
+                </td>
+                <td data-label="Clasificación"><Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} /></td>
+                <td data-label="Etapa"><span className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</span></td>
+                <td data-label="Actividad">
+                  <strong className="crm-cell-value">{contact.openOpportunityCount} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</strong>
+                  <span>{contact.opportunityCount} oportunidades · {crmWhen(contact.lastInteractionAt)}</span>
+                </td>
+                <td data-label="Próxima acción">
+                  <strong className="crm-cell-value">{contact.nextActionAt ? 'Seguimiento programado' : 'Sin definir'}</strong>
+                  <span>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : '—'}</span>
+                </td>
+                <td className="crm-open-cell"><button className="btn btn--icon" onClick={() => onOpen(contact)} aria-label={`Abrir ${contact.displayName}`}><ChevronRight size={17} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function CrmPipeline({ contacts, onOpen }: { contacts: CrmContact[]; onOpen: (contact: CrmContact) => void }) {
+  const visibleStages = CRM_STAGES.filter((item) => item.id !== 'unclassified' || contacts.some((contact) => contact.stage === item.id));
+  return (
+    <section className="crm-board" data-reveal aria-label="Pipeline comercial">
+      {visibleStages.map((item) => {
+        const stageContacts = contacts.filter((contact) => contact.stage === item.id);
+        return (
+          <div className="crm-column" key={item.id}>
+            <header className="crm-column__head">
+              <span className={`dot dot--${item.id === 'lost' ? 'danger' : item.id === 'converted' ? 'ok' : 'warn'}`} />
+              <strong>{item.label}</strong>
+              <small>{stageContacts.length}</small>
+            </header>
+            <div className="crm-column__body">
+              {stageContacts.map((contact) => (
+                <button className="crm-deal" key={contact.id} onClick={() => onOpen(contact)}>
+                  <strong>{contact.displayName}</strong>
+                  <span>{contact.summary || contact.tags.join(', ') || 'Sin resumen validado'}</span>
+                  <div>
+                    <small>{contact.openOpportunityCount} oportunidad{contact.openOpportunityCount === 1 ? '' : 'es'} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</small>
+                    <ChevronRight size={14} />
+                  </div>
+                </button>
+              ))}
+              {stageContacts.length === 0 && <span className="crm-column__empty">Sin contactos</span>}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function CrmReviewQueue({
+  candidates,
+  reviewing,
+  onDecision,
+}: {
+  candidates: CrmReviewCandidate[];
+  reviewing: string | null;
+  onDecision: (candidate: CrmReviewCandidate, decision: 'approved' | 'rejected') => void;
+}) {
+  if (candidates.length === 0) {
+    return <CrmEmpty icon={Check} title="Bandeja al día" text="No hay matches ni cambios pendientes de revisión humana." />;
+  }
+  return (
+    <section className="crm-review-list" data-reveal>
+      {candidates.map((candidate) => {
+        const pct = crmConfidencePct(candidate.confidence) ?? 0;
+        const isMatch = candidate.candidateKind.includes('match');
+        const isConflict = candidate.candidateKind === 'contact_match_conflict';
+        const changes = crmCandidateChanges(candidate);
+        const databaseChanges = changes.filter((change) => ['full_name', 'phone', 'email'].includes(change.key));
+        return (
+          <article className="panel crm-review" key={candidate.id}>
+            <header className="crm-review__head">
+              <span className="crm-avatar"><User size={17} /></span>
+              <div>
+                <span className="eyebrow">{isMatch ? 'Match propuesto' : 'Dato propuesto'}</span>
+                <h3>{candidate.contactName}</h3>
+              </div>
+              <Badge label={`${pct}% confianza`} tone={crmConfidenceTone(candidate.confidence)} />
+            </header>
+
+            {isMatch ? (
+              <div className="crm-compare crm-compare--match">
+                <div><span>Contacto CRM</span><strong>{candidate.contactName}</strong></div>
+                <span className="crm-compare__arrow"><LinkIcon size={18} /></span>
+                <div>
+                  <span>{isConflict ? 'Conflicto en la base actual' : 'Registro sugerido'}</span>
+                  <strong>{crmMatchTarget(candidate)}</strong>
+                  <small className="crm-match-note">{crmMatchContext(candidate)}</small>
+                </div>
+              </div>
+            ) : (
+              <div className="crm-change-list">
+                {changes.map((change) => (
+                  <div className="crm-compare" key={change.key}>
+                    <div><span>Campo</span><strong>{CRM_FIELD_LABELS[change.key] || change.key.replace(/_/g, ' ')}</strong></div>
+                    <div><span>Valor actual</span><strong>{crmDisplayValue(change.current)}</strong></div>
+                    <span className="crm-compare__arrow"><ChevronRight size={18} /></span>
+                    <div><span>Valor propuesto</span><strong>{crmDisplayValue(change.proposed)}</strong></div>
+                  </div>
+                ))}
+                {changes.length === 0 && <p className="muted-line">El candidato no contiene campos comparables.</p>}
+              </div>
+            )}
+
+            {isMatch && !isConflict && databaseChanges.length > 0 && (
+              <div className="crm-change-list">
+                {databaseChanges.map((change) => (
+                  <div className="crm-compare" key={change.key}>
+                    <div><span>Campo</span><strong>{CRM_FIELD_LABELS[change.key]}</strong></div>
+                    <div><span>Base actual</span><strong>{crmDisplayValue(change.current)}</strong></div>
+                    <span className="crm-compare__arrow"><ChevronRight size={18} /></span>
+                    <div><span>WhatsApp</span><strong>{crmDisplayValue(change.proposed)}</strong></div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="crm-review__meta">
+              <span><strong>Motivo:</strong> {candidate.reason || 'Importación desde WhatsApp pendiente de validación.'}</span>
+              <span><strong>Evidencias:</strong> {candidate.evidenceCount} referencia{candidate.evidenceCount === 1 ? '' : 's'} · creado {crmWhen(candidate.createdAt)}</span>
+            </div>
+            <footer className="crm-review__actions">
+              <button className="btn btn--primary" onClick={() => onDecision(candidate, 'approved')} disabled={reviewing !== null}>
+                {reviewing === candidate.id ? <span className="spinner spinner--sm" /> : <Check size={17} />}
+                {isConflict ? 'Importar sin vincular' : isMatch ? 'Aprobar vínculo' : 'Aprobar'}
+              </button>
+              <button className="btn btn--ghost" onClick={() => onDecision(candidate, 'rejected')} disabled={reviewing !== null}>
+                <X size={17} /> Descartar
+              </button>
+              <small>{isConflict
+                ? 'Se crea el contacto CRM con conflicto pendiente; no se elige ningún registro.'
+                : 'Aprobar no crea un paciente ni un tratamiento.'}</small>
+            </footer>
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: () => void }) {
+  const ref = useScrollReveal(contact.id);
+  const confidence = crmConfidencePct(contact.matchConfidence);
+  return (
+    <div className="detail crm-detail" ref={ref}>
+      <div className="detail__bar" data-reveal>
+        <button className="detail__back" onClick={onBack}><ArrowLeft size={17} /> CRM</button>
+        <nav className="detail__crumbs" aria-label="Ruta">
+          <button onClick={onBack}>Contactos</button><ChevronRight size={13} /><span>{contact.displayName}</span>
+        </nav>
+      </div>
+
+      <header className="crm-detail__hero" data-reveal>
+        <span className="crm-detail__avatar">{contact.displayName.slice(0, 1).toUpperCase()}</span>
+        <div className="crm-detail__identity">
+          <span className="eyebrow">Contacto CRM</span>
+          <h1>{contact.displayName}</h1>
+          <div className="detail__tags">
+            <Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} />
+            <span className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</span>
+            {!contact.active && <Badge label="Archivado" tone="neutral" />}
+            {contact.lifecycleStage && <span className="detail__pid">Ciclo · {contact.lifecycleStage.replace(/_/g, ' ')}</span>}
+          </div>
+        </div>
+        <div className="crm-detail__metric">
+          <strong>{contact.openOpportunityCount}</strong>
+          <span>oportunidades abiertas</span>
+        </div>
+      </header>
+
+      <div className="detail__grid">
+        <aside className="detail__aside">
+          <section className="detail-block" data-reveal>
+            <div className="label"><User size={17} /> Identidad</div>
+            <div className="crm-facts">
+              <div><span>Teléfono</span><strong>{contact.phone || 'Sin registrar'}</strong></div>
+              <div><span>Correo</span><strong>{contact.email || 'Sin registrar'}</strong></div>
+              <div><span>Ciudad</span><strong>{contact.city || 'Sin registrar'}</strong></div>
+              <div><span>Responsable</span><strong>{contact.responsible || 'Sin asignar'}</strong></div>
+            </div>
+          </section>
+
+          <section className="detail-block crm-patient-rule" data-reveal>
+            <div className="label"><Dna size={17} /> Relación clínica</div>
+            {contact.isPatient ? (
+              <>
+                <Badge label="Paciente confirmado" tone="success" />
+                <p>{contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} registrado{contact.treatmentCount === 1 ? '' : 's'} en la base; {contact.activeTreatmentCount} activo{contact.activeTreatmentCount === 1 ? '' : 's'}.</p>
+                {(contact.clientName || contact.clientCode) && <span className="crm-match-note">{contact.clientName || 'Paciente'} · {contact.clientCode || 'sin código'}</span>}
+              </>
+            ) : (
+              <>
+                <Badge label="No es paciente" tone="neutral" />
+                <p>Este contacto permanece en CRM. Solo será paciente cuando exista un tratamiento real.</p>
+              </>
+            )}
+            {confidence !== null && <span className="crm-match-note">Match de identidad: {confidence}% · {contact.matchMethod || contact.matchStatus || 'pendiente'}</span>}
+          </section>
+        </aside>
+
+        <main className="detail__main">
+          <section className="detail-block" data-reveal>
+            <div className="label"><Sparkles size={17} /> Lectura comercial</div>
+            <div className="crm-summary crm-summary--single">
+              <div><span>Último resumen validado</span><p>{contact.summary || 'La conversación todavía no tiene un resumen validado.'}</p></div>
+            </div>
+            {contact.tags.length > 0 && <div className="crm-tags">{contact.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+          </section>
+
+          <section className="detail-block" data-reveal>
+            <div className="label"><CalendarClock size={17} /> Seguimiento</div>
+            <div className="crm-followup">
+              <div><span>Próxima acción</span><strong>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : 'Sin definir'}</strong></div>
+              <div><span>Oportunidades</span><strong>{contact.openOpportunityCount} abiertas · {contact.opportunityCount} total</strong></div>
+              <div><span>Primer contacto</span><strong>{crmWhen(contact.firstInteractionAt)}</strong></div>
+              <div><span>Último contacto</span><strong>{crmWhen(contact.lastInteractionAt)}</strong></div>
+            </div>
+          </section>
+
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function CrmEmpty({ icon: Icon, title, text }: { icon: ElementType; title: string; text: string }) {
+  return (
+    <section className="panel crm-empty" data-reveal>
+      <span className="crm-empty__icon"><Icon size={24} /></span>
+      <h2>{title}</h2>
+      <p>{text}</p>
+    </section>
   );
 }
 

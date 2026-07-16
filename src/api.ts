@@ -4,6 +4,11 @@ import { supabase } from './supabase';
 import type {
   Analytics,
   ClinicalNote,
+  CrmContact,
+  CrmContactType,
+  CrmReviewCandidate,
+  CrmReviewDecision,
+  CrmStage,
   DateRange,
   FinanceMovement,
   FinanceSummary,
@@ -20,6 +25,87 @@ import type {
   StockMovePayload,
   TimelineEvent,
 } from './data';
+
+type DbRow = Record<string, unknown>;
+
+function rowValue(row: DbRow, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null) return value;
+  }
+  return null;
+}
+
+function rowString(row: DbRow, ...keys: string[]): string | null {
+  const value = rowValue(row, ...keys);
+  if (typeof value === 'string') return value.trim() || null;
+  if (typeof value === 'number') return String(value);
+  return null;
+}
+
+function rowNumber(row: DbRow, ...keys: string[]): number {
+  const value = rowValue(row, ...keys);
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rowBoolean(row: DbRow, ...keys: string[]): boolean {
+  const value = rowValue(row, ...keys);
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function rowTags(row: DbRow): string[] {
+  const value = rowValue(row, 'tags', 'labels');
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  if (typeof value === 'string') return value.split(',').map((tag) => tag.trim()).filter(Boolean);
+  return [];
+}
+
+function rowObject(row: DbRow, key: string): Record<string, unknown> {
+  const value = rowValue(row, key);
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function crmType(value: string | null): CrmContactType {
+  return value === 'lead' || value === 'patient' || value === 'supplier' || value === 'staff' || value === 'partner' || value === 'personal' || value === 'group_only' || value === 'other'
+    ? value
+    : 'unknown';
+}
+
+const CRM_STAGE_IDS = new Set<CrmStage>([
+  'new',
+  'contacted',
+  'interested',
+  'qualified',
+  'appointment_pending',
+  'appointment_scheduled',
+  'converted',
+  'follow_up',
+  'lost',
+  'unclassified',
+]);
+
+function crmStage(value: string | null): CrmStage {
+  return value && CRM_STAGE_IDS.has(value as CrmStage) ? (value as CrmStage) : 'unclassified';
+}
+
+/** Lee una vista completa en páginas para no perder contactos por el límite de PostgREST. */
+async function fetchAllRows(view: string, orderColumn: string): Promise<DbRow[]> {
+  const pageSize = 1000;
+  const rows: DbRow[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from(view)
+      .select('*')
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as DbRow[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
 
 export interface MovementRow {
   id: string;
@@ -112,6 +198,96 @@ export async function fetchAll(): Promise<HealenData> {
     finance: unwrap<FinanceMovement[]>(finance),
     movements: unwrap<MovementRow[]>(movements),
   };
+}
+
+// ---------- CRM (carga perezosa al entrar a la vista) ----------
+function normalizeCrmContact(row: DbRow): CrmContact {
+  const id = rowString(row, 'id') ?? '';
+  const treatmentCount = rowNumber(row, 'treatment_count');
+  // La vista es la fuente de verdad. Como defensa adicional, un vínculo a
+  // cliente sin tratamiento no se muestra como paciente.
+  const isPatient = rowBoolean(row, 'has_treatment') && treatmentCount > 0;
+  const confidenceRaw = rowValue(row, 'match_confidence');
+  const matchConfidence = confidenceRaw === null ? null : rowNumber(row, 'match_confidence');
+  return {
+    id,
+    displayName: rowString(row, 'display_name') ?? 'Contacto sin nombre',
+    phone: rowString(row, 'primary_phone'),
+    email: rowString(row, 'primary_email'),
+    city: rowString(row, 'city'),
+    contactType: crmType(rowString(row, 'contact_type')),
+    stage: crmStage(rowString(row, 'current_opportunity_stage')),
+    lifecycleStage: rowString(row, 'lifecycle_stage'),
+    responsible: rowString(row, 'owner_name'),
+    summary: rowString(row, 'last_summary'),
+    nextActionAt: rowString(row, 'next_action_at'),
+    tags: rowTags(row),
+    firstInteractionAt: rowString(row, 'first_contact_at'),
+    lastInteractionAt: rowString(row, 'last_contact_at'),
+    isPatient,
+    clientId: rowString(row, 'client_id'),
+    clientCode: rowString(row, 'client_code'),
+    clientName: rowString(row, 'client_name'),
+    treatmentCount,
+    activeTreatmentCount: rowNumber(row, 'active_treatment_count'),
+    matchStatus: rowString(row, 'match_status'),
+    matchMethod: rowString(row, 'match_method'),
+    matchConfidence,
+    opportunityCount: rowNumber(row, 'opportunity_count'),
+    openOpportunityCount: rowNumber(row, 'open_opportunity_count'),
+    active: rowBoolean(row, 'active'),
+    lockVersion: rowNumber(row, 'lock_version'),
+    identities: rowValue(row, 'identities'),
+  };
+}
+
+function normalizeReviewCandidate(row: DbRow): CrmReviewCandidate {
+  return {
+    id: rowString(row, 'candidate_id') ?? '',
+    importRunId: rowString(row, 'import_run_id') ?? '',
+    contactId: rowString(row, 'contact_id') ?? '',
+    contactName: rowString(row, 'contact_name') ?? 'Contacto sin nombre',
+    candidateKind: rowString(row, 'candidate_type') ?? 'field_update',
+    sourceRecordKey: rowString(row, 'source_record_key') ?? '',
+    status: rowString(row, 'status') ?? 'pending',
+    currentData: rowObject(row, 'current_data'),
+    proposedData: rowObject(row, 'proposed_data'),
+    confidence: rowNumber(row, 'confidence'),
+    reason: rowString(row, 'reason'),
+    evidenceCount: rowNumber(row, 'evidence_count'),
+    createdAt: rowString(row, 'created_at'),
+    reviewedAt: rowString(row, 'reviewed_at'),
+    reviewerName: rowString(row, 'reviewer_name'),
+    reviewNote: rowString(row, 'review_note'),
+    lockVersion: rowNumber(row, 'lock_version'),
+  };
+}
+
+export async function fetchCrmContacts(): Promise<CrmContact[]> {
+  const rows = await fetchAllRows('v_crm_contacts', 'id');
+  return rows.map(normalizeCrmContact).filter((contact) => contact.id);
+}
+
+export async function fetchCrmReviewQueue(): Promise<CrmReviewCandidate[]> {
+  const rows = await fetchAllRows('v_crm_review_queue', 'candidate_id');
+  return rows
+    .map(normalizeReviewCandidate)
+    .filter((candidate) => candidate.id)
+    .sort((a, b) => b.confidence - a.confidence);
+}
+
+export function reviewCrmCandidate(
+  candidateId: string,
+  decision: CrmReviewDecision,
+  expectedVersion: number,
+  reviewNote: string | null = null,
+) {
+  return rpc('crm_review_candidate', {
+    p_candidate: candidateId,
+    p_decision: decision,
+    p_expected_version: expectedVersion,
+    p_review_note: reviewNote,
+  });
 }
 
 async function rpc(fn: string, args: Record<string, unknown>) {

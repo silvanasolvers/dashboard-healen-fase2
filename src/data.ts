@@ -2,7 +2,7 @@
 // Centro de medicina regenerativa: pacientes con planes de péptidos/sueros,
 // inventario clínico, y caja separada empresa vs. socio.
 
-export type View = 'inicio' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
+export type View = 'inicio' | 'crm' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
 export type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
 export type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 export type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
@@ -14,6 +14,114 @@ export type PatientSubView = 'pacientes' | 'alertas';
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger';
 /** Semáforo: verde estable, ámbar atención, rojo urgente. */
 export type Signal = 'ok' | 'warn' | 'danger';
+
+// ---------- CRM (contactos de WhatsApp y oportunidades comerciales) ----------
+// CRM y pacientes son dominios separados: `isPatient` viene de tratamientos
+// existentes en la base, nunca de una inferencia hecha sobre la conversación.
+export type CrmContactType =
+  | 'unknown'
+  | 'lead'
+  | 'patient'
+  | 'supplier'
+  | 'staff'
+  | 'partner'
+  | 'personal'
+  | 'group_only'
+  | 'other';
+export type CrmStage =
+  | 'new'
+  | 'contacted'
+  | 'interested'
+  | 'qualified'
+  | 'appointment_pending'
+  | 'appointment_scheduled'
+  | 'converted'
+  | 'follow_up'
+  | 'lost'
+  | 'unclassified';
+export type CrmReviewDecision = 'approved' | 'rejected';
+
+export interface CrmContact {
+  id: string;
+  displayName: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  contactType: CrmContactType;
+  stage: CrmStage;
+  lifecycleStage: string | null;
+  responsible: string | null;
+  summary: string | null;
+  nextActionAt: string | null;
+  tags: string[];
+  firstInteractionAt: string | null;
+  lastInteractionAt: string | null;
+  isPatient: boolean;
+  clientId: string | null;
+  clientCode: string | null;
+  clientName: string | null;
+  treatmentCount: number;
+  activeTreatmentCount: number;
+  matchStatus: string | null;
+  matchMethod: string | null;
+  matchConfidence: number | null;
+  opportunityCount: number;
+  openOpportunityCount: number;
+  active: boolean;
+  lockVersion: number;
+  identities: unknown;
+}
+
+export interface CrmReviewCandidate {
+  id: string;
+  importRunId: string;
+  contactId: string;
+  contactName: string;
+  candidateKind: string;
+  sourceRecordKey: string;
+  status: string;
+  currentData: Record<string, unknown>;
+  proposedData: Record<string, unknown>;
+  confidence: number;
+  reason: string | null;
+  evidenceCount: number;
+  createdAt: string | null;
+  reviewedAt: string | null;
+  reviewerName: string | null;
+  reviewNote: string | null;
+  lockVersion: number;
+}
+
+export const CRM_STAGES: Array<{ id: CrmStage; label: string }> = [
+  { id: 'new', label: 'Nuevo' },
+  { id: 'contacted', label: 'Contactado' },
+  { id: 'interested', label: 'Interesado' },
+  { id: 'qualified', label: 'Calificado' },
+  { id: 'appointment_pending', label: 'Cita pendiente' },
+  { id: 'appointment_scheduled', label: 'Cita agendada' },
+  { id: 'follow_up', label: 'Seguimiento' },
+  { id: 'converted', label: 'Convertido' },
+  { id: 'lost', label: 'Perdido' },
+  { id: 'unclassified', label: 'Sin clasificar' },
+];
+
+export function crmStageLabel(stage: string | null | undefined): string {
+  return CRM_STAGES.find((item) => item.id === stage)?.label ?? 'Sin clasificar';
+}
+
+export function crmContactTypeLabel(type: CrmContactType): string {
+  return {
+    lead: 'Lead',
+    patient: 'Paciente',
+    supplier: 'Proveedor',
+    staff: 'Equipo',
+    partner: 'Aliado',
+    personal: 'Personal / no comercial',
+    group_only: 'Solo en grupos',
+    other: 'Otro',
+    unknown: 'Sin clasificar',
+  }[type];
+}
 
 export interface PeptideLine {
   name: string;
