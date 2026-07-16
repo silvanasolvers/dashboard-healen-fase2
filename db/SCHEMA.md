@@ -9,7 +9,9 @@ Sistema integrado: **clientes ↔ tratamientos ↔ inventario (por lotes, FEFO) 
 
 - **Project ref:** `densirbwpzsmugoeramc`
 - **REST:** `https://densirbwpzsmugoeramc.supabase.co/rest/v1/`
-- **SQL versionado:** `db/01_foundation.sql` … `db/08_hardening.sql` (correr en orden con `python3 db/run.py <archivo>`).
+- **SQL versionado:** `db/01_foundation.sql` … `db/17_phase2_dashboard.sql`
+  (incluye las dos migraciones `16_*`; correr en orden con
+  `python3 db/run.py <archivo>` y nunca ejecutar `06_seed.sql` sobre producción).
 - **Front conectado:** el dashboard React consume las vistas `v_dashboard_*` y las RPCs
   `dash_*` (capa en `07_dashboard.sql`) vía `@supabase/supabase-js` con anon key + login.
 
@@ -154,6 +156,36 @@ La ficha del paciente "a la mano": notas persistentes + historia real unificada 
 - **`v_patient_revenue`** — abonos por mes y paciente (revenue en el tiempo).
 - **`v_patient_summary`** — resumen vivo: valor de vida, abonado, saldo, sesiones, última venta, tier.
 - **Próximos pasos NO se guardan**: el front (`buildNextSteps`) los deriva en vivo del paciente + dossier, así se auto-gestionan al pasar los días o entrar una venta.
+
+### CRM WhatsApp (`16_crm.sql`)
+
+Directorio comercial separado de la ficha clínica:
+
+- `crm_contacts` + `crm_contact_identities`: una persona puede tener alias PN/LID/JID,
+  teléfono y correo; la identidad exacta evita duplicados.
+- `crm_opportunities`: pipeline únicamente para leads.
+- `crm_import_runs` + `crm_import_candidates`: staging idempotente y revisable antes
+  de crear/actualizar contactos.
+- `crm_contact_evidence`: solo `messageId`/hash/timestamp; no admite cuerpos ni previews.
+- `crm_change_audit`: bitácora append-only de ingestiones, decisiones, matches y merges.
+- `v_crm_contacts`: muestra `patient` únicamente cuando el `client_id` vinculado tiene
+  al menos un registro en `treatments`.
+- `v_crm_review_queue`: datos propuestos normalizados + conteo de evidencia, sin texto crudo.
+
+RPCs: `crm_ingest_candidates`, `crm_stage_import_matches`, `crm_apply_import`,
+`crm_review_candidate`, `crm_match_existing_contacts` y `crm_merge_client_fields`.
+El matching automático de la importación WhatsApp usa solo el teléfono derivado de la
+identidad WhatsApp, evalúa duplicados contra todos los `clients` y después deriva paciente
+por tratamiento. Un correo extraído del chat se muestra como dato propuesto, pero no se
+usa para vincular; un correo solo puede participar cuando exista como identidad verificada.
+El nombre nunca vincula.
+La ingesta reconstruye `proposedData` con una lista blanca recursiva y rechaza claves de
+mensajes; un match múltiple puede importarse como contacto en conflicto, pero queda sin
+vínculo automático a `clients`.
+`crm_apply_import` y `crm_stage_import_matches` hacen dry-run por defecto. Ninguna ingesta,
+aprobación o aplicación crea/modifica tratamientos, notas clínicas o fichas de cliente.
+El único write hacia `clients` es `crm_merge_client_fields`, opt-in, parcial, auditado y
+con control de concurrencia para cualquier sobrescritura.
 
 ---
 
