@@ -64,7 +64,7 @@ end $$;
 create or replace function crm_identity_hash(p_kind text, p_value text)
 returns text language sql immutable set search_path = public as $$
   select case when crm_normalize_identity(p_kind, p_value) is null then null
-    else encode(digest(crm_normalize_identity(p_kind, p_value), 'sha256'), 'hex') end;
+    else encode(extensions.digest(crm_normalize_identity(p_kind, p_value), 'sha256'), 'hex') end;
 $$;
 
 create or replace function crm_json_text_array(p_value jsonb)
@@ -553,7 +553,9 @@ begin
   if jsonb_typeof(p_payload->'candidates') <> 'array' then raise exception 'candidates debe ser un arreglo'; end if;
   v_candidate_total := jsonb_array_length(p_payload->'candidates');
   if v_candidate_total > 5000 then raise exception 'Una corrida admite máximo 5000 candidatos'; end if;
-  v_payload_checksum := encode(digest((p_payload->'candidates')::text, 'sha256'), 'hex');
+  v_payload_checksum := encode(
+    extensions.digest((p_payload->'candidates')::text, 'sha256'), 'hex'
+  );
 
   select id, source_checksum, payload_checksum, candidates_received, source,
          external_run_id, status, candidates_applied, candidates_rejected
