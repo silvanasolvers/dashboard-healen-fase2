@@ -22,6 +22,7 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `17_phase2_dashboard.sql` | Agenda, dossier relacionado y vistas de dashboard para Fase 2 |
 | `18_crm_view_hardening.sql` | Revoca explícitamente acceso anon/PUBLIC a las vistas CRM |
 | `19_crm_cleanup.sql` | Archiva contactos WhatsApp sin información útil y excluye archivados del directorio |
+| `20_crm_operations.sql` | Edición auditada de contactos y movimientos del pipeline |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar

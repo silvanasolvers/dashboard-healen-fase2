@@ -152,11 +152,13 @@ import {
   uploadSupport,
   inventoryMovement,
   MovementRow,
+  moveCrmContact,
   prescribeCheckout,
   PrescribeResult,
   reviewCrmCandidate,
   toggleMilestone,
   updateClient,
+  updateCrmContact,
   upsertProduct,
 } from './api';
 import { downloadCsv, downloadPdf } from './lib/export';
@@ -1286,6 +1288,8 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
   const [contacts, setContacts] = useState<CrmContact[]>([]);
   const [reviews, setReviews] = useState<CrmReviewCandidate[]>([]);
   const [selected, setSelected] = useState<CrmContact | null>(null);
+  const [editing, setEditing] = useState<CrmContact | null>(null);
+  const [moving, setMoving] = useState<CrmContact | null>(null);
   const [search, setSearch] = useState('');
   const [stage, setStage] = useState<'all' | CrmStage>('all');
   const [type, setType] = useState<CrmTypeFilter>('all');
@@ -1293,6 +1297,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [savingCrm, setSavingCrm] = useState(false);
   const [error, setError] = useState('');
   const reveal = useScrollReveal(`${tab}-${loading}-${selected?.id ?? ''}`);
 
@@ -1373,8 +1378,60 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
     }
   }
 
+  async function saveContact(fields: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    contactType: Exclude<CrmContactType, 'patient'>;
+    summary: string | null;
+    tags: string[];
+  }) {
+    if (!editing) return;
+    setSavingCrm(true);
+    try {
+      await updateCrmContact(editing, fields);
+      const nextContacts = await fetchCrmContacts();
+      setContacts(nextContacts);
+      setSelected((current) => current ? nextContacts.find((item) => item.id === current.id) ?? null : null);
+      setEditing(null);
+      notify('Contacto actualizado y auditado');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'No se pudo actualizar el contacto.', true);
+    } finally {
+      setSavingCrm(false);
+    }
+  }
+
+  async function moveContact(contact: CrmContact, nextStage: CrmStage, nextActionAt?: string | null) {
+    setSavingCrm(true);
+    try {
+      await moveCrmContact(contact.id, nextStage, nextActionAt === undefined ? contact.nextActionAt : nextActionAt);
+      const nextContacts = await fetchCrmContacts();
+      setContacts(nextContacts);
+      setSelected((current) => current ? nextContacts.find((item) => item.id === current.id) ?? null : null);
+      setMoving(null);
+      notify(`Contacto movido a ${crmStageLabel(nextStage)}`);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'No se pudo mover el contacto.', true);
+    } finally {
+      setSavingCrm(false);
+    }
+  }
+
   if (selected) {
-    return <CrmContactDetail contact={selected} onBack={() => setSelected(null)} />;
+    return (
+      <>
+        <CrmContactDetail
+          contact={selected}
+          onBack={() => setSelected(null)}
+          onEdit={() => setEditing(selected)}
+          onMove={() => setMoving(selected)}
+        />
+        {editing && <CrmEditSheet contact={editing} saving={savingCrm} onSave={saveContact} onClose={() => setEditing(null)} />}
+        {moving && <CrmMoveSheet contact={moving} saving={savingCrm} onMove={(stageValue, nextAction) => moveContact(moving, stageValue, nextAction)} onClose={() => setMoving(null)} />}
+      </>
+    );
   }
 
   if (loading) {
@@ -1444,6 +1501,9 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
             pageSize={contactsPerPage}
             onPageChange={setPage}
             onOpen={setSelected}
+            onEdit={setEditing}
+            onMove={(contact, nextStage) => moveContact(contact, nextStage)}
+            saving={savingCrm}
           />
         </>
       )}
@@ -1452,13 +1512,16 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
         pipelineContacts.length === 0 ? (
           <CrmEmpty icon={TrendingUp} title="El pipeline está vacío" text="Los contactos clasificados como leads aparecerán aquí; pacientes, equipo y proveedores permanecen fuera del embudo comercial." />
         ) : (
-          <CrmPipeline contacts={pipelineContacts} onOpen={setSelected} />
+          <CrmPipeline contacts={pipelineContacts} onOpen={setSelected} onMove={(contact, nextStage) => moveContact(contact, nextStage)} saving={savingCrm} />
         )
       )}
 
       {tab === 'review' && (
         <CrmReviewQueue candidates={reviews} reviewing={reviewing} onDecision={decide} />
       )}
+
+      {editing && <CrmEditSheet contact={editing} saving={savingCrm} onSave={saveContact} onClose={() => setEditing(null)} />}
+      {moving && <CrmMoveSheet contact={moving} saving={savingCrm} onMove={(stageValue, nextAction) => moveContact(moving, stageValue, nextAction)} onClose={() => setMoving(null)} />}
     </div>
   );
 }
@@ -1525,6 +1588,9 @@ function CrmContactsTable({
   pageSize,
   onPageChange,
   onOpen,
+  onEdit,
+  onMove,
+  saving,
 }: {
   contacts: CrmContact[];
   filteredTotal: number;
@@ -1534,6 +1600,9 @@ function CrmContactsTable({
   pageSize: number;
   onPageChange: (page: number) => void;
   onOpen: (contact: CrmContact) => void;
+  onEdit: (contact: CrmContact) => void;
+  onMove: (contact: CrmContact, stage: CrmStage) => void;
+  saving: boolean;
 }) {
   if (total === 0) {
     return <CrmEmpty icon={Users} title="Aún no hay contactos" text="Cuando termine la importación de WhatsApp, todos aparecerán aquí sin convertirse automáticamente en pacientes." />;
@@ -1564,11 +1633,22 @@ function CrmContactsTable({
                     <span>
                       <strong>{contact.displayName}</strong>
                       <small>{[contact.phone, contact.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}</small>
+                      {(contact.city || contact.responsible) && <small>{[contact.city, contact.responsible && `Resp. ${contact.responsible}`].filter(Boolean).join(' · ')}</small>}
                     </span>
                   </button>
                 </td>
                 <td data-label="Clasificación"><Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} /></td>
-                <td data-label="Etapa"><span className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</span></td>
+                <td data-label="Etapa">
+                  <select
+                    className={`crm-stage-select crm-stage--${contact.stage}`}
+                    value={contact.stage}
+                    onChange={(event) => onMove(contact, event.target.value as CrmStage)}
+                    disabled={saving}
+                    aria-label={`Mover ${contact.displayName} en el pipeline`}
+                  >
+                    {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                  </select>
+                </td>
                 <td data-label="Actividad">
                   <strong className="crm-cell-value">{contact.openOpportunityCount} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</strong>
                   <span>{contact.opportunityCount} oportunidades · {crmWhen(contact.lastInteractionAt)}</span>
@@ -1577,7 +1657,12 @@ function CrmContactsTable({
                   <strong className="crm-cell-value">{contact.nextActionAt ? 'Seguimiento programado' : 'Sin definir'}</strong>
                   <span>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : '—'}</span>
                 </td>
-                <td className="crm-open-cell"><button className="btn btn--icon" onClick={() => onOpen(contact)} aria-label={`Abrir ${contact.displayName}`}><ChevronRight size={17} /></button></td>
+                <td className="crm-open-cell">
+                  <div className="crm-row-actions">
+                    <button className="btn btn--icon" onClick={() => onEdit(contact)} aria-label={`Editar ${contact.displayName}`} title="Editar contacto"><Pencil size={15} /></button>
+                    <button className="btn btn--icon" onClick={() => onOpen(contact)} aria-label={`Abrir ${contact.displayName}`} title="Ver ficha"><ChevronRight size={17} /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1613,36 +1698,61 @@ function CrmContactsTable({
   );
 }
 
-function CrmPipeline({ contacts, onOpen }: { contacts: CrmContact[]; onOpen: (contact: CrmContact) => void }) {
+function CrmPipeline({
+  contacts,
+  onOpen,
+  onMove,
+  saving,
+}: {
+  contacts: CrmContact[];
+  onOpen: (contact: CrmContact) => void;
+  onMove: (contact: CrmContact, stage: CrmStage) => void;
+  saving: boolean;
+}) {
   const visibleStages = CRM_STAGES.filter((item) => item.id !== 'unclassified' || contacts.some((contact) => contact.stage === item.id));
   return (
-    <section className="crm-board" data-reveal aria-label="Pipeline comercial">
-      {visibleStages.map((item) => {
-        const stageContacts = contacts.filter((contact) => contact.stage === item.id);
-        return (
-          <div className="crm-column" key={item.id}>
-            <header className="crm-column__head">
-              <span className={`dot dot--${item.id === 'lost' ? 'danger' : item.id === 'converted' ? 'ok' : 'warn'}`} />
-              <strong>{item.label}</strong>
-              <small>{stageContacts.length}</small>
-            </header>
-            <div className="crm-column__body">
-              {stageContacts.map((contact) => (
-                <button className="crm-deal" key={contact.id} onClick={() => onOpen(contact)}>
-                  <strong>{contact.displayName}</strong>
-                  <span>{contact.summary || contact.tags.join(', ') || 'Sin resumen validado'}</span>
-                  <div>
-                    <small>{contact.openOpportunityCount} oportunidad{contact.openOpportunityCount === 1 ? '' : 'es'} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</small>
-                    <ChevronRight size={14} />
-                  </div>
-                </button>
-              ))}
-              {stageContacts.length === 0 && <span className="crm-column__empty">Sin contactos</span>}
+    <>
+      <div className="crm-pipeline-help" data-reveal>
+        <div><TrendingUp size={18} /><span><strong>Pipeline operativo</strong> Mueve cada contacto desde el selector de su tarjeta.</span></div>
+        <small>{contacts.length} lead{contacts.length === 1 ? '' : 's'} en seguimiento</small>
+      </div>
+      <section className="crm-board" data-reveal aria-label="Pipeline comercial">
+        {visibleStages.map((item) => {
+          const stageContacts = contacts.filter((contact) => contact.stage === item.id);
+          return (
+            <div className="crm-column" key={item.id}>
+              <header className="crm-column__head">
+                <span className={`dot dot--${item.id === 'lost' ? 'danger' : item.id === 'converted' ? 'ok' : 'warn'}`} />
+                <strong>{item.label}</strong>
+                <small>{stageContacts.length}</small>
+              </header>
+              <div className="crm-column__body">
+                {stageContacts.map((contact) => (
+                  <article className="crm-deal" key={contact.id}>
+                    <button className="crm-deal__open" onClick={() => onOpen(contact)}>
+                      <strong>{contact.displayName}</strong>
+                      <span>{[contact.phone, contact.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}</span>
+                    </button>
+                    <p>{contact.summary || contact.tags.join(', ') || 'Sin resumen validado'}</p>
+                    <div className="crm-deal__meta">
+                      <small>{contact.nextActionAt ? `Próxima: ${crmWhen(contact.nextActionAt)}` : 'Sin próxima acción'}</small>
+                      <ChevronRight size={14} />
+                    </div>
+                    <label className="crm-deal__move">
+                      <span>Mover a</span>
+                      <select value={contact.stage} onChange={(event) => onMove(contact, event.target.value as CrmStage)} disabled={saving}>
+                        {CRM_STAGES.map((stageItem) => <option key={stageItem.id} value={stageItem.id}>{stageItem.label}</option>)}
+                      </select>
+                    </label>
+                  </article>
+                ))}
+                {stageContacts.length === 0 && <span className="crm-column__empty">Sin contactos</span>}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </section>
+          );
+        })}
+      </section>
+    </>
   );
 }
 
@@ -1737,7 +1847,17 @@ function CrmReviewQueue({
   );
 }
 
-function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: () => void }) {
+function CrmContactDetail({
+  contact,
+  onBack,
+  onEdit,
+  onMove,
+}: {
+  contact: CrmContact;
+  onBack: () => void;
+  onEdit: () => void;
+  onMove: () => void;
+}) {
   const ref = useScrollReveal(contact.id);
   const confidence = crmConfidencePct(contact.matchConfidence);
   return (
@@ -1747,6 +1867,10 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
         <nav className="detail__crumbs" aria-label="Ruta">
           <button onClick={onBack}>Contactos</button><ChevronRight size={13} /><span>{contact.displayName}</span>
         </nav>
+        <div className="crm-detail__actions">
+          <button className="btn btn--soft" onClick={onMove}><TrendingUp size={16} /> Mover etapa</button>
+          <button className="btn btn--primary" onClick={onEdit}><Pencil size={16} /> Editar contacto</button>
+        </div>
       </div>
 
       <header className="crm-detail__hero" data-reveal>
@@ -1770,7 +1894,7 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
       <div className="detail__grid">
         <aside className="detail__aside">
           <section className="detail-block" data-reveal>
-            <div className="label"><User size={17} /> Identidad</div>
+            <div className="label"><User size={17} /> Identidad <button className="detail-block__edit" onClick={onEdit}><Pencil size={13} /> Editar</button></div>
             <div className="crm-facts">
               <div><span>Teléfono</span><strong>{contact.phone || 'Sin registrar'}</strong></div>
               <div><span>Correo</span><strong>{contact.email || 'Sin registrar'}</strong></div>
@@ -1807,7 +1931,7 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
           </section>
 
           <section className="detail-block" data-reveal>
-            <div className="label"><CalendarClock size={17} /> Seguimiento</div>
+            <div className="label"><CalendarClock size={17} /> Seguimiento <button className="detail-block__edit" onClick={onMove}><TrendingUp size={13} /> Mover</button></div>
             <div className="crm-followup">
               <div><span>Próxima acción</span><strong>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : 'Sin definir'}</strong></div>
               <div><span>Oportunidades</span><strong>{contact.openOpportunityCount} abiertas · {contact.opportunityCount} total</strong></div>
@@ -1819,6 +1943,129 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
         </main>
       </div>
     </div>
+  );
+}
+
+const CRM_EDITABLE_TYPES: Array<{ id: Exclude<CrmContactType, 'patient'>; label: string }> = [
+  { id: 'lead', label: 'Lead' },
+  { id: 'unknown', label: 'Sin clasificar' },
+  { id: 'supplier', label: 'Proveedor' },
+  { id: 'staff', label: 'Equipo' },
+  { id: 'partner', label: 'Aliado' },
+  { id: 'personal', label: 'Personal / no comercial' },
+  { id: 'group_only', label: 'Solo en grupos' },
+  { id: 'other', label: 'Otro' },
+];
+
+function CrmEditSheet({
+  contact,
+  saving,
+  onSave,
+  onClose,
+}: {
+  contact: CrmContact;
+  saving: boolean;
+  onSave: (fields: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    contactType: Exclude<CrmContactType, 'patient'>;
+    summary: string | null;
+    tags: string[];
+  }) => void;
+  onClose: () => void;
+}) {
+  const initialType: Exclude<CrmContactType, 'patient'> = contact.contactType === 'patient' ? 'lead' : contact.contactType;
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSave({
+      displayName: String(form.get('displayName') || '').trim() || 'Contacto WhatsApp',
+      phone: String(form.get('phone') || '').trim() || null,
+      email: String(form.get('email') || '').trim().toLocaleLowerCase('es') || null,
+      city: String(form.get('city') || '').trim() || null,
+      contactType: String(form.get('contactType') || initialType) as Exclude<CrmContactType, 'patient'>,
+      summary: String(form.get('summary') || '').trim() || null,
+      tags: String(form.get('tags') || '').split(',').map((tag) => tag.trim()).filter(Boolean),
+    });
+  }
+
+  return (
+    <Sheet title={`Editar ${contact.displayName}`} eyebrow="CRM" onClose={onClose}>
+      <form className="form crm-edit-form" onSubmit={submit}>
+        <label className="field field--full"><span>Nombre</span><input name="displayName" defaultValue={contact.displayName} autoFocus /></label>
+        <label className="field"><span>Teléfono</span><input name="phone" type="tel" defaultValue={contact.phone || ''} placeholder="+57…" /></label>
+        <label className="field"><span>Correo</span><input name="email" type="email" defaultValue={contact.email || ''} placeholder="correo@ejemplo.com" /></label>
+        <label className="field"><span>Ciudad</span><input name="city" defaultValue={contact.city || ''} placeholder="Medellín" /></label>
+        <label className="field"><span>Clasificación</span>
+          <select name="contactType" defaultValue={initialType} disabled={contact.isPatient}>
+            {contact.isPatient && <option value="lead">Paciente con tratamiento</option>}
+            {!contact.isPatient && CRM_EDITABLE_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <label className="field field--full"><span>Resumen comercial</span><textarea name="summary" defaultValue={contact.summary || ''} placeholder="Necesidad, interés y contexto relevante del contacto" rows={4} /></label>
+        <label className="field field--full"><span>Etiquetas, separadas por coma</span><input name="tags" defaultValue={contact.tags.join(', ')} placeholder="NAD+, seguimiento, referido" /></label>
+        <div className="crm-form-actions field--full">
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn btn--primary" disabled={saving}>{saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar cambios</button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}
+
+function crmDateTimeLocal(value: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function CrmMoveSheet({
+  contact,
+  saving,
+  onMove,
+  onClose,
+}: {
+  contact: CrmContact;
+  saving: boolean;
+  onMove: (stage: CrmStage, nextActionAt: string | null) => void;
+  onClose: () => void;
+}) {
+  const [nextStage, setNextStage] = useState<CrmStage>(contact.stage);
+  const [nextAction, setNextAction] = useState(crmDateTimeLocal(contact.nextActionAt));
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextActionAt = nextAction ? new Date(nextAction).toISOString() : null;
+    onMove(nextStage, nextActionAt);
+  }
+
+  return (
+    <Sheet title={`Mover a ${contact.displayName}`} eyebrow="Pipeline" onClose={onClose}>
+      <form className="crm-move-form" onSubmit={submit}>
+        <div className="crm-move-current">
+          <span>Etapa actual</span>
+          <strong className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</strong>
+        </div>
+        <label className="field"><span>Nueva etapa</span>
+          <select value={nextStage} onChange={(event) => setNextStage(event.target.value as CrmStage)} autoFocus>
+            {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Próxima acción</span><input type="datetime-local" value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label>
+        <p className="crm-form-note">El movimiento quedará registrado en la bitácora. Convertido y Perdido cierran la oportunidad; volver a una etapa activa la reabre.</p>
+        <div className="crm-form-actions">
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn btn--primary" disabled={saving || nextStage === contact.stage && crmDateTimeLocal(contact.nextActionAt) === nextAction}>
+            {saving ? <span className="spinner spinner--sm" /> : <TrendingUp size={16} />} Actualizar pipeline
+          </button>
+        </div>
+      </form>
+    </Sheet>
   );
 }
 

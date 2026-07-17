@@ -342,6 +342,38 @@ export function reviewCrmCandidate(
   });
 }
 
+export interface CrmContactUpdate {
+  displayName: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  contactType: Exclude<CrmContactType, 'patient'>;
+  summary: string | null;
+  tags: string[];
+}
+
+export function updateCrmContact(contact: CrmContact, fields: CrmContactUpdate) {
+  return rpc('crm_update_contact', {
+    p_contact: contact.id,
+    p_expected_version: contact.lockVersion,
+    p_display_name: fields.displayName,
+    p_phone: fields.phone,
+    p_email: fields.email,
+    p_city: fields.city,
+    p_contact_type: fields.contactType,
+    p_summary: fields.summary,
+    p_tags: fields.tags,
+  });
+}
+
+export function moveCrmContact(contactId: string, stage: CrmStage, nextActionAt: string | null = null) {
+  return rpc('crm_move_pipeline', {
+    p_contact: contactId,
+    p_stage: stage,
+    p_next_action_at: nextActionAt,
+  });
+}
+
 async function rpc(fn: string, args: Record<string, unknown>) {
   const { data, error } = await supabase.rpc(fn, args);
   if (error) throw new Error(error.message);
