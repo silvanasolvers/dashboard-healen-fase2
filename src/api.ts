@@ -287,9 +287,40 @@ function normalizeReviewCandidate(row: DbRow): CrmReviewCandidate {
   };
 }
 
+const EMPTY_CRM_NAMES = new Set([
+  'contacto whatsapp',
+  'contacto sin nombre',
+  'whatsapp contact',
+  'sin nombre',
+  'unknown',
+]);
+
+/**
+ * Oculta artefactos técnicos de WhatsApp que no aportan ningún dato al CRM.
+ * Una etapa u oportunidad creada por el importador no cuenta como información
+ * si el contacto sigue sin identidad ni contexto comercial.
+ */
+function hasUsefulCrmInfo(contact: CrmContact): boolean {
+  const hasRealName = !EMPTY_CRM_NAMES.has(contact.displayName.trim().toLocaleLowerCase('es'));
+  return Boolean(
+    hasRealName ||
+    contact.phone ||
+    contact.email ||
+    contact.city ||
+    contact.responsible ||
+    contact.summary ||
+    contact.tags.length ||
+    contact.clientId ||
+    contact.clientName ||
+    contact.isPatient
+  );
+}
+
 export async function fetchCrmContacts(): Promise<CrmContact[]> {
   const rows = await fetchAllRows('v_crm_contacts', 'id');
-  return rows.map(normalizeCrmContact).filter((contact) => contact.id);
+  return rows
+    .map(normalizeCrmContact)
+    .filter((contact) => contact.id && hasUsefulCrmInfo(contact));
 }
 
 export async function fetchCrmReviewQueue(): Promise<CrmReviewCandidate[]> {

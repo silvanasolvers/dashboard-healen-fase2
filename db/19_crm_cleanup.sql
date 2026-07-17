@@ -8,15 +8,16 @@
 create or replace function crm_archive_empty_contacts(p_dry_run boolean default true)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
+  v_ids uuid[] := '{}'::uuid[];
   v_count integer := 0;
 begin
   perform require_staff();
 
-  select count(*)::integer into v_count
+  select coalesce(array_agg(c.id order by c.id), '{}'::uuid[]) into v_ids
   from crm_contacts c
   where c.active
     and c.client_id is null
-    and c.contact_type in ('unknown', 'group_only', 'other')
+    and c.contact_type in ('unknown', 'group_only', 'other', 'lead')
     and lower(trim(c.display_name)) in (
       'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
       'sin nombre', 'unknown'
@@ -26,19 +27,9 @@ begin
     and nullif(trim(c.city), '') is null
     and nullif(trim(c.last_summary), '') is null
     and c.owner_id is null
-    and coalesce(cardinality(c.tags), 0) = 0
-    and not exists (
-      select 1 from crm_opportunities o where o.contact_id = c.id
-    )
-    and not exists (
-      select 1
-      from crm_contact_identities i
-      where i.contact_id = c.id
-        and (
-          i.kind in ('phone', 'email', 'whatsapp_pn')
-          or (i.kind = 'whatsapp_jid' and i.identity_value ~ '^\+?[0-9]{7,}@')
-        )
-    );
+    and coalesce(cardinality(c.tags), 0) = 0;
+
+  v_count := coalesce(cardinality(v_ids), 0);
 
   if coalesce(p_dry_run, true) then
     return jsonb_build_object('ok', true, 'dry_run', true, 'would_archive', v_count);
@@ -50,57 +41,18 @@ begin
     crm_contact_snapshot(c.id),
     jsonb_build_object('active', false),
     jsonb_build_object(
-      'reason', 'Sin nombre, teléfono, correo, ciudad, resumen, etiquetas ni oportunidad',
+      'reason', 'Sin nombre, teléfono, correo, ciudad, resumen ni etiquetas; la oportunidad era automática',
       'reversible', true
     ),
     auth.uid()
   from crm_contacts c
-  where c.active
-    and c.client_id is null
-    and c.contact_type in ('unknown', 'group_only', 'other')
-    and lower(trim(c.display_name)) in (
-      'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
-      'sin nombre', 'unknown'
-    )
-    and nullif(trim(c.primary_phone), '') is null
-    and nullif(trim(c.primary_email), '') is null
-    and nullif(trim(c.city), '') is null
-    and nullif(trim(c.last_summary), '') is null
-    and c.owner_id is null
-    and coalesce(cardinality(c.tags), 0) = 0
-    and not exists (select 1 from crm_opportunities o where o.contact_id = c.id)
-    and not exists (
-      select 1 from crm_contact_identities i
-      where i.contact_id = c.id
-        and (
-          i.kind in ('phone', 'email', 'whatsapp_pn')
-          or (i.kind = 'whatsapp_jid' and i.identity_value ~ '^\+?[0-9]{7,}@')
-        )
-    );
+  where c.id = any(v_ids);
 
-  update crm_contacts c set active = false
-  where c.active
-    and c.client_id is null
-    and c.contact_type in ('unknown', 'group_only', 'other')
-    and lower(trim(c.display_name)) in (
-      'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
-      'sin nombre', 'unknown'
-    )
-    and nullif(trim(c.primary_phone), '') is null
-    and nullif(trim(c.primary_email), '') is null
-    and nullif(trim(c.city), '') is null
-    and nullif(trim(c.last_summary), '') is null
-    and c.owner_id is null
-    and coalesce(cardinality(c.tags), 0) = 0
-    and not exists (select 1 from crm_opportunities o where o.contact_id = c.id)
-    and not exists (
-      select 1 from crm_contact_identities i
-      where i.contact_id = c.id
-        and (
-          i.kind in ('phone', 'email', 'whatsapp_pn')
-          or (i.kind = 'whatsapp_jid' and i.identity_value ~ '^\+?[0-9]{7,}@')
-        )
-    );
+  update crm_opportunities set active = false
+  where contact_id = any(v_ids) and active;
+
+  update crm_contacts set active = false
+  where id = any(v_ids) and active;
 
   return jsonb_build_object('ok', true, 'dry_run', false, 'archived', v_count);
 end $$;
@@ -181,4 +133,3 @@ comment on view v_crm_contacts is 'Directorio CRM activo. has_treatment/treatmen
 alter view v_crm_contacts set (security_invoker = on);
 revoke all on v_crm_contacts from public, anon;
 grant select on v_crm_contacts to authenticated;
-
