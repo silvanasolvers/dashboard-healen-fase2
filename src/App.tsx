@@ -1563,7 +1563,7 @@ function CrmContactsTable({
                     <span className="crm-avatar">{contact.displayName.slice(0, 1).toUpperCase()}</span>
                     <span>
                       <strong>{contact.displayName}</strong>
-                      <small>{contact.phone || contact.email || 'Sin datos de contacto'}</small>
+                      <small>{[contact.phone, contact.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}</small>
                     </span>
                   </button>
                 </td>

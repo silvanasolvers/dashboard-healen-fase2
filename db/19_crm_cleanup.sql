@@ -26,8 +26,7 @@ begin
     and nullif(trim(c.primary_email), '') is null
     and nullif(trim(c.city), '') is null
     and nullif(trim(c.last_summary), '') is null
-    and c.owner_id is null
-    and coalesce(cardinality(c.tags), 0) = 0;
+    and c.owner_id is null;
 
   v_count := coalesce(cardinality(v_ids), 0);
 
@@ -41,7 +40,7 @@ begin
     crm_contact_snapshot(c.id),
     jsonb_build_object('active', false),
     jsonb_build_object(
-      'reason', 'Sin nombre, teléfono, correo, ciudad, resumen ni etiquetas; la oportunidad era automática',
+      'reason', 'Sin nombre, teléfono, correo, ciudad, responsable ni resumen; los demás datos eran técnicos',
       'reversible', true
     ),
     auth.uid()
