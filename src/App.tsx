@@ -22,6 +22,7 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ClipboardList,
   CreditCard,
@@ -1266,6 +1267,7 @@ function crmTypeLabel(contact: CrmContact): string {
 }
 
 function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void }) {
+  const contactsPerPage = 25;
   const [tab, setTab] = useState<CrmTab>('contacts');
   const [contacts, setContacts] = useState<CrmContact[]>([]);
   const [reviews, setReviews] = useState<CrmReviewCandidate[]>([]);
@@ -1273,6 +1275,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
   const [search, setSearch] = useState('');
   const [stage, setStage] = useState<'all' | CrmStage>('all');
   const [type, setType] = useState<CrmTypeFilter>('all');
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
@@ -1317,6 +1320,20 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
       (type === 'patients' ? contact.isPatient : !contact.isPatient && contact.contactType === type);
     return matchesSearch && matchesStage && matchesType;
   });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / contactsPerPage));
+  const currentPage = Math.min(page, pageCount);
+  const pagedContacts = filtered.slice(
+    (currentPage - 1) * contactsPerPage,
+    currentPage * contactsPerPage,
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, stage, type]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
 
   const patientCount = contacts.filter((contact) => contact.isPatient).length;
   const leadCount = contacts.filter((contact) => !contact.isPatient && contact.contactType === 'lead').length;
@@ -1404,7 +1421,16 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
             setType={setType}
             count={filtered.length}
           />
-          <CrmContactsTable contacts={filtered} total={contacts.length} onOpen={setSelected} />
+          <CrmContactsTable
+            contacts={pagedContacts}
+            filteredTotal={filtered.length}
+            total={contacts.length}
+            page={currentPage}
+            pageCount={pageCount}
+            pageSize={contactsPerPage}
+            onPageChange={setPage}
+            onOpen={setSelected}
+          />
         </>
       )}
 
@@ -1476,7 +1502,25 @@ function CrmFilters({
   );
 }
 
-function CrmContactsTable({ contacts, total, onOpen }: { contacts: CrmContact[]; total: number; onOpen: (contact: CrmContact) => void }) {
+function CrmContactsTable({
+  contacts,
+  filteredTotal,
+  total,
+  page,
+  pageCount,
+  pageSize,
+  onPageChange,
+  onOpen,
+}: {
+  contacts: CrmContact[];
+  filteredTotal: number;
+  total: number;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onOpen: (contact: CrmContact) => void;
+}) {
   if (total === 0) {
     return <CrmEmpty icon={Users} title="Aún no hay contactos" text="Cuando termine la importación de WhatsApp, todos aparecerán aquí sin convertirse automáticamente en pacientes." />;
   }
@@ -1525,6 +1569,32 @@ function CrmContactsTable({ contacts, total, onOpen }: { contacts: CrmContact[];
           </tbody>
         </table>
       </div>
+      {pageCount > 1 && (
+        <nav className="crm-pagination" aria-label="Paginación de contactos">
+          <span>
+            {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, filteredTotal)} de {filteredTotal}
+          </span>
+          <div>
+            <button
+              className="btn btn--icon"
+              onClick={() => onPageChange(page - 1)}
+              disabled={page === 1}
+              aria-label="Página anterior"
+            >
+              <ChevronLeft size={17} />
+            </button>
+            <strong>Página {page} de {pageCount}</strong>
+            <button
+              className="btn btn--icon"
+              onClick={() => onPageChange(page + 1)}
+              disabled={page === pageCount}
+              aria-label="Página siguiente"
+            >
+              <ChevronRight size={17} />
+            </button>
+          </div>
+        </nav>
+      )}
     </section>
   );
 }
