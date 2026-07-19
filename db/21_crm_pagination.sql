@@ -92,7 +92,14 @@ begin
   ), base as materialized (
     select
       c.id,
-      c.display_name,
+      case
+        when lower(trim(c.display_name)) in (
+          'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
+          'sin nombre', 'unknown'
+        ) and nullif(trim(client.full_name), '') is not null
+          then client.full_name
+        else c.display_name
+      end as display_name,
       c.primary_phone,
       c.primary_email,
       c.city,
@@ -135,8 +142,7 @@ begin
     where c.active
   ), useful as materialized (
     select * from base b
-    where b.has_treatment
-      or (
+    where (
         nullif(trim(b.display_name), '') is not null
         and lower(trim(b.display_name)) not in (
           'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
@@ -145,11 +151,6 @@ begin
       )
       or nullif(trim(b.primary_phone), '') is not null
       or nullif(trim(b.primary_email), '') is not null
-      or nullif(trim(b.city), '') is not null
-      or nullif(trim(b.owner_name), '') is not null
-      or nullif(trim(b.last_summary), '') is not null
-      or nullif(trim(b.client_name), '') is not null
-      or cardinality(coalesce(b.tags, '{}'::text[])) > 0
   ), filtered as materialized (
     select * from useful u
     where (

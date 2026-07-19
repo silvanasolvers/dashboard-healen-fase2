@@ -17,17 +17,12 @@ begin
   from crm_contacts c
   where c.active
     and c.client_id is null
-    and c.contact_type in ('unknown', 'group_only', 'other', 'lead')
     and lower(trim(c.display_name)) in (
       'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
       'sin nombre', 'unknown'
     )
     and nullif(trim(c.primary_phone), '') is null
-    and nullif(trim(c.primary_email), '') is null
-    and nullif(trim(c.city), '') is null
-    and nullif(trim(c.last_summary), '') is null
-    and cardinality(coalesce(c.tags, '{}'::text[])) = 0
-    and c.owner_id is null;
+    and nullif(trim(c.primary_email), '') is null;
 
   v_count := coalesce(cardinality(v_ids), 0);
 
@@ -41,7 +36,7 @@ begin
     crm_contact_snapshot(c.id),
     jsonb_build_object('active', false),
     jsonb_build_object(
-      'reason', 'Sin nombre, teléfono, correo, ciudad, responsable ni resumen; los demás datos eran técnicos',
+      'reason', 'Sin nombre real, teléfono ni correo; oportunidades, etiquetas y fechas no identifican a una persona',
       'reversible', true
     ),
     auth.uid()
@@ -63,7 +58,14 @@ grant execute on function crm_archive_empty_contacts(boolean) to authenticated;
 create or replace view v_crm_contacts as
 select
   c.id,
-  c.display_name,
+  case
+    when lower(trim(c.display_name)) in (
+      'contacto whatsapp', 'contacto sin nombre', 'whatsapp contact',
+      'sin nombre', 'unknown'
+    ) and nullif(trim(client.full_name), '') is not null
+      then client.full_name
+    else c.display_name
+  end                                                        as display_name,
   c.primary_phone,
   c.primary_email,
   c.city,
