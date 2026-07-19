@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { LogIn } from 'lucide-react';
+import { clearCrmCache, setCrmCacheScope } from './api';
 import { supabase } from './supabase';
 
 /** Estado de sesión reactivo. */
@@ -10,14 +11,30 @@ export function useSession() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
+      clearCrmCache();
+      setCrmCacheScope(data.session?.user.id ?? null);
       setSession(data.session);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      // También limpia en refresh/revocación de sesión. La UI conserva su
+      // propio estado mientras está montada, pero el caché compartido no.
+      clearCrmCache();
+      setCrmCacheScope(s?.user.id ?? null);
+      setSession(s);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  return { session, loading, signOut: () => supabase.auth.signOut() };
+  return {
+    session,
+    loading,
+    signOut: () => {
+      clearCrmCache();
+      setCrmCacheScope(null);
+      return supabase.auth.signOut();
+    },
+  };
 }
 
 export function Login() {

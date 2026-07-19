@@ -17,6 +17,11 @@ drop view if exists v_crm_contacts;
 
 -- API pública e internas con dependencias sobre las tablas CRM.
 drop function if exists crm_merge_client_fields(uuid, text[], boolean, bigint, timestamptz);
+drop function if exists crm_update_contact(uuid, bigint, text, text, text, text, text, text, text[]);
+drop function if exists crm_move_pipeline(uuid, text, bigint, timestamptz);
+drop function if exists crm_move_pipeline(uuid, text, timestamptz);
+drop function if exists crm_list_contacts(integer, integer, text, text, text);
+drop function if exists crm_archive_empty_contacts(boolean);
 drop function if exists crm_stage_import_matches(uuid, integer, boolean);
 drop function if exists crm_candidate_exact_clients(jsonb);
 drop function if exists crm_match_existing_contacts(integer, boolean);

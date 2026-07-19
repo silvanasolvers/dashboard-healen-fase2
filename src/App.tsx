@@ -132,12 +132,15 @@ import {
   AppointmentRow,
   CatalogItem,
   createPatient,
+  clearCrmCache,
+  type CrmCounts,
   deleteMilestone,
   deleteNote,
   fetchAll,
   fetchAnalytics,
   fetchCatalog,
-  fetchCrmContacts,
+  fetchCrmContact,
+  fetchCrmContactsPage,
   fetchCrmReviewQueue,
   fetchDossier,
   fetchFinanceRows,
@@ -152,11 +155,13 @@ import {
   uploadSupport,
   inventoryMovement,
   MovementRow,
+  moveCrmContact,
   prescribeCheckout,
   PrescribeResult,
   reviewCrmCandidate,
   toggleMilestone,
   updateClient,
+  updateCrmContact,
   upsertProduct,
 } from './api';
 import { downloadCsv, downloadPdf } from './lib/export';
@@ -1173,6 +1178,52 @@ function Priority({
    ============================================================ */
 type CrmTab = 'contacts' | 'pipeline' | 'review';
 type CrmTypeFilter = 'all' | 'patients' | Exclude<CrmContactType, 'patient'>;
+type CrmPageSizeChoice = 50 | 75 | 100 | 'all';
+
+const CRM_BATCH_SIZE = 250;
+const CRM_REQUEST_TIMEOUT = 15_000;
+const CRM_EMPTY_COUNTS: CrmCounts = {
+  contacts: 0,
+  leads: 0,
+  patients: 0,
+  activePipeline: 0,
+  reviews: 0,
+};
+
+function initialCrmPageSize(): CrmPageSizeChoice {
+  if (typeof window === 'undefined') return 50;
+  try {
+    const stored = window.localStorage.getItem('healen_crm_page_size');
+    const numeric = Number(stored);
+    return numeric === 50 || numeric === 75 || numeric === 100 ? numeric : 50;
+  } catch {
+    return 50;
+  }
+}
+
+function crmErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function crmMatchesQuery(
+  contact: CrmContact,
+  search: string,
+  type: CrmTypeFilter,
+  stage: 'all' | CrmStage,
+): boolean {
+  const normalizedSearch = search.trim().toLocaleLowerCase('es');
+  const matchesSearch = !normalizedSearch || [
+    contact.displayName,
+    contact.phone,
+    contact.email,
+    contact.city,
+    contact.summary,
+    ...contact.tags,
+  ].filter(Boolean).join(' ').toLocaleLowerCase('es').includes(normalizedSearch);
+  const matchesType = type === 'all'
+    || (type === 'patients' ? contact.isPatient : !contact.isPatient && contact.contactType === type);
+  return matchesSearch && matchesType && (stage === 'all' || contact.stage === stage);
+}
 
 const CRM_FIELD_LABELS: Record<string, string> = {
   name: 'Nombre',
@@ -1280,112 +1331,540 @@ function crmTypeLabel(contact: CrmContact): string {
   return contact.contactType === 'patient' ? 'Contacto CRM' : crmContactTypeLabel(contact.contactType);
 }
 
+function crmCanMoveInPipeline(contact: CrmContact): boolean {
+  return !contact.isPatient
+    && !['staff', 'supplier', 'partner', 'personal'].includes(contact.contactType);
+}
+
 function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void }) {
-  const contactsPerPage = 25;
   const [tab, setTab] = useState<CrmTab>('contacts');
   const [contacts, setContacts] = useState<CrmContact[]>([]);
+  const [counts, setCounts] = useState<CrmCounts>(CRM_EMPTY_COUNTS);
+  const [filteredTotal, setFilteredTotal] = useState(0);
   const [reviews, setReviews] = useState<CrmReviewCandidate[]>([]);
+  const [pipelineContacts, setPipelineContacts] = useState<CrmContact[]>([]);
+  const [pipelineTotal, setPipelineTotal] = useState(0);
   const [selected, setSelected] = useState<CrmContact | null>(null);
+  const [editing, setEditing] = useState<CrmContact | null>(null);
+  const [moving, setMoving] = useState<CrmContact | null>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [stage, setStage] = useState<'all' | CrmStage>('all');
   const [type, setType] = useState<CrmTypeFilter>('all');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<CrmPageSizeChoice>(initialCrmPageSize);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [allLoading, setAllLoading] = useState(false);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineLoaded, setPipelineLoaded] = useState(false);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsLoaded, setReviewsLoaded] = useState(false);
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const [savingContactIds, setSavingContactIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
-  const reveal = useScrollReveal(`${tab}-${loading}-${selected?.id ?? ''}`);
+  const [pipelineError, setPipelineError] = useState('');
+  const [reviewsError, setReviewsError] = useState('');
+  const [contactsVersion, setContactsVersion] = useState(0);
+  const [pipelineVersion, setPipelineVersion] = useState(0);
+  const [reviewsVersion, setReviewsVersion] = useState(0);
 
-  const load = useCallback(async (quiet = false) => {
-    if (quiet) setRefreshing(true);
-    else setLoading(true);
-    setError('');
+  const contactsLoadedRef = useRef(false);
+  const contactsSignatureRef = useRef('');
+  const contactsRequestRef = useRef(0);
+  const contactsAbortRef = useRef<AbortController | null>(null);
+  const contactsResumeRef = useRef<{ signature: string; nextPage: number } | null>(null);
+  const contactOverridesRef = useRef(new Map<string, CrmContact>());
+  const pipelineLoadedRef = useRef(false);
+  const pipelineRequestRef = useRef(0);
+  const reviewsLoadedRef = useRef(false);
+  const reviewsRequestRef = useRef(0);
+  const querySignature = `${debouncedSearch}\u0000${type}\u0000${stage}\u0000${pageSize}\u0000${pageSize === 'all' ? 1 : page}`;
+  const querySignatureRef = useRef(querySignature);
+  querySignatureRef.current = querySignature;
+
+  const numericPageSize = pageSize === 'all' ? CRM_BATCH_SIZE : pageSize;
+  const pageCount = Math.max(1, Math.ceil(filteredTotal / numericPageSize));
+  const currentPage = pageSize === 'all' ? 1 : Math.min(page, pageCount);
+  const reveal = useScrollReveal(`${tab}-${loading}-${selected?.id ?? ''}-${contacts.length}`);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      // El cambio de búsqueda y el regreso a página 1 ocurren en el mismo
+      // render, evitando disparar una consulta intermedia a la página vieja.
+      setPage(1);
+      setDebouncedSearch(search.trim());
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    if (pageSize !== 'all' && page > pageCount) setPage(pageCount);
+  }, [page, pageCount, pageSize]);
+
+  useEffect(() => {
+    // "Todos" es deliberadamente temporal: volver al CRM no debe iniciar una
+    // descarga completa solo porque se eligió una vez en una sesión anterior.
+    if (typeof window === 'undefined' || pageSize === 'all') return;
     try {
-      const [contactRows, reviewRows] = await Promise.all([fetchCrmContacts(), fetchCrmReviewQueue()]);
-      setContacts(contactRows);
-      setReviews(reviewRows);
-      setSelected((current) =>
-        current ? contactRows.find((contact) => contact.id === current.id) ?? null : null,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo cargar el CRM.');
-    } finally {
+      window.localStorage.setItem('healen_crm_page_size', String(pageSize));
+    } catch {
+      // Preferencia opcional: el CRM funciona igual si el navegador bloquea storage.
+    }
+  }, [pageSize]);
+
+  // Contactos: una sola página en 50/75/100. "Todos" descarga bloques de 250
+  // y los publica de forma progresiva, sin congelar la vista esperando el lote completo.
+  useEffect(() => {
+    // Al salir del directorio se cancela la descarga progresiva. Al volver,
+    // las páginas terminadas salen del caché de la misma sesión y continúa sin
+    // competir con el pipeline o la bandeja de revisión.
+    if (tab !== 'contacts' && contactsLoadedRef.current) {
+      contactsAbortRef.current?.abort();
+      setAllLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    const requestId = ++contactsRequestRef.current;
+    const controller = new AbortController();
+    contactsAbortRef.current = controller;
+    let timedOut = false;
+    let timeout = 0;
+    function armTimeout() {
+      window.clearTimeout(timeout);
+      timedOut = false;
+      timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, CRM_REQUEST_TIMEOUT);
+    }
+    armTimeout();
+
+    const hadData = contactsLoadedRef.current;
+    setError('');
+    setLoading(!hadData);
+    setRefreshing(hadData);
+    setAllLoading(pageSize === 'all');
+
+    async function run() {
+      const common = {
+        search: debouncedSearch,
+        contactType: type,
+        stage,
+      };
+
+      if (pageSize !== 'all') {
+        contactsResumeRef.current = null;
+        const result = await fetchCrmContactsPage({
+          ...common,
+          page,
+          pageSize,
+        }, { signal: controller.signal });
+        if (requestId !== contactsRequestRef.current) return;
+        setContacts(result.contacts.flatMap((incoming) => {
+          const override = contactOverridesRef.current.get(incoming.id);
+          const contact = override && override.lockVersion > incoming.lockVersion ? override : incoming;
+          if (override && incoming.lockVersion >= override.lockVersion) {
+            contactOverridesRef.current.delete(incoming.id);
+          }
+          return crmMatchesQuery(contact, debouncedSearch, type, stage) ? [contact] : [];
+        }));
+        setCounts(result.counts);
+        setFilteredTotal(result.filteredTotal);
+        contactsLoadedRef.current = true;
+        contactsSignatureRef.current = querySignature;
+        return;
+      }
+
+      const resume = contactsResumeRef.current?.signature === querySignature
+        ? contactsResumeRef.current
+        : null;
+      let batchPage = resume?.nextPage ?? 1;
+      while (!controller.signal.aborted) {
+        armTimeout();
+        const result = await fetchCrmContactsPage({
+          ...common,
+          page: batchPage,
+          pageSize: CRM_BATCH_SIZE,
+        }, { signal: controller.signal });
+        if (requestId !== contactsRequestRef.current) return;
+        const receivedPage = batchPage;
+        setCounts(result.counts);
+        setFilteredTotal(result.filteredTotal);
+        setContacts((current) => {
+          const merged = new Map(
+            (receivedPage === 1 ? [] : current).map((contact) => [contact.id, contact]),
+          );
+          result.contacts.forEach((incoming) => {
+            const override = contactOverridesRef.current.get(incoming.id);
+            const contact = override && override.lockVersion > incoming.lockVersion ? override : incoming;
+            if (override && incoming.lockVersion >= override.lockVersion) {
+              contactOverridesRef.current.delete(incoming.id);
+            }
+            if (crmMatchesQuery(contact, debouncedSearch, type, stage)) merged.set(contact.id, contact);
+            else merged.delete(contact.id);
+          });
+          return Array.from(merged.values());
+        });
+        contactsLoadedRef.current = true;
+        contactsSignatureRef.current = querySignature;
+        setLoading(false);
+        setRefreshing(false);
+        if (!result.hasMore || result.contacts.length === 0) {
+          contactsResumeRef.current = null;
+          break;
+        }
+        contactsResumeRef.current = { signature: querySignature, nextPage: batchPage + 1 };
+        batchPage += 1;
+      }
+    }
+
+    run().catch((err) => {
+      if (requestId !== contactsRequestRef.current) return;
+      if (controller.signal.aborted && !timedOut) return;
+      const staleQuery = contactsLoadedRef.current && contactsSignatureRef.current !== querySignature;
+      const message = timedOut
+        ? 'La consulta tardó más de 15 segundos. Conservamos lo ya cargado para que puedas reintentar.'
+        : crmErrorMessage(err, 'No se pudo cargar el CRM.');
+      setError(staleQuery ? `${message} Se muestran los últimos resultados válidos, no los filtros nuevos.` : message);
+    }).finally(() => {
+      window.clearTimeout(timeout);
+      if (requestId !== contactsRequestRef.current) return;
       setLoading(false);
       setRefreshing(false);
+      setAllLoading(false);
+      if (contactsAbortRef.current === controller) contactsAbortRef.current = null;
+    });
+
+    return () => {
+      window.clearTimeout(timeout);
+      if (contactsRequestRef.current === requestId) contactsRequestRef.current += 1;
+      controller.abort();
+    };
+  }, [contactsVersion, debouncedSearch, page, pageSize, querySignature, stage, tab, type]);
+
+  // El pipeline no depende de la página visible del directorio: se carga al
+  // abrir la pestaña y también avanza en bloques acotados.
+  useEffect(() => {
+    if (tab !== 'pipeline' || pipelineLoadedRef.current) return;
+    const requestId = ++pipelineRequestRef.current;
+    const controller = new AbortController();
+    let timedOut = false;
+    let timeout = 0;
+    function armTimeout() {
+      window.clearTimeout(timeout);
+      timedOut = false;
+      timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, CRM_REQUEST_TIMEOUT);
     }
-  }, []);
+    armTimeout();
+    setPipelineLoading(true);
+    setPipelineError('');
 
+    async function run() {
+      let batchPage = 1;
+      while (!controller.signal.aborted) {
+        armTimeout();
+        const result = await fetchCrmContactsPage({
+          page: batchPage,
+          pageSize: CRM_BATCH_SIZE,
+          search: '',
+          contactType: 'lead',
+          stage: 'all',
+        }, { signal: controller.signal });
+        if (requestId !== pipelineRequestRef.current) return;
+        const receivedPage = batchPage;
+        setPipelineContacts((current) => {
+          const merged = new Map(
+            (receivedPage === 1 ? [] : current).map((contact) => [contact.id, contact]),
+          );
+          result.contacts.forEach((incoming) => {
+            const override = contactOverridesRef.current.get(incoming.id);
+            const contact = override && override.lockVersion > incoming.lockVersion ? override : incoming;
+            if (override && incoming.lockVersion >= override.lockVersion) {
+              contactOverridesRef.current.delete(incoming.id);
+            }
+            if (!contact.isPatient && contact.contactType === 'lead') merged.set(contact.id, contact);
+            else merged.delete(contact.id);
+          });
+          return Array.from(merged.values());
+        });
+        setPipelineTotal(result.filteredTotal);
+        setCounts(result.counts);
+        if (!result.hasMore || result.contacts.length === 0) break;
+        batchPage += 1;
+      }
+      if (requestId === pipelineRequestRef.current && !controller.signal.aborted) {
+        pipelineLoadedRef.current = true;
+        setPipelineLoaded(true);
+      }
+    }
+
+    run().catch((err) => {
+      if (requestId !== pipelineRequestRef.current) return;
+      if (controller.signal.aborted && !timedOut) return;
+      setPipelineError(timedOut
+        ? 'El pipeline tardó más de 15 segundos. Puedes reintentar sin afectar el directorio.'
+        : crmErrorMessage(err, 'No se pudo cargar el pipeline.'));
+    }).finally(() => {
+      window.clearTimeout(timeout);
+      if (requestId === pipelineRequestRef.current) setPipelineLoading(false);
+    });
+
+    return () => {
+      window.clearTimeout(timeout);
+      if (pipelineRequestRef.current === requestId) pipelineRequestRef.current += 1;
+      controller.abort();
+      setPipelineLoading(false);
+    };
+  }, [pipelineVersion, tab]);
+
+  // La cola de revisión suele estar vacía y no bloquea el directorio. Solo se
+  // consulta cuando alguien entra a su pestaña.
   useEffect(() => {
-    load();
-  }, [load]);
+    if (tab !== 'review' || reviewsLoadedRef.current) return;
+    const requestId = ++reviewsRequestRef.current;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CRM_REQUEST_TIMEOUT);
+    setReviewsLoading(true);
+    setReviewsError('');
 
-  const normalizedSearch = search.trim().toLocaleLowerCase('es');
-  const filtered = contacts.filter((contact) => {
-    const matchesSearch =
-      !normalizedSearch ||
-      [contact.displayName, contact.phone, contact.email, contact.city, contact.summary, ...contact.tags]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase('es')
-        .includes(normalizedSearch);
-    const matchesStage = stage === 'all' || contact.stage === stage;
-    const matchesType =
-      type === 'all' ||
-      (type === 'patients' ? contact.isPatient : !contact.isPatient && contact.contactType === type);
-    return matchesSearch && matchesStage && matchesType;
-  });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / contactsPerPage));
-  const currentPage = Math.min(page, pageCount);
-  const pagedContacts = filtered.slice(
-    (currentPage - 1) * contactsPerPage,
-    currentPage * contactsPerPage,
-  );
+    fetchCrmReviewQueue(controller.signal).then((rows) => {
+      if (requestId !== reviewsRequestRef.current) return;
+      setReviews(rows);
+      reviewsLoadedRef.current = true;
+      setReviewsLoaded(true);
+    }).catch((err) => {
+      if (requestId !== reviewsRequestRef.current) return;
+      if (controller.signal.aborted && !timedOut) return;
+      setReviewsError(timedOut
+        ? 'La bandeja tardó más de 15 segundos. Intenta nuevamente.'
+        : crmErrorMessage(err, 'No se pudo cargar la bandeja de revisión.'));
+    }).finally(() => {
+      window.clearTimeout(timeout);
+      if (requestId === reviewsRequestRef.current) setReviewsLoading(false);
+    });
 
-  useEffect(() => {
-    setPage(1);
-  }, [search, stage, type]);
+    return () => {
+      window.clearTimeout(timeout);
+      if (reviewsRequestRef.current === requestId) reviewsRequestRef.current += 1;
+      controller.abort();
+      setReviewsLoading(false);
+    };
+  }, [reviewsVersion, tab]);
 
-  useEffect(() => {
-    setPage((current) => Math.min(current, pageCount));
-  }, [pageCount]);
+  function markContactSaving(contactId: string, saving: boolean) {
+    setSavingContactIds((current) => {
+      const next = new Set(current);
+      if (saving) next.add(contactId);
+      else next.delete(contactId);
+      return next;
+    });
+  }
 
-  const patientCount = contacts.filter((contact) => contact.isPatient).length;
-  const leadCount = contacts.filter((contact) => !contact.isPatient && contact.contactType === 'lead').length;
-  const pipelineContacts = contacts.filter((contact) => !contact.isPatient && contact.contactType === 'lead');
-  const activePipeline = pipelineContacts.filter(
-    (contact) => contact.stage !== 'lost' && contact.stage !== 'converted',
-  ).length;
+  function patchContact(nextContact: CrmContact) {
+    contactOverridesRef.current.set(nextContact.id, nextContact);
+    const matchesDirectory = crmMatchesQuery(nextContact, debouncedSearch, type, stage);
+    setContacts((current) => current
+      .map((contact) => contact.id === nextContact.id ? nextContact : contact)
+      .filter((contact) => contact.id !== nextContact.id || matchesDirectory));
+    setPipelineContacts((current) => {
+      const belongs = !nextContact.isPatient && nextContact.contactType === 'lead';
+      const exists = current.some((contact) => contact.id === nextContact.id);
+      if (!belongs) return current.filter((contact) => contact.id !== nextContact.id);
+      if (exists) return current.map((contact) => contact.id === nextContact.id ? nextContact : contact);
+      return pipelineLoadedRef.current ? [nextContact, ...current] : current;
+    });
+    setSelected((current) => current?.id === nextContact.id ? nextContact : current);
+    setEditing((current) => current?.id === nextContact.id ? nextContact : current);
+    setMoving((current) => current?.id === nextContact.id ? nextContact : current);
+  }
+
+  async function fetchFreshContact(contactId: string): Promise<CrmContact | null> {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), CRM_REQUEST_TIMEOUT);
+    try {
+      return await fetchCrmContact(contactId, controller.signal);
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function refreshMetricsAfterMutation() {
+    if (pageSize !== 'all' && tab === 'contacts') {
+      setContactsVersion((version) => version + 1);
+      return;
+    }
+    const signature = querySignature;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), CRM_REQUEST_TIMEOUT);
+    try {
+      const result = await fetchCrmContactsPage({
+        page: 1,
+        pageSize: 1,
+        search: debouncedSearch,
+        contactType: type,
+        stage,
+      }, { signal: controller.signal, force: true });
+      if (querySignatureRef.current !== signature) return;
+      setCounts(result.counts);
+      setFilteredTotal(result.filteredTotal);
+    } catch {
+      // La mutación ya quedó guardada; el botón Actualizar puede reconciliar
+      // las métricas si esta consulta auxiliar falla.
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  function refreshCrm() {
+    clearCrmCache();
+    contactsResumeRef.current = null;
+    setContactsVersion((version) => version + 1);
+    if (tab === 'pipeline') {
+      pipelineLoadedRef.current = false;
+      setPipelineLoaded(false);
+      setPipelineVersion((version) => version + 1);
+    }
+    if (tab === 'review') {
+      reviewsLoadedRef.current = false;
+      setReviewsLoaded(false);
+      setReviewsVersion((version) => version + 1);
+    }
+  }
+
+  function retryPipeline() {
+    pipelineLoadedRef.current = false;
+    setPipelineLoaded(false);
+    setPipelineVersion((version) => version + 1);
+  }
+
+  function retryReviews() {
+    reviewsLoadedRef.current = false;
+    setReviewsLoaded(false);
+    setReviewsVersion((version) => version + 1);
+  }
 
   async function decide(candidate: CrmReviewCandidate, decision: 'approved' | 'rejected') {
     setReviewing(candidate.id);
     try {
       await reviewCrmCandidate(candidate.id, decision, candidate.lockVersion);
       setReviews((queue) => queue.filter((item) => item.id !== candidate.id));
-      // Una aprobación puede completar el contacto o vincularlo con un cliente;
-      // refrescamos la vista derivada antes de mostrar el resultado.
-      const nextContacts = await fetchCrmContacts();
-      setContacts(nextContacts);
+      setCounts((current) => ({ ...current, reviews: Math.max(0, current.reviews - 1) }));
+      pipelineLoadedRef.current = false;
+      setPipelineLoaded(false);
+      void refreshMetricsAfterMutation();
       notify(decision === 'approved' ? 'Candidato aprobado y auditado' : 'Candidato descartado');
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'No se pudo revisar el candidato.', true);
+      notify(crmErrorMessage(err, 'No se pudo revisar el candidato.'), true);
     } finally {
       setReviewing(null);
     }
   }
 
-  if (selected) {
-    return <CrmContactDetail contact={selected} onBack={() => setSelected(null)} />;
+  async function saveContact(fields: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    contactType: Exclude<CrmContactType, 'patient'>;
+    summary: string | null;
+    tags: string[];
+  }) {
+    if (!editing) return;
+    const contact = editing;
+    markContactSaving(contact.id, true);
+    try {
+      await updateCrmContact(contact, fields);
+      const optimistic: CrmContact = {
+        ...contact,
+        displayName: fields.displayName,
+        phone: fields.phone,
+        email: fields.email,
+        city: fields.city,
+        contactType: contact.isPatient ? contact.contactType : fields.contactType,
+        summary: fields.summary,
+        tags: fields.tags,
+        lockVersion: contact.lockVersion + 1,
+      };
+      patchContact(optimistic);
+      const fresh = await fetchFreshContact(contact.id);
+      if (fresh) patchContact(fresh);
+      setEditing(null);
+      void refreshMetricsAfterMutation();
+      notify('Contacto actualizado y auditado');
+    } catch (err) {
+      notify(crmErrorMessage(err, 'No se pudo actualizar el contacto.'), true);
+    } finally {
+      markContactSaving(contact.id, false);
+    }
   }
 
-  if (loading) {
+  async function moveContact(contact: CrmContact, nextStage: CrmStage, nextActionAt?: string | null) {
+    if (contact.stage === nextStage && nextActionAt === undefined) return;
+    if (!crmCanMoveInPipeline(contact)) {
+      notify('Este contacto no pertenece al pipeline comercial. Clasifícalo como lead antes de moverlo.', true);
+      return;
+    }
+    markContactSaving(contact.id, true);
+    try {
+      const resolvedNextAction = nextActionAt === undefined ? contact.nextActionAt : nextActionAt;
+      await moveCrmContact(contact, nextStage, resolvedNextAction);
+      const canBecomeLead = crmCanMoveInPipeline(contact);
+      const optimistic: CrmContact = {
+        ...contact,
+        stage: nextStage,
+        nextActionAt: resolvedNextAction,
+        contactType: canBecomeLead ? 'lead' : contact.contactType,
+        lifecycleStage: canBecomeLead ? 'lead' : contact.lifecycleStage,
+        lockVersion: contact.lockVersion + 1,
+      };
+      patchContact(optimistic);
+      const fresh = await fetchFreshContact(contact.id);
+      if (fresh) patchContact(fresh);
+      setMoving(null);
+      void refreshMetricsAfterMutation();
+      notify(`Contacto movido a ${crmStageLabel(nextStage)}`);
+    } catch (err) {
+      notify(crmErrorMessage(err, 'No se pudo mover el contacto.'), true);
+    } finally {
+      markContactSaving(contact.id, false);
+    }
+  }
+
+  if (selected) {
+    const selectedSaving = savingContactIds.has(selected.id);
+    return (
+      <>
+        <CrmContactDetail
+          contact={selected}
+          onBack={() => setSelected(null)}
+          onEdit={() => setEditing(selected)}
+          onMove={() => setMoving(selected)}
+        />
+        {editing && <CrmEditSheet contact={editing} saving={selectedSaving} onSave={saveContact} onClose={() => setEditing(null)} />}
+        {moving && <CrmMoveSheet contact={moving} saving={selectedSaving} onMove={(stageValue, nextAction) => moveContact(moving, stageValue, nextAction)} onClose={() => setMoving(null)} />}
+      </>
+    );
+  }
+
+  if (loading && !contactsLoadedRef.current) {
     return (
       <div className="view-loading" ref={reveal}>
-        <span className="spinner" /> Cargando contactos y oportunidades…
+        <span className="spinner" /> Cargando la primera página del CRM…
       </div>
     );
   }
 
-  if (error) {
+  if (error && !contactsLoadedRef.current) {
     return (
       <div className="crm-state panel" ref={reveal} data-reveal>
         <span className="kpi__icon kpi__icon--danger"><AlertTriangle size={20} /></span>
@@ -1393,7 +1872,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
           <h2>No pudimos cargar el CRM</h2>
           <p>{error}</p>
         </div>
-        <button className="btn btn--primary" onClick={() => load()}>
+        <button className="btn btn--primary" onClick={refreshCrm}>
           <RefreshCw size={17} /> Reintentar
         </button>
       </div>
@@ -1404,24 +1883,24 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
     <div className="view-wrap" ref={reveal}>
       <div className="crm-tabs" data-reveal role="tablist" aria-label="Secciones CRM">
         <button className={`crm-tab${tab === 'contacts' ? ' is-active' : ''}`} onClick={() => setTab('contacts')} role="tab" aria-selected={tab === 'contacts'}>
-          <Users size={17} /> Contactos <small>{contacts.length}</small>
+          <Users size={17} /> Contactos <small>{counts.contacts}</small>
         </button>
         <button className={`crm-tab${tab === 'pipeline' ? ' is-active' : ''}`} onClick={() => setTab('pipeline')} role="tab" aria-selected={tab === 'pipeline'}>
-          <TrendingUp size={17} /> Pipeline <small>{activePipeline}</small>
+          <TrendingUp size={17} /> Pipeline <small>{counts.activePipeline}</small>
         </button>
         <button className={`crm-tab${tab === 'review' ? ' is-active' : ''}`} onClick={() => setTab('review')} role="tab" aria-selected={tab === 'review'}>
-          <ClipboardList size={17} /> Por revisar <small>{reviews.length}</small>
+          <ClipboardList size={17} /> Por revisar <small>{counts.reviews}</small>
         </button>
-        <button className="btn btn--icon crm-refresh" onClick={() => load(true)} disabled={refreshing} aria-label="Actualizar CRM" title="Actualizar CRM">
-          {refreshing ? <span className="spinner spinner--sm" /> : <RefreshCw size={17} />}
+        <button className="btn btn--icon crm-refresh" onClick={refreshCrm} disabled={refreshing || pipelineLoading || reviewsLoading} aria-label="Actualizar CRM" title="Actualizar CRM">
+          {refreshing || pipelineLoading || reviewsLoading ? <span className="spinner spinner--sm" /> : <RefreshCw size={17} />}
         </button>
       </div>
 
       <section className="kpi-grid" data-reveal>
-        <SignalKpi icon={Users} tone="brand" label="Contactos" value={contacts.length} hint="Identidades únicas en CRM" />
-        <SignalKpi icon={UserPlus} tone="warn" label="Leads" value={leadCount} hint="Contactos comerciales" />
-        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={patientCount} hint="Solo con tratamiento registrado" />
-        <SignalKpi icon={ClipboardList} tone={reviews.length ? 'warn' : 'ok'} label="Por revisar" value={reviews.length} hint="Cambios aún no aplicados" />
+        <SignalKpi icon={Users} tone="brand" label="Contactos" value={counts.contacts} hint="Identidades útiles en CRM" />
+        <SignalKpi icon={UserPlus} tone="warn" label="Leads" value={counts.leads} hint="Contactos comerciales" />
+        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={counts.patients} hint="Solo con tratamiento registrado" />
+        <SignalKpi icon={ClipboardList} tone={counts.reviews ? 'warn' : 'ok'} label="Por revisar" value={counts.reviews} hint="Cambios aún no aplicados" />
       </section>
 
       {tab === 'contacts' && (
@@ -1430,35 +1909,85 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
             search={search}
             setSearch={setSearch}
             stage={stage}
-            setStage={setStage}
+            setStage={(value) => { setStage(value); setPage(1); }}
             type={type}
-            setType={setType}
-            count={filtered.length}
+            setType={(value) => { setType(value); setPage(1); }}
+            count={filteredTotal}
+            pageSize={pageSize}
+            setPageSize={(value) => { setPageSize(value); setPage(1); }}
           />
+          {(refreshing || (search.trim() !== debouncedSearch)) && (
+            <div className="crm-inline-status" role="status"><span className="spinner spinner--sm" /> Actualizando resultados…</div>
+          )}
+          {error && (
+            <div className="crm-inline-alert" role="alert">
+              <AlertTriangle size={17} /><span>{error}</span>
+              <button className="btn btn--soft" onClick={refreshCrm}><RefreshCw size={15} /> Reintentar</button>
+            </div>
+          )}
           <CrmContactsTable
-            contacts={pagedContacts}
-            filteredTotal={filtered.length}
-            total={contacts.length}
+            contacts={contacts}
+            filteredTotal={filteredTotal}
+            total={counts.contacts}
             page={currentPage}
             pageCount={pageCount}
-            pageSize={contactsPerPage}
+            pageSize={pageSize}
+            allLoading={allLoading}
+            onStopAll={() => {
+              contactsAbortRef.current?.abort();
+              setAllLoading(false);
+            }}
+            onResumeAll={() => setContactsVersion((version) => version + 1)}
             onPageChange={setPage}
             onOpen={setSelected}
+            onEdit={setEditing}
+            onMove={(contact, nextStage) => moveContact(contact, nextStage)}
+            savingContactIds={savingContactIds}
           />
         </>
       )}
 
       {tab === 'pipeline' && (
-        pipelineContacts.length === 0 ? (
-          <CrmEmpty icon={TrendingUp} title="El pipeline está vacío" text="Los contactos clasificados como leads aparecerán aquí; pacientes, equipo y proveedores permanecen fuera del embudo comercial." />
-        ) : (
-          <CrmPipeline contacts={pipelineContacts} onOpen={setSelected} />
-        )
+        <>
+          {pipelineLoading && (
+            <div className="crm-inline-status" role="status"><span className="spinner spinner--sm" /> Cargando pipeline: {pipelineContacts.length} de {pipelineTotal || '…'}…</div>
+          )}
+          {pipelineError && (
+            <div className="crm-inline-alert" role="alert">
+              <AlertTriangle size={17} /><span>{pipelineError}</span>
+              <button className="btn btn--soft" onClick={retryPipeline}><RefreshCw size={15} /> Reintentar</button>
+            </div>
+          )}
+          {pipelineContacts.length === 0 && pipelineLoaded ? (
+            <CrmEmpty icon={TrendingUp} title="El pipeline está vacío" text="Los contactos clasificados como leads aparecerán aquí; pacientes, equipo y proveedores permanecen fuera del embudo comercial." />
+          ) : pipelineContacts.length > 0 ? (
+            <CrmPipeline
+              contacts={pipelineContacts}
+              total={pipelineTotal}
+              loading={pipelineLoading}
+              onOpen={setSelected}
+              onMove={(contact, nextStage) => moveContact(contact, nextStage)}
+              savingContactIds={savingContactIds}
+            />
+          ) : null}
+        </>
       )}
 
       {tab === 'review' && (
-        <CrmReviewQueue candidates={reviews} reviewing={reviewing} onDecision={decide} />
+        <>
+          {reviewsLoading && <div className="crm-inline-status" role="status"><span className="spinner spinner--sm" /> Cargando bandeja de revisión…</div>}
+          {reviewsError && (
+            <div className="crm-inline-alert" role="alert">
+              <AlertTriangle size={17} /><span>{reviewsError}</span>
+              <button className="btn btn--soft" onClick={retryReviews}><RefreshCw size={15} /> Reintentar</button>
+            </div>
+          )}
+          {reviewsLoaded && <CrmReviewQueue candidates={reviews} reviewing={reviewing} onDecision={decide} />}
+        </>
       )}
+
+      {editing && <CrmEditSheet contact={editing} saving={savingContactIds.has(editing.id)} onSave={saveContact} onClose={() => setEditing(null)} />}
+      {moving && <CrmMoveSheet contact={moving} saving={savingContactIds.has(moving.id)} onMove={(stageValue, nextAction) => moveContact(moving, stageValue, nextAction)} onClose={() => setMoving(null)} />}
     </div>
   );
 }
@@ -1471,6 +2000,8 @@ function CrmFilters({
   type,
   setType,
   count,
+  pageSize,
+  setPageSize,
 }: {
   search: string;
   setSearch: (value: string) => void;
@@ -1479,6 +2010,8 @@ function CrmFilters({
   type: CrmTypeFilter;
   setType: (value: CrmTypeFilter) => void;
   count: number;
+  pageSize: CrmPageSizeChoice;
+  setPageSize: (value: CrmPageSizeChoice) => void;
 }) {
   return (
     <div className="crm-filters" data-reveal>
@@ -1511,6 +2044,22 @@ function CrmFilters({
           {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
+      <label className="crm-select">
+        <span>Ver</span>
+        <select
+          value={String(pageSize)}
+          onChange={(event) => {
+            const value = event.target.value;
+            setPageSize(value === 'all' ? 'all' : Number(value) as 50 | 75 | 100);
+          }}
+          aria-label="Contactos por página"
+        >
+          <option value="50">50</option>
+          <option value="75">75</option>
+          <option value="100">100</option>
+          <option value="all">Todos</option>
+        </select>
+      </label>
       <span className="crm-result-count">{count} resultado{count === 1 ? '' : 's'}</span>
     </div>
   );
@@ -1523,17 +2072,29 @@ function CrmContactsTable({
   page,
   pageCount,
   pageSize,
+  allLoading,
+  onStopAll,
+  onResumeAll,
   onPageChange,
   onOpen,
+  onEdit,
+  onMove,
+  savingContactIds,
 }: {
   contacts: CrmContact[];
   filteredTotal: number;
   total: number;
   page: number;
   pageCount: number;
-  pageSize: number;
+  pageSize: CrmPageSizeChoice;
+  allLoading: boolean;
+  onStopAll: () => void;
+  onResumeAll: () => void;
   onPageChange: (page: number) => void;
   onOpen: (contact: CrmContact) => void;
+  onEdit: (contact: CrmContact) => void;
+  onMove: (contact: CrmContact, stage: CrmStage) => void;
+  savingContactIds: ReadonlySet<string>;
 }) {
   if (total === 0) {
     return <CrmEmpty icon={Users} title="Aún no hay contactos" text="Cuando termine la importación de WhatsApp, todos aparecerán aquí sin convertirse automáticamente en pacientes." />;
@@ -1542,7 +2103,7 @@ function CrmContactsTable({
     return <CrmEmpty icon={Search} title="Sin coincidencias" text="Prueba otra búsqueda o limpia los filtros." />;
   }
   return (
-    <section className="panel crm-list-panel" data-reveal>
+    <section className={`panel crm-list-panel${pageSize === 'all' ? ' crm-list-panel--all' : ''}`} data-reveal>
       <div className="table-wrap">
         <table className="table crm-table">
           <thead>
@@ -1557,18 +2118,33 @@ function CrmContactsTable({
           </thead>
           <tbody>
             {contacts.map((contact) => (
-              <tr key={contact.id}>
+              <tr key={contact.id} aria-busy={savingContactIds.has(contact.id)}>
                 <td data-label="Contacto">
                   <button className="crm-person" onClick={() => onOpen(contact)}>
                     <span className="crm-avatar">{contact.displayName.slice(0, 1).toUpperCase()}</span>
                     <span>
                       <strong>{contact.displayName}</strong>
                       <small>{[contact.phone, contact.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}</small>
+                      {(contact.city || contact.responsible) && <small>{[contact.city, contact.responsible && `Resp. ${contact.responsible}`].filter(Boolean).join(' · ')}</small>}
                     </span>
                   </button>
                 </td>
                 <td data-label="Clasificación"><Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} /></td>
-                <td data-label="Etapa"><span className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</span></td>
+                <td data-label="Etapa">
+                  {crmCanMoveInPipeline(contact) ? (
+                    <select
+                      className={`crm-stage-select crm-stage--${contact.stage}`}
+                      value={contact.stage}
+                      onChange={(event) => onMove(contact, event.target.value as CrmStage)}
+                      disabled={savingContactIds.has(contact.id)}
+                      aria-label={`Mover ${contact.displayName} en el pipeline`}
+                    >
+                      {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </select>
+                  ) : (
+                    <span className="crm-stage crm-stage--unclassified">Fuera del pipeline</span>
+                  )}
+                </td>
                 <td data-label="Actividad">
                   <strong className="crm-cell-value">{contact.openOpportunityCount} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</strong>
                   <span>{contact.opportunityCount} oportunidades · {crmWhen(contact.lastInteractionAt)}</span>
@@ -1577,13 +2153,29 @@ function CrmContactsTable({
                   <strong className="crm-cell-value">{contact.nextActionAt ? 'Seguimiento programado' : 'Sin definir'}</strong>
                   <span>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : '—'}</span>
                 </td>
-                <td className="crm-open-cell"><button className="btn btn--icon" onClick={() => onOpen(contact)} aria-label={`Abrir ${contact.displayName}`}><ChevronRight size={17} /></button></td>
+                <td className="crm-open-cell">
+                  <div className="crm-row-actions">
+                    <button className="btn btn--icon" onClick={() => onEdit(contact)} disabled={savingContactIds.has(contact.id)} aria-label={`Editar ${contact.displayName}`} title="Editar contacto">
+                      {savingContactIds.has(contact.id) ? <span className="spinner spinner--sm" /> : <Pencil size={15} />}
+                    </button>
+                    <button className="btn btn--icon" onClick={() => onOpen(contact)} aria-label={`Abrir ${contact.displayName}`} title="Ver ficha"><ChevronRight size={17} /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {pageCount > 1 && (
+      {pageSize === 'all' ? (
+        <nav className="crm-pagination" aria-label="Progreso de carga de contactos">
+          <span>{contacts.length} de {filteredTotal} contactos cargados</span>
+          <div>
+            {allLoading && <><span className="spinner spinner--sm" /><strong>Cargando por bloques de {CRM_BATCH_SIZE}</strong></>}
+            {allLoading && <button className="btn btn--soft" onClick={onStopAll}>Detener</button>}
+            {!allLoading && contacts.length < filteredTotal && <button className="btn btn--soft" onClick={onResumeAll}><RefreshCw size={15} /> Continuar</button>}
+          </div>
+        </nav>
+      ) : filteredTotal > 0 ? (
         <nav className="crm-pagination" aria-label="Paginación de contactos">
           <span>
             {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, filteredTotal)} de {filteredTotal}
@@ -1608,41 +2200,70 @@ function CrmContactsTable({
             </button>
           </div>
         </nav>
-      )}
+      ) : null}
     </section>
   );
 }
 
-function CrmPipeline({ contacts, onOpen }: { contacts: CrmContact[]; onOpen: (contact: CrmContact) => void }) {
+function CrmPipeline({
+  contacts,
+  total,
+  loading,
+  onOpen,
+  onMove,
+  savingContactIds,
+}: {
+  contacts: CrmContact[];
+  total: number;
+  loading: boolean;
+  onOpen: (contact: CrmContact) => void;
+  onMove: (contact: CrmContact, stage: CrmStage) => void;
+  savingContactIds: ReadonlySet<string>;
+}) {
   const visibleStages = CRM_STAGES.filter((item) => item.id !== 'unclassified' || contacts.some((contact) => contact.stage === item.id));
   return (
-    <section className="crm-board" data-reveal aria-label="Pipeline comercial">
-      {visibleStages.map((item) => {
-        const stageContacts = contacts.filter((contact) => contact.stage === item.id);
-        return (
-          <div className="crm-column" key={item.id}>
-            <header className="crm-column__head">
-              <span className={`dot dot--${item.id === 'lost' ? 'danger' : item.id === 'converted' ? 'ok' : 'warn'}`} />
-              <strong>{item.label}</strong>
-              <small>{stageContacts.length}</small>
-            </header>
-            <div className="crm-column__body">
-              {stageContacts.map((contact) => (
-                <button className="crm-deal" key={contact.id} onClick={() => onOpen(contact)}>
-                  <strong>{contact.displayName}</strong>
-                  <span>{contact.summary || contact.tags.join(', ') || 'Sin resumen validado'}</span>
-                  <div>
-                    <small>{contact.openOpportunityCount} oportunidad{contact.openOpportunityCount === 1 ? '' : 'es'} abierta{contact.openOpportunityCount === 1 ? '' : 's'}</small>
-                    <ChevronRight size={14} />
-                  </div>
-                </button>
-              ))}
-              {stageContacts.length === 0 && <span className="crm-column__empty">Sin contactos</span>}
+    <>
+      <div className="crm-pipeline-help" data-reveal>
+        <div><TrendingUp size={18} /><span><strong>Pipeline operativo</strong> Mueve cada contacto desde el selector de su tarjeta.</span></div>
+        <small>{contacts.length}{loading && total > contacts.length ? ` de ${total}` : ''} lead{total === 1 ? '' : 's'} en seguimiento</small>
+      </div>
+      <section className="crm-board" data-reveal aria-label="Pipeline comercial">
+        {visibleStages.map((item) => {
+          const stageContacts = contacts.filter((contact) => contact.stage === item.id);
+          return (
+            <div className="crm-column" key={item.id}>
+              <header className="crm-column__head">
+                <span className={`dot dot--${item.id === 'lost' ? 'danger' : item.id === 'converted' ? 'ok' : 'warn'}`} />
+                <strong>{item.label}</strong>
+                <small>{stageContacts.length}</small>
+              </header>
+              <div className="crm-column__body">
+                {stageContacts.map((contact) => (
+                  <article className="crm-deal" key={contact.id} aria-busy={savingContactIds.has(contact.id)}>
+                    <button className="crm-deal__open" onClick={() => onOpen(contact)}>
+                      <strong>{contact.displayName}</strong>
+                      <span>{[contact.phone, contact.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}</span>
+                    </button>
+                    <p>{contact.summary || contact.tags.join(', ') || 'Sin resumen validado'}</p>
+                    <div className="crm-deal__meta">
+                      <small>{contact.nextActionAt ? `Próxima: ${crmWhen(contact.nextActionAt)}` : 'Sin próxima acción'}</small>
+                      <ChevronRight size={14} />
+                    </div>
+                    <label className="crm-deal__move">
+                      <span>Mover a</span>
+                      <select value={contact.stage} onChange={(event) => onMove(contact, event.target.value as CrmStage)} disabled={savingContactIds.has(contact.id)}>
+                        {CRM_STAGES.map((stageItem) => <option key={stageItem.id} value={stageItem.id}>{stageItem.label}</option>)}
+                      </select>
+                    </label>
+                  </article>
+                ))}
+                {stageContacts.length === 0 && <span className="crm-column__empty">Sin contactos</span>}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </section>
+          );
+        })}
+      </section>
+    </>
   );
 }
 
@@ -1737,9 +2358,20 @@ function CrmReviewQueue({
   );
 }
 
-function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: () => void }) {
+function CrmContactDetail({
+  contact,
+  onBack,
+  onEdit,
+  onMove,
+}: {
+  contact: CrmContact;
+  onBack: () => void;
+  onEdit: () => void;
+  onMove: () => void;
+}) {
   const ref = useScrollReveal(contact.id);
   const confidence = crmConfidencePct(contact.matchConfidence);
+  const canMove = crmCanMoveInPipeline(contact);
   return (
     <div className="detail crm-detail" ref={ref}>
       <div className="detail__bar" data-reveal>
@@ -1747,6 +2379,10 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
         <nav className="detail__crumbs" aria-label="Ruta">
           <button onClick={onBack}>Contactos</button><ChevronRight size={13} /><span>{contact.displayName}</span>
         </nav>
+        <div className="crm-detail__actions">
+          {canMove && <button className="btn btn--soft" onClick={onMove}><TrendingUp size={16} /> Mover etapa</button>}
+          <button className="btn btn--primary" onClick={onEdit}><Pencil size={16} /> Editar contacto</button>
+        </div>
       </div>
 
       <header className="crm-detail__hero" data-reveal>
@@ -1770,7 +2406,7 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
       <div className="detail__grid">
         <aside className="detail__aside">
           <section className="detail-block" data-reveal>
-            <div className="label"><User size={17} /> Identidad</div>
+            <div className="label"><User size={17} /> Identidad <button className="detail-block__edit" onClick={onEdit}><Pencil size={13} /> Editar</button></div>
             <div className="crm-facts">
               <div><span>Teléfono</span><strong>{contact.phone || 'Sin registrar'}</strong></div>
               <div><span>Correo</span><strong>{contact.email || 'Sin registrar'}</strong></div>
@@ -1807,7 +2443,7 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
           </section>
 
           <section className="detail-block" data-reveal>
-            <div className="label"><CalendarClock size={17} /> Seguimiento</div>
+            <div className="label"><CalendarClock size={17} /> Seguimiento {canMove && <button className="detail-block__edit" onClick={onMove}><TrendingUp size={13} /> Mover</button>}</div>
             <div className="crm-followup">
               <div><span>Próxima acción</span><strong>{contact.nextActionAt ? crmWhen(contact.nextActionAt) : 'Sin definir'}</strong></div>
               <div><span>Oportunidades</span><strong>{contact.openOpportunityCount} abiertas · {contact.opportunityCount} total</strong></div>
@@ -1819,6 +2455,129 @@ function CrmContactDetail({ contact, onBack }: { contact: CrmContact; onBack: ()
         </main>
       </div>
     </div>
+  );
+}
+
+const CRM_EDITABLE_TYPES: Array<{ id: Exclude<CrmContactType, 'patient'>; label: string }> = [
+  { id: 'lead', label: 'Lead' },
+  { id: 'unknown', label: 'Sin clasificar' },
+  { id: 'supplier', label: 'Proveedor' },
+  { id: 'staff', label: 'Equipo' },
+  { id: 'partner', label: 'Aliado' },
+  { id: 'personal', label: 'Personal / no comercial' },
+  { id: 'group_only', label: 'Solo en grupos' },
+  { id: 'other', label: 'Otro' },
+];
+
+function CrmEditSheet({
+  contact,
+  saving,
+  onSave,
+  onClose,
+}: {
+  contact: CrmContact;
+  saving: boolean;
+  onSave: (fields: {
+    displayName: string;
+    phone: string | null;
+    email: string | null;
+    city: string | null;
+    contactType: Exclude<CrmContactType, 'patient'>;
+    summary: string | null;
+    tags: string[];
+  }) => void;
+  onClose: () => void;
+}) {
+  const initialType: Exclude<CrmContactType, 'patient'> = contact.contactType === 'patient' ? 'lead' : contact.contactType;
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    onSave({
+      displayName: String(form.get('displayName') || '').trim() || 'Contacto WhatsApp',
+      phone: String(form.get('phone') || '').trim() || null,
+      email: String(form.get('email') || '').trim().toLocaleLowerCase('es') || null,
+      city: String(form.get('city') || '').trim() || null,
+      contactType: String(form.get('contactType') || initialType) as Exclude<CrmContactType, 'patient'>,
+      summary: String(form.get('summary') || '').trim() || null,
+      tags: String(form.get('tags') || '').split(',').map((tag) => tag.trim()).filter(Boolean),
+    });
+  }
+
+  return (
+    <Sheet title={`Editar ${contact.displayName}`} eyebrow="CRM" onClose={onClose}>
+      <form className="form crm-edit-form" onSubmit={submit}>
+        <label className="field field--full"><span>Nombre</span><input name="displayName" defaultValue={contact.displayName} autoFocus /></label>
+        <label className="field"><span>Teléfono</span><input name="phone" type="tel" defaultValue={contact.phone || ''} placeholder="+57…" /></label>
+        <label className="field"><span>Correo</span><input name="email" type="email" defaultValue={contact.email || ''} placeholder="correo@ejemplo.com" /></label>
+        <label className="field"><span>Ciudad</span><input name="city" defaultValue={contact.city || ''} placeholder="Medellín" /></label>
+        <label className="field"><span>Clasificación</span>
+          <select name="contactType" defaultValue={initialType} disabled={contact.isPatient}>
+            {contact.isPatient && <option value="lead">Paciente con tratamiento</option>}
+            {!contact.isPatient && CRM_EDITABLE_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <label className="field field--full"><span>Resumen comercial</span><textarea name="summary" defaultValue={contact.summary || ''} placeholder="Necesidad, interés y contexto relevante del contacto" rows={4} /></label>
+        <label className="field field--full"><span>Etiquetas, separadas por coma</span><input name="tags" defaultValue={contact.tags.join(', ')} placeholder="NAD+, seguimiento, referido" /></label>
+        <div className="crm-form-actions field--full">
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn btn--primary" disabled={saving}>{saving ? <span className="spinner spinner--sm" /> : <Check size={16} />} Guardar cambios</button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}
+
+function crmDateTimeLocal(value: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function CrmMoveSheet({
+  contact,
+  saving,
+  onMove,
+  onClose,
+}: {
+  contact: CrmContact;
+  saving: boolean;
+  onMove: (stage: CrmStage, nextActionAt: string | null) => void;
+  onClose: () => void;
+}) {
+  const [nextStage, setNextStage] = useState<CrmStage>(contact.stage);
+  const [nextAction, setNextAction] = useState(crmDateTimeLocal(contact.nextActionAt));
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextActionAt = nextAction ? new Date(nextAction).toISOString() : null;
+    onMove(nextStage, nextActionAt);
+  }
+
+  return (
+    <Sheet title={`Mover a ${contact.displayName}`} eyebrow="Pipeline" onClose={onClose}>
+      <form className="crm-move-form" onSubmit={submit}>
+        <div className="crm-move-current">
+          <span>Etapa actual</span>
+          <strong className={`crm-stage crm-stage--${contact.stage}`}>{crmStageLabel(contact.stage)}</strong>
+        </div>
+        <label className="field"><span>Nueva etapa</span>
+          <select value={nextStage} onChange={(event) => setNextStage(event.target.value as CrmStage)} autoFocus>
+            {CRM_STAGES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Próxima acción</span><input type="datetime-local" value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label>
+        <p className="crm-form-note">El movimiento quedará registrado en la bitácora. Convertido y Perdido cierran la oportunidad; volver a una etapa activa la reabre.</p>
+        <div className="crm-form-actions">
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button type="submit" className="btn btn--primary" disabled={saving || nextStage === contact.stage && crmDateTimeLocal(contact.nextActionAt) === nextAction}>
+            {saving ? <span className="spinner spinner--sm" /> : <TrendingUp size={16} />} Actualizar pipeline
+          </button>
+        </div>
+      </form>
+    </Sheet>
   );
 }
 
