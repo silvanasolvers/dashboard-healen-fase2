@@ -26,6 +26,7 @@ begin
     and nullif(trim(c.primary_email), '') is null
     and nullif(trim(c.city), '') is null
     and nullif(trim(c.last_summary), '') is null
+    and cardinality(coalesce(c.tags, '{}'::text[])) = 0
     and c.owner_id is null;
 
   v_count := coalesce(cardinality(v_ids), 0);
@@ -115,7 +116,7 @@ left join lateral (
 left join lateral (
   select o.stage, o.next_action_at
   from crm_opportunities o where o.contact_id = c.id and o.active
-  order by o.updated_at desc, o.created_at desc limit 1
+  order by o.updated_at desc, o.created_at desc, o.id desc limit 1
 ) current_opportunity on true
 left join lateral (
   select jsonb_agg(jsonb_build_object(

@@ -92,17 +92,28 @@ function crmStage(value: string | null): CrmStage {
   return value && CRM_STAGE_IDS.has(value as CrmStage) ? (value as CrmStage) : 'unclassified';
 }
 
-/** Lee una vista completa en páginas para no perder contactos por el límite de PostgREST. */
-async function fetchAllRows(view: string, orderColumn: string): Promise<DbRow[]> {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('La solicitud fue cancelada.', 'AbortError');
+}
+
+/** Lee una vista completa en páginas; se usa solo para la bandeja lazy de revisión. */
+async function fetchAllRows(view: string, orderColumn: string, signal?: AbortSignal): Promise<DbRow[]> {
   const pageSize = 1000;
   const rows: DbRow[] = [];
   for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
+    throwIfAborted(signal);
+    let query = supabase
       .from(view)
       .select('*')
       .order(orderColumn, { ascending: true })
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
+    if (error) {
+      throwIfAborted(signal);
+      throw new Error(error.message);
+    }
+    throwIfAborted(signal);
     const page = (data ?? []) as DbRow[];
     rows.push(...page);
     if (page.length < pageSize) break;
@@ -287,59 +298,159 @@ function normalizeReviewCandidate(row: DbRow): CrmReviewCandidate {
   };
 }
 
-const EMPTY_CRM_NAMES = new Set([
-  'contacto whatsapp',
-  'contacto sin nombre',
-  'whatsapp contact',
-  'sin nombre',
-  'unknown',
-]);
+export interface CrmCounts {
+  contacts: number;
+  leads: number;
+  patients: number;
+  activePipeline: number;
+  reviews: number;
+}
+
+export interface CrmPageParams {
+  page: number;
+  pageSize: number;
+  search?: string;
+  contactType?: string;
+  stage?: string;
+}
+
+export interface CrmPageResult {
+  contacts: CrmContact[];
+  counts: CrmCounts;
+  page: number;
+  pageSize: number;
+  filteredTotal: number;
+  hasMore: boolean;
+}
+
+const CRM_PAGE_CACHE_TTL = 60_000;
+const crmPageCache = new Map<string, { storedAt: number; value: CrmPageResult }>();
+let crmCacheScope = 'signed-out';
+
+function normalizedCrmPage(params: CrmPageParams): { page: number; pageSize: number } {
+  const page = Number.isFinite(params.page) ? Math.trunc(params.page) : 1;
+  const pageSize = Number.isFinite(params.pageSize) ? Math.trunc(params.pageSize) : 50;
+  return {
+    page: Math.max(1, page),
+    pageSize: Math.max(1, Math.min(pageSize, 250)),
+  };
+}
+
+function crmPageCacheKey(params: CrmPageParams): string {
+  const normalized = normalizedCrmPage(params);
+  return JSON.stringify({
+    scope: crmCacheScope,
+    page: normalized.page,
+    pageSize: normalized.pageSize,
+    search: params.search?.trim().toLocaleLowerCase('es') || '',
+    contactType: params.contactType || 'all',
+    stage: params.stage || 'all',
+  });
+}
+
+function normalizeCrmCounts(value: unknown): CrmCounts {
+  const row = value && typeof value === 'object' && !Array.isArray(value) ? value as DbRow : {};
+  return {
+    contacts: rowNumber(row, 'contacts'),
+    leads: rowNumber(row, 'leads'),
+    patients: rowNumber(row, 'patients'),
+    activePipeline: rowNumber(row, 'active_pipeline'),
+    reviews: rowNumber(row, 'reviews'),
+  };
+}
+
+export function clearCrmCache() {
+  crmPageCache.clear();
+}
 
 /**
- * Oculta artefactos técnicos de WhatsApp que no aportan ningún dato al CRM.
- * Una etapa u oportunidad creada por el importador no cuenta como información
- * si el contacto sigue sin un dato visible que permita identificarlo o actuar.
+ * Aísla las páginas con datos personales por usuario. La capa de sesión llama
+ * esto antes de renderizar un usuario nuevo, de modo que nunca se reutilice
+ * una respuesta CRM obtenida por otra sesión en la misma SPA.
  */
-function hasUsefulCrmInfo(contact: CrmContact): boolean {
-  const hasRealName = !EMPTY_CRM_NAMES.has(contact.displayName.trim().toLocaleLowerCase('es'));
-  return Boolean(
-    hasRealName ||
-    contact.phone ||
-    contact.email ||
-    contact.city ||
-    contact.responsible ||
-    contact.summary ||
-    contact.isPatient
-  );
+export function setCrmCacheScope(userId: string | null) {
+  const nextScope = userId || 'signed-out';
+  if (nextScope === crmCacheScope) return;
+  crmPageCache.clear();
+  crmCacheScope = nextScope;
 }
 
-export async function fetchCrmContacts(): Promise<CrmContact[]> {
-  const rows = await fetchAllRows('v_crm_contacts', 'id');
-  return rows
-    .map(normalizeCrmContact)
-    .filter((contact) => contact.id && hasUsefulCrmInfo(contact));
+export async function fetchCrmContactsPage(
+  params: CrmPageParams,
+  options: { signal?: AbortSignal; force?: boolean } = {},
+): Promise<CrmPageResult> {
+  throwIfAborted(options.signal);
+  const normalized = normalizedCrmPage(params);
+  const key = crmPageCacheKey(params);
+  const cached = crmPageCache.get(key);
+  if (!options.force && cached && Date.now() - cached.storedAt < CRM_PAGE_CACHE_TTL) return cached.value;
+
+  let query = supabase.rpc('crm_list_contacts', {
+    p_page: normalized.page,
+    p_page_size: normalized.pageSize,
+    p_search: params.search?.trim() || null,
+    p_contact_type: params.contactType || 'all',
+    p_stage: params.stage || 'all',
+  });
+  if (options.signal) query = query.abortSignal(options.signal);
+  const { data, error } = await query;
+  if (error) {
+    throwIfAborted(options.signal);
+    throw new Error(error.message);
+  }
+  throwIfAborted(options.signal);
+  const payload = data && typeof data === 'object' && !Array.isArray(data) ? data as DbRow : {};
+  const rows = Array.isArray(payload.contacts) ? payload.contacts as DbRow[] : [];
+  const value: CrmPageResult = {
+    // La definición de contacto útil vive en PostgreSQL. Filtrar aquí rompería
+    // el tamaño de página y haría que filteredTotal/hasMore dejaran de coincidir.
+    contacts: rows.map(normalizeCrmContact).filter((contact) => contact.id),
+    counts: normalizeCrmCounts(payload.counts),
+    page: rowNumber(payload, 'page') || normalized.page,
+    pageSize: rowNumber(payload, 'page_size') || normalized.pageSize,
+    filteredTotal: rowNumber(payload, 'filtered_total'),
+    hasMore: rowBoolean(payload, 'has_more'),
+  };
+  crmPageCache.set(key, { storedAt: Date.now(), value });
+  if (crmPageCache.size > 40) crmPageCache.delete(crmPageCache.keys().next().value as string);
+  return value;
 }
 
-export async function fetchCrmReviewQueue(): Promise<CrmReviewCandidate[]> {
-  const rows = await fetchAllRows('v_crm_review_queue', 'candidate_id');
+export async function fetchCrmContact(contactId: string, signal?: AbortSignal): Promise<CrmContact> {
+  throwIfAborted(signal);
+  let query = supabase.from('v_crm_contacts').select('*').eq('id', contactId);
+  if (signal) query = query.abortSignal(signal);
+  const { data, error } = await query.single();
+  if (error) {
+    throwIfAborted(signal);
+    throw new Error(error.message);
+  }
+  throwIfAborted(signal);
+  return normalizeCrmContact(data as DbRow);
+}
+
+export async function fetchCrmReviewQueue(signal?: AbortSignal): Promise<CrmReviewCandidate[]> {
+  const rows = await fetchAllRows('v_crm_review_queue', 'candidate_id', signal);
   return rows
     .map(normalizeReviewCandidate)
     .filter((candidate) => candidate.id)
     .sort((a, b) => b.confidence - a.confidence);
 }
 
-export function reviewCrmCandidate(
+export async function reviewCrmCandidate(
   candidateId: string,
   decision: CrmReviewDecision,
   expectedVersion: number,
   reviewNote: string | null = null,
 ) {
-  return rpc('crm_review_candidate', {
+  const result = await rpc('crm_review_candidate', {
     p_candidate: candidateId,
     p_decision: decision,
     p_expected_version: expectedVersion,
     p_review_note: reviewNote,
   });
+  clearCrmCache();
+  return result;
 }
 
 export interface CrmContactUpdate {
@@ -352,8 +463,8 @@ export interface CrmContactUpdate {
   tags: string[];
 }
 
-export function updateCrmContact(contact: CrmContact, fields: CrmContactUpdate) {
-  return rpc('crm_update_contact', {
+export async function updateCrmContact(contact: CrmContact, fields: CrmContactUpdate) {
+  const result = await rpc('crm_update_contact', {
     p_contact: contact.id,
     p_expected_version: contact.lockVersion,
     p_display_name: fields.displayName,
@@ -364,14 +475,19 @@ export function updateCrmContact(contact: CrmContact, fields: CrmContactUpdate) 
     p_summary: fields.summary,
     p_tags: fields.tags,
   });
+  clearCrmCache();
+  return result;
 }
 
-export function moveCrmContact(contactId: string, stage: CrmStage, nextActionAt: string | null = null) {
-  return rpc('crm_move_pipeline', {
-    p_contact: contactId,
+export async function moveCrmContact(contact: CrmContact, stage: CrmStage, nextActionAt: string | null = null) {
+  const result = await rpc('crm_move_pipeline', {
+    p_contact: contact.id,
     p_stage: stage,
+    p_expected_version: contact.lockVersion,
     p_next_action_at: nextActionAt,
   });
+  clearCrmCache();
+  return result;
 }
 
 async function rpc(fn: string, args: Record<string, unknown>) {

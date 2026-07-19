@@ -23,6 +23,7 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `18_crm_view_hardening.sql` | Revoca explícitamente acceso anon/PUBLIC a las vistas CRM |
 | `19_crm_cleanup.sql` | Archiva contactos WhatsApp sin información útil y excluye archivados del directorio |
 | `20_crm_operations.sql` | Edición auditada de contactos y movimientos del pipeline |
+| `21_crm_pagination.sql` | Listado CRM paginado, filtros server-side, métricas e índices de rendimiento |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar
@@ -31,8 +32,10 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 # Solo en una base vacía de desarrollo (06_seed destruye datos existentes)
 for f in db/[0-9][0-9]_*.sql; do python3 db/run.py "$f"; done
 
-# Producción existente: aplicar únicamente la migración nueva validada
-HEALEN_SBP=... python3 db/run.py db/16_crm.sql
+# Producción existente con CRM 16–18 instalado: aplicar/reaplicar en este orden
+HEALEN_SBP=... python3 db/run.py db/19_crm_cleanup.sql
+HEALEN_SBP=... python3 db/run.py db/20_crm_operations.sql
+HEALEN_SBP=... python3 db/run.py db/21_crm_pagination.sql
 
 # Solo ante rollback total del CRM (elimina sus datos)
 HEALEN_SBP=... python3 db/run.py db/rollback_16_crm.sql

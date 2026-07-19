@@ -4,6 +4,32 @@
 -- Edición y movimientos de pipeline pasan por RPCs staff-only, con bloqueo
 -- optimista y bitácora. El navegador mantiene acceso de solo lectura a tablas.
 
+create or replace function crm_contact_snapshot(p_contact uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'display_name', display_name,
+    'primary_phone', primary_phone,
+    'primary_email', primary_email,
+    'city', city,
+    'contact_type', contact_type,
+    'lifecycle_stage', lifecycle_stage,
+    'client_id', client_id,
+    'match_status', match_status,
+    'match_method', match_method,
+    'first_contact_at', first_contact_at,
+    'last_contact_at', last_contact_at,
+    'last_summary', last_summary,
+    'tags', tags,
+    'owner_id', owner_id,
+    'active', active,
+    'lock_version', lock_version
+  ) from crm_contacts where id = p_contact;
+$$;
+
+-- Sigue siendo helper interno: CREATE OR REPLACE conserva privilegios, pero
+-- lo revocamos explícitamente para que una instalación parcial no lo exponga.
+revoke all on function crm_contact_snapshot(uuid) from public, anon, authenticated;
+
 create or replace function crm_update_contact(
   p_contact uuid,
   p_expected_version bigint,
@@ -43,13 +69,33 @@ begin
   if v_type = 'patient' then
     raise exception 'Paciente se deriva de tratamientos y no puede asignarse manualmente';
   end if;
-  if crm_normalize_phone(v_phone) is not null and exists (
-    select 1 from crm_contact_identities i
-    where i.kind in ('phone','whatsapp_pn')
-      and i.normalized_value = crm_normalize_phone(v_phone)
-      and i.contact_id <> p_contact
+  if crm_normalize_phone(v_phone) is not null and (
+    exists (
+      select 1 from crm_contact_identities i
+      where i.kind in ('phone','whatsapp_pn')
+        and i.normalized_value = crm_normalize_phone(v_phone)
+        and i.contact_id <> p_contact
+    ) or exists (
+      select 1 from crm_contacts c
+      where c.id <> p_contact
+        and crm_normalize_phone(c.primary_phone) = crm_normalize_phone(v_phone)
+    )
   ) then
     raise exception 'Ese teléfono ya pertenece a otro contacto CRM';
+  end if;
+  if v_email is not null and (
+    exists (
+      select 1 from crm_contact_identities i
+      where i.kind = 'email'
+        and i.normalized_value = v_email
+        and i.contact_id <> p_contact
+    ) or exists (
+      select 1 from crm_contacts c
+      where c.id <> p_contact
+        and crm_normalize_email(c.primary_email) = v_email
+    )
+  ) then
+    raise exception 'Ese correo ya pertenece a otro contacto CRM';
   end if;
 
   select coalesce(array_agg(tag order by tag), '{}'::text[]) into v_tags
@@ -76,7 +122,9 @@ begin
     tags = v_tags
   where id = p_contact;
 
-  update crm_contact_identities set is_primary = false
+  update crm_contact_identities set
+    is_primary = false,
+    verified = false
   where contact_id = p_contact and kind in ('phone','email') and is_primary;
 
   if crm_normalize_phone(v_phone) is not null then
@@ -85,7 +133,16 @@ begin
     ) values (
       p_contact, 'phone', v_phone, crm_normalize_phone(v_phone),
       crm_identity_hash('phone', v_phone), true, true, 'manual_staff'
-    ) on conflict (kind, value_hash) do nothing;
+    ) on conflict (kind, value_hash) do update set
+      identity_value = excluded.identity_value,
+      normalized_value = excluded.normalized_value,
+      is_primary = true,
+      verified = true,
+      source = 'manual_staff'
+    where crm_contact_identities.contact_id = excluded.contact_id;
+    if not found then
+      raise exception 'Ese teléfono ya pertenece a otro contacto CRM';
+    end if;
   end if;
   if v_email is not null then
     insert into crm_contact_identities(
@@ -93,7 +150,16 @@ begin
     ) values (
       p_contact, 'email', v_email, v_email,
       crm_identity_hash('email', v_email), true, true, 'manual_staff'
-    ) on conflict (kind, value_hash) do nothing;
+    ) on conflict (kind, value_hash) do update set
+      identity_value = excluded.identity_value,
+      normalized_value = excluded.normalized_value,
+      is_primary = true,
+      verified = true,
+      source = 'manual_staff'
+    where crm_contact_identities.contact_id = excluded.contact_id;
+    if not found then
+      raise exception 'Ese correo ya pertenece a otro contacto CRM';
+    end if;
   end if;
 
   v_new := crm_contact_snapshot(p_contact);
@@ -108,9 +174,15 @@ begin
   );
 end $$;
 
+-- La primera versión de esta migración tenía tres argumentos y no exigía
+-- lock_version. Eliminarla evita que PostgREST conserve una ruta que pueda
+-- saltarse el bloqueo optimista después de actualizar una instalación.
+drop function if exists crm_move_pipeline(uuid, text, timestamptz);
+
 create or replace function crm_move_pipeline(
   p_contact uuid,
   p_stage text,
+  p_expected_version bigint,
   p_next_action_at timestamptz default null
 ) returns jsonb language plpgsql security definer set search_path = public as $$
 declare
@@ -130,11 +202,14 @@ begin
 
   select * into v_contact from crm_contacts where id = p_contact for update;
   if not found or not v_contact.active then raise exception 'Contacto CRM no encontrado'; end if;
+  if v_contact.lock_version <> p_expected_version then
+    raise exception 'El contacto cambió; actualiza el CRM antes de moverlo' using errcode = '40001';
+  end if;
 
   select * into v_opportunity
   from crm_opportunities
   where contact_id = p_contact and active
-  order by updated_at desc, created_at desc
+  order by updated_at desc, created_at desc, id desc
   limit 1 for update;
 
   if found then
@@ -155,12 +230,24 @@ begin
     returning * into v_opportunity;
   end if;
 
-  if not exists (select 1 from treatments t where t.client_id = v_contact.client_id) then
-    update crm_contacts set
-      contact_type = 'lead'::crm_contact_type,
-      lifecycle_stage = 'lead'
-    where id = p_contact and contact_type not in ('staff','supplier','partner','personal');
-  end if;
+  -- Todo movimiento incrementa el lock del contacto, incluso si su
+  -- clasificación no cambia. Así dos movimientos con la misma versión no
+  -- pueden sobrescribirse silenciosamente en pacientes o contactos protegidos.
+  update crm_contacts set
+    contact_type = case
+      when not exists (select 1 from treatments t where t.client_id = crm_contacts.client_id)
+        and contact_type not in ('staff','supplier','partner','personal')
+      then 'lead'::crm_contact_type
+      else contact_type
+    end,
+    lifecycle_stage = case
+      when not exists (select 1 from treatments t where t.client_id = crm_contacts.client_id)
+        and contact_type not in ('staff','supplier','partner','personal')
+      then 'lead'
+      else lifecycle_stage
+    end
+  where id = p_contact
+  returning * into v_contact;
 
   v_new := to_jsonb(v_opportunity);
   insert into crm_change_audit(entity_type, entity_id, action, old_data, new_data, metadata, actor_id)
@@ -172,11 +259,12 @@ begin
     'contact_id', p_contact,
     'opportunity_id', v_opportunity.id,
     'stage', v_stage,
-    'next_action_at', v_opportunity.next_action_at
+    'next_action_at', v_opportunity.next_action_at,
+    'contact_lock_version', v_contact.lock_version
   );
 end $$;
 
 revoke all on function crm_update_contact(uuid, bigint, text, text, text, text, text, text, text[]) from public, anon;
-revoke all on function crm_move_pipeline(uuid, text, timestamptz) from public, anon;
+revoke all on function crm_move_pipeline(uuid, text, bigint, timestamptz) from public, anon;
 grant execute on function crm_update_contact(uuid, bigint, text, text, text, text, text, text, text[]) to authenticated;
-grant execute on function crm_move_pipeline(uuid, text, timestamptz) to authenticated;
+grant execute on function crm_move_pipeline(uuid, text, bigint, timestamptz) to authenticated;
