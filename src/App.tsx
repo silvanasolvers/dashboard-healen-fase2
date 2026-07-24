@@ -5389,7 +5389,15 @@ function PatientDetail({
       </div>
 
       {tab === 'resumen' && (
-        <ResumenPanel patient={patient} dossier={dossier} steps={steps} onAct={act} counts={counts} reload={reload} />
+        <ResumenPanel
+          patient={patient}
+          dossier={dossier}
+          steps={steps}
+          onAct={act}
+          counts={counts}
+          reload={reload}
+          onOpenNotes={() => setTab('notas')}
+        />
       )}
       {tab === 'notas' && <NotasPanel patient={patient} dossier={dossier} loading={loading} onChanged={reload} />}
       {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
@@ -5696,6 +5704,7 @@ function ResumenPanel({
   onAct,
   counts,
   reload,
+  onOpenNotes,
 }: {
   patient: Patient;
   dossier: PatientDossier | null;
@@ -5703,6 +5712,7 @@ function ResumenPanel({
   onAct: (s: NextStep) => void;
   counts: SignalCounts;
   reload: () => void;
+  onOpenNotes: () => void;
 }) {
   const lifetime = dossier?.summary?.total_purchased ?? patient.saleValue;
   const balance = dossier?.summary?.balance ?? 0;
@@ -5754,10 +5764,130 @@ function ResumenPanel({
       </aside>
       <main className="detail__main">
         <TreatmentBlock patient={patient} />
+        <ClinicalContextCard notes={dossier?.summary?.notes ?? null} onOpenNotes={onOpenNotes} />
         <ClinicalFlags dossier={dossier} />
         <MilestonesPanel patient={patient} milestones={dossier?.milestones ?? []} loading={!dossier} onChanged={reload} />
       </main>
     </div>
+  );
+}
+
+type IntakeField = {
+  id: 'reason' | 'history' | 'medication' | 'allergies' | 'goals' | 'supplements' | 'lifestyle';
+  label: string;
+  patterns: string[];
+  mergeMatches?: boolean;
+};
+
+const INTAKE_FIELDS: IntakeField[] = [
+  { id: 'reason', label: 'Motivo y síntomas', patterns: ['síntomas/motivo', 'motivo de consulta'] },
+  { id: 'history', label: 'Antecedentes', patterns: ['antecedentes/condiciones reportadas', 'antecedentes personales', 'antecedentes'] },
+  { id: 'medication', label: 'Medicamentos actuales', patterns: ['medicamento actual reportado', 'medicamentos actuales'] },
+  { id: 'allergies', label: 'Alergias', patterns: ['alergias/otros campos afirmativos del formulario', 'alergias/otros campos afirmativos', 'alergias'] },
+  { id: 'goals', label: 'Objetivos', patterns: ['objetivos'] },
+  { id: 'supplements', label: 'Suplementos', patterns: ['suplementos reportados', 'suplementos'] },
+  { id: 'lifestyle', label: 'Hábitos', patterns: ['sueño reportado', 'estrés/ansiedad reportado', 'actividad física'], mergeMatches: true },
+];
+
+type ParsedIntake = {
+  source: string;
+  capturedAt: string | null;
+  fields: Array<{ id: IntakeField['id']; label: string; value: string }>;
+  raw: string;
+  isStructured: boolean;
+};
+
+function normalizeProfileText(value: string) {
+  return value.replace(/\s+/g, ' ').replace(/\s+([,.;:])/g, '$1').trim();
+}
+
+/**
+ * `clients.notes` contiene importaciones históricas además de observaciones
+ * manuales. No se interpreta como diagnóstico: solo hace legible la ficha y
+ * conserva el texto original como fuente desplegable.
+ */
+function parseIntake(notes: string | null): ParsedIntake | null {
+  if (!notes?.trim()) return null;
+  const raw = notes.trim();
+  const header = raw.match(/\[INTAKE\s+ACTUALIZADO(?:\s+[^\]]*)?\]/i);
+  const captured = raw.match(/\b(20\d{2}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2})?)\b/);
+  const allLabels = INTAKE_FIELDS.flatMap((field) => field.patterns)
+    .sort((a, b) => b.length - a.length)
+    .map((pattern) => pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const nextLabel = allLabels.length ? new RegExp(`(?:${allLabels.join('|')})\\s*:`, 'ig') : null;
+
+  const fields = INTAKE_FIELDS.flatMap((field) => {
+    const matches = field.patterns.flatMap((pattern) => {
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const match = new RegExp(`${escaped}\\s*:`, 'i').exec(raw);
+      if (!match) return [];
+      const contentStart = match.index + match[0].length;
+      if (nextLabel) nextLabel.lastIndex = contentStart;
+      const next = nextLabel ? nextLabel.exec(raw) : null;
+      const metadata = raw.indexOf('\n[', contentStart);
+      const contentEnd = Math.min(
+        next?.index ?? raw.length,
+        metadata >= 0 ? metadata : raw.length,
+      );
+      const value = normalizeProfileText(raw.slice(contentStart, contentEnd));
+      return value ? [{ pattern, index: match.index, value }] : [];
+    });
+    if (matches.length === 0) return [];
+    matches.sort((a, b) => a.index - b.index);
+    const value = field.mergeMatches
+      ? matches.map((entry) => `${entry.pattern.replace(/ reportado$/i, '')}: ${entry.value}`).join(' · ')
+      : matches[0].value;
+    return value ? [{ id: field.id, label: field.label, value }] : [];
+  });
+
+  return {
+    source: header ? 'Formulario de ingreso importado' : 'Observaciones de ficha',
+    capturedAt: captured?.[1] ?? null,
+    fields,
+    raw,
+    isStructured: Boolean(header || fields.length >= 2),
+  };
+}
+
+function ClinicalContextCard({ notes, onOpenNotes }: { notes: string | null; onOpenNotes: () => void }) {
+  const intake = parseIntake(notes);
+  if (!intake) return null;
+  const visibleFields = intake.fields.filter((field) =>
+    ['reason', 'history', 'medication', 'allergies', 'goals', 'supplements', 'lifestyle'].includes(field.id),
+  );
+
+  return (
+    <section className="detail-block profile-context" data-reveal>
+      <div className="label">
+        <ClipboardList size={17} /> {intake.isStructured ? 'Contexto de ingreso' : 'Observación de ficha'}
+        <span className="profile-context__source">{intake.source}</span>
+        <button className="detail-block__edit" onClick={onOpenNotes}>
+          <FileText size={14} /> Notas clínicas
+        </button>
+      </div>
+
+      {intake.capturedAt && <p className="profile-context__meta">Registrado: {intake.capturedAt}</p>}
+
+      {visibleFields.length > 0 ? (
+        <div className="profile-context__grid">
+          {visibleFields.map((field) => (
+            <article key={field.id} className={`profile-context__field profile-context__field--${field.id}`}>
+              <span>{field.label}</span>
+              <p>{field.value}</p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="profile-context__plain">{intake.raw}</p>
+      )}
+
+      {intake.isStructured && (
+        <details className="profile-context__raw">
+          <summary>Ver registro original de importación</summary>
+          <p>{intake.raw}</p>
+        </details>
+      )}
+    </section>
   );
 }
 
@@ -5875,8 +6005,8 @@ function PatientInfoCard({
           <Field label="Dirección" full>
             <input value={form.address} onChange={set('address')} placeholder="Calle, ciudad" />
           </Field>
-          <Field label="Notas de ficha" full>
-            <textarea value={form.notes} onChange={set('notes')} rows={2} placeholder="Preferencias, contacto, observaciones…" />
+          <Field label="Observaciones operativas" full>
+            <textarea value={form.notes} onChange={set('notes')} rows={3} placeholder="Preferencias de contacto, logística o una observación no clínica…" />
           </Field>
           {error && <p className="note-composer__error field--full">{error}</p>}
           <div className="info-form__actions field--full">
@@ -5934,7 +6064,11 @@ function PatientInfoCard({
             )}
           </div>
           <InfoRow k="Dirección" v={address} full />
-          {notes && <InfoRow k="Notas de ficha" v={notes} full />}
+          {notes && (
+            <p className="info-profile-hint">
+              El contexto de ingreso y las observaciones están organizados en el resumen clínico.
+            </p>
+          )}
         </div>
       )}
     </section>

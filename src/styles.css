@@ -1477,13 +1477,85 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 }
 .info-form textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .info-form__actions { display: flex; gap: 10px; align-items: center; }
+.info-profile-hint {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* ---- Contexto de ingreso: vista legible de importaciones históricas ---- */
+.profile-context > .label { margin-bottom: 8px; }
+.profile-context__source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.profile-context__meta { margin: 0 0 15px; color: var(--muted); font-size: 0.76rem; }
+.profile-context__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.profile-context__field {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--surface-2) 74%, transparent);
+}
+.profile-context__field--reason,
+.profile-context__field--history,
+.profile-context__field--allergies,
+.profile-context__field--goals { grid-column: 1 / -1; }
+.profile-context__field > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+.profile-context__field > p,
+.profile-context__plain,
+.profile-context__raw p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.profile-context__plain { white-space: pre-line; }
+.profile-context__raw {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.profile-context__raw summary {
+  cursor: pointer;
+  color: var(--brand-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.profile-context__raw[open] summary { margin-bottom: 10px; }
+.profile-context__raw p { white-space: pre-line; color: var(--muted); font-size: 0.78rem; }
 
 /* ---- Tabs + CTA del detalle (barra pegajosa) ---- */
 .detail__toolbar {
   position: sticky; top: 72px; z-index: 5;
   display: flex; align-items: center; gap: 12px;
   padding: 7px; border-radius: var(--r-pill);
-  background: var(--glass-strong);
+  /* La barra queda fija al navegar la ficha: debe proteger el contenido, no transparentarlo. */
+  background: color-mix(in oklab, var(--surface) 96%, var(--bg));
   backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
   border: 1px solid var(--line-soft); box-shadow: var(--shadow-sm);
 }
@@ -2568,6 +2640,13 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   .detail__rings::-webkit-scrollbar { display: none; }
   .detail__ringitem { scroll-snap-align: start; flex-shrink: 0; }
   .info-grid { grid-template-columns: 1fr; }
+  .profile-context__grid { grid-template-columns: 1fr; }
+  .profile-context__field--reason,
+  .profile-context__field--history,
+  .profile-context__field--allergies,
+  .profile-context__field--goals { grid-column: auto; }
+  .profile-context > .label { align-items: flex-start; flex-wrap: wrap; }
+  .profile-context__source { flex-basis: 100%; order: 3; white-space: normal; }
   .crm-tabs { padding: 4px; }
   .crm-tab { padding: 9px 11px; gap: 6px; }
   .crm-tab small { min-width: 19px; padding-inline: 5px; }
