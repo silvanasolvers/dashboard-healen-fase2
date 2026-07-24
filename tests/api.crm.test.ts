@@ -15,6 +15,7 @@ import {
   moveCrmContact,
   setCrmCacheScope,
   type CrmPageResult,
+  updateCrmContact,
 } from '../src/api';
 
 type RpcResult = {
@@ -54,11 +55,20 @@ function crmPayload(overrides: Record<string, unknown> = {}) {
         primary_phone: 573001112233,
         primary_email: ' ana@example.com ',
         city: ' Medellín ',
-        contact_type: 'lead',
+        contact_type: 'patient',
+        client_id: 'client-1',
         current_opportunity_stage: 'qualified',
-        has_treatment: true,
-        treatment_count: '2',
-        active_treatment_count: 1,
+        has_treatment: false,
+        treatment_count: '0',
+        active_treatment_count: 0,
+        patient_segments: [{
+          code: 'sin_tratamiento',
+          name: 'Paciente sin tratamiento',
+          campaignType: 'bienvenida_calificacion',
+          cadence: 'semanal',
+          reason: 'Ficha de paciente sin tratamiento registrado',
+          source: 'automatic',
+        }],
         match_confidence: '0.91',
         opportunity_count: '3',
         open_opportunity_count: 1,
@@ -95,6 +105,7 @@ describe('fetchCrmContactsPage', () => {
       p_search: null,
       p_contact_type: 'all',
       p_stage: 'all',
+      p_segment: 'all',
     });
   });
 
@@ -109,10 +120,11 @@ describe('fetchCrmContactsPage', () => {
       p_search: null,
       p_contact_type: 'all',
       p_stage: 'all',
+      p_segment: 'all',
     });
   });
 
-  it('normalizes database values and only marks real treatments as patients', async () => {
+  it('normalizes patient links independently of treatment history', async () => {
     mockSuccessfulRpc(crmPayload({
       contacts: [
         crmPayload().contacts[0],
@@ -122,7 +134,7 @@ describe('fetchCrmContactsPage', () => {
           contact_type: 'unexpected-type',
           current_opportunity_stage: 'unexpected-stage',
           has_treatment: true,
-          treatment_count: 0,
+          treatment_count: 1,
           active: '1',
           city: 'Bogotá',
           tags: ['one', 2, 'two'],
@@ -152,10 +164,16 @@ describe('fetchCrmContactsPage', () => {
       phone: '573001112233',
       email: 'ana@example.com',
       city: 'Medellín',
-      contactType: 'lead',
+      contactType: 'patient',
       stage: 'qualified',
       isPatient: true,
-      treatmentCount: 2,
+      treatmentCount: 0,
+      patientSegments: [{
+        code: 'sin_tratamiento',
+        name: 'Paciente sin tratamiento',
+        campaignType: 'bienvenida_calificacion',
+        cadence: 'semanal',
+      }],
       matchConfidence: 0.91,
       opportunityCount: 3,
       lockVersion: 8,
@@ -262,6 +280,43 @@ describe('fetchCrmContactsPage', () => {
       p_stage: 'contacted',
       p_expected_version: 8,
       p_next_action_at: '2026-07-20T14:00:00.000Z',
+    });
+  });
+
+  it('allows promoting a CRM contact to Patient through the audited update RPC', async () => {
+    mockSuccessfulRpc(crmPayload({
+      contacts: [{
+        ...crmPayload().contacts[0],
+        contact_type: 'lead',
+        client_id: null,
+        patient_segments: [],
+      }],
+    }));
+    const page = await fetchCrmContactsPage({ page: 1, pageSize: 50 });
+    const contact = page.contacts[0];
+    supabaseMocks.rpc.mockReset();
+    supabaseMocks.rpc.mockResolvedValue({ data: { ok: true, client_created: true }, error: null });
+
+    await updateCrmContact(contact, {
+      displayName: 'Ana Pérez',
+      phone: '+573001112233',
+      email: 'ana@example.com',
+      city: 'Medellín',
+      contactType: 'patient',
+      summary: 'Paciente promovida desde CRM',
+      tags: ['vip'],
+    });
+
+    expect(supabaseMocks.rpc).toHaveBeenCalledWith('crm_update_contact', {
+      p_contact: 'contact-1',
+      p_expected_version: 8,
+      p_display_name: 'Ana Pérez',
+      p_phone: '+573001112233',
+      p_email: 'ana@example.com',
+      p_city: 'Medellín',
+      p_contact_type: 'patient',
+      p_summary: 'Paciente promovida desde CRM',
+      p_tags: ['vip'],
     });
   });
 });

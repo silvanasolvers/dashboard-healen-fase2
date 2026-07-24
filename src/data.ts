@@ -16,8 +16,8 @@ export type Tone = 'neutral' | 'success' | 'warning' | 'danger';
 export type Signal = 'ok' | 'warn' | 'danger';
 
 // ---------- CRM (contactos de WhatsApp y oportunidades comerciales) ----------
-// CRM y pacientes son dominios separados: `isPatient` viene de tratamientos
-// existentes en la base, nunca de una inferencia hecha sobre la conversación.
+// Paciente es una categoría CRM vinculada 1:1 a `clients`. Los tratamientos
+// y señales de campaña se mantienen como atributos separados y superpuestos.
 export type CrmContactType =
   | 'unknown'
   | 'lead'
@@ -41,6 +41,15 @@ export type CrmStage =
   | 'unclassified';
 export type CrmReviewDecision = 'approved' | 'rejected';
 
+export interface CrmPatientSegment {
+  code: string;
+  name: string;
+  campaignType: string;
+  cadence: string;
+  reason: string;
+  source: 'automatic' | 'manual' | string;
+}
+
 export interface CrmContact {
   id: string;
   displayName: string;
@@ -62,6 +71,7 @@ export interface CrmContact {
   clientName: string | null;
   treatmentCount: number;
   activeTreatmentCount: number;
+  patientSegments: CrmPatientSegment[];
   matchStatus: string | null;
   matchMethod: string | null;
   matchConfidence: number | null;

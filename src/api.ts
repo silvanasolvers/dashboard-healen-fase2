@@ -24,6 +24,7 @@ import type {
   Payee,
   Plan,
   ProductPayload,
+  CrmPatientSegment,
   RevenuePoint,
   StockMovePayload,
   TimelineEvent,
@@ -67,6 +68,26 @@ function rowTags(row: DbRow): string[] {
 function rowObject(row: DbRow, key: string): Record<string, unknown> {
   const value = rowValue(row, key);
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function rowPatientSegments(row: DbRow): CrmPatientSegment[] {
+  const value = rowValue(row, 'patient_segments');
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const segment = item as DbRow;
+    const code = rowString(segment, 'code');
+    const name = rowString(segment, 'name');
+    if (!code || !name) return [];
+    return [{
+      code,
+      name,
+      campaignType: rowString(segment, 'campaignType', 'campaign_type') ?? 'seguimiento',
+      cadence: rowString(segment, 'cadence') ?? 'manual',
+      reason: rowString(segment, 'reason') ?? 'Segmento de campaña',
+      source: rowString(segment, 'source', 'membership_source') ?? 'automatic',
+    }];
+  });
 }
 
 function crmType(value: string | null): CrmContactType {
@@ -239,9 +260,10 @@ export async function fetchAll(): Promise<HealenData> {
 function normalizeCrmContact(row: DbRow): CrmContact {
   const id = rowString(row, 'id') ?? '';
   const treatmentCount = rowNumber(row, 'treatment_count');
-  // La vista es la fuente de verdad. Como defensa adicional, un vínculo a
-  // cliente sin tratamiento no se muestra como paciente.
-  const isPatient = rowBoolean(row, 'has_treatment') && treatmentCount > 0;
+  const contactType = crmType(rowString(row, 'contact_type'));
+  const clientId = rowString(row, 'client_id');
+  // La categoría se deriva del vínculo 1:1 con clients, no de tratamientos.
+  const isPatient = contactType === 'patient' && clientId !== null;
   const confidenceRaw = rowValue(row, 'match_confidence');
   const matchConfidence = confidenceRaw === null ? null : rowNumber(row, 'match_confidence');
   return {
@@ -250,7 +272,7 @@ function normalizeCrmContact(row: DbRow): CrmContact {
     phone: rowString(row, 'primary_phone'),
     email: rowString(row, 'primary_email'),
     city: rowString(row, 'city'),
-    contactType: crmType(rowString(row, 'contact_type')),
+    contactType,
     stage: crmStage(rowString(row, 'current_opportunity_stage')),
     lifecycleStage: rowString(row, 'lifecycle_stage'),
     responsible: rowString(row, 'owner_name'),
@@ -260,11 +282,12 @@ function normalizeCrmContact(row: DbRow): CrmContact {
     firstInteractionAt: rowString(row, 'first_contact_at'),
     lastInteractionAt: rowString(row, 'last_contact_at'),
     isPatient,
-    clientId: rowString(row, 'client_id'),
+    clientId,
     clientCode: rowString(row, 'client_code'),
     clientName: rowString(row, 'client_name'),
     treatmentCount,
     activeTreatmentCount: rowNumber(row, 'active_treatment_count'),
+    patientSegments: rowPatientSegments(row),
     matchStatus: rowString(row, 'match_status'),
     matchMethod: rowString(row, 'match_method'),
     matchConfidence,
@@ -312,6 +335,7 @@ export interface CrmPageParams {
   search?: string;
   contactType?: string;
   stage?: string;
+  segment?: string;
 }
 
 export interface CrmPageResult {
@@ -345,6 +369,7 @@ function crmPageCacheKey(params: CrmPageParams): string {
     search: params.search?.trim().toLocaleLowerCase('es') || '',
     contactType: params.contactType || 'all',
     stage: params.stage || 'all',
+    segment: params.segment || 'all',
   });
 }
 
@@ -391,6 +416,7 @@ export async function fetchCrmContactsPage(
     p_search: params.search?.trim() || null,
     p_contact_type: params.contactType || 'all',
     p_stage: params.stage || 'all',
+    p_segment: params.segment || 'all',
   });
   if (options.signal) query = query.abortSignal(options.signal);
   const { data, error } = await query;
@@ -458,7 +484,7 @@ export interface CrmContactUpdate {
   phone: string | null;
   email: string | null;
   city: string | null;
-  contactType: Exclude<CrmContactType, 'patient'>;
+  contactType: CrmContactType;
   summary: string | null;
   tags: string[];
 }
