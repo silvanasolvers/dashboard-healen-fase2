@@ -11,6 +11,7 @@ vi.mock('../src/supabase', () => ({
 
 import {
   clearCrmCache,
+  createPatient,
   fetchCrmContactsPage,
   moveCrmContact,
   setCrmCacheScope,
@@ -318,5 +319,34 @@ describe('fetchCrmContactsPage', () => {
       p_summary: 'Paciente promovida desde CRM',
       p_tags: ['vip'],
     });
+  });
+});
+
+describe('createPatient', () => {
+  beforeEach(() => {
+    supabaseMocks.rpc.mockReset();
+  });
+
+  it('creates the patient with the same contact identity used by CRM', async () => {
+    supabaseMocks.rpc.mockResolvedValue({
+      data: { client_id: 'client-1', contact_id: 'contact-1' },
+      error: null,
+    });
+    const form = new FormData();
+    form.set('name', 'Paciente Uno');
+    form.set('documentId', '123456');
+    form.set('phone', '+57 300 111 2233');
+    form.set('email', 'paciente@example.com');
+    form.set('plan', 'Plan inicial');
+
+    await createPatient(form);
+
+    expect(supabaseMocks.rpc).toHaveBeenCalledWith('dash_create_patient', expect.objectContaining({
+      p_name: 'Paciente Uno',
+      p_document_id: '123456',
+      p_phone: '+57 300 111 2233',
+      p_email: 'paciente@example.com',
+      p_plan: 'Plan inicial',
+    }));
   });
 });

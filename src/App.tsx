@@ -635,7 +635,9 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const finishingTreatments = homePeptidePatients.filter((p) => p.daysLeft <= 7 && p.status !== 'Finalizado').length;
 
   const filteredPatients = patients.filter((p) =>
-    `${p.id} ${p.name} ${p.documentId ?? ''} ${p.plan} ${p.tier}`.toLowerCase().includes(patientSearch.toLowerCase()),
+    `${p.id} ${p.name} ${p.documentId ?? ''} ${p.phone ?? ''} ${p.email ?? ''} ${p.plan} ${p.tier}`
+      .toLowerCase()
+      .includes(patientSearch.toLowerCase()),
   );
 
   function addPatient(event: FormEvent<HTMLFormElement>) {
@@ -2986,7 +2988,7 @@ function PacientesView({
       <div className="toolbar" data-reveal>
         <div className="search">
           <Search size={17} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por ID Healen, nombre, cédula o plan" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre, teléfono, correo, cédula o plan" />
         </div>
         <div className="segmented">
           <button className={`segmented__btn${sub === 'pacientes' ? ' is-active' : ''}`} onClick={() => setSub('pacientes')}>
@@ -3016,6 +3018,15 @@ function PacientesView({
               <form className="form" onSubmit={addPatient}>
                 <Field label="Nombre">
                   <input name="name" placeholder="Nombre y apellido" required />
+                </Field>
+                <Field label="Teléfono">
+                  <input name="phone" type="tel" placeholder="+57 300 000 0000" />
+                </Field>
+                <Field label="Correo">
+                  <input name="email" type="email" placeholder="nombre@correo.com" />
+                </Field>
+                <Field label="Documento">
+                  <input name="documentId" placeholder="CC / pasaporte" />
                 </Field>
                 <Field label="Plan">
                   <input name="plan" placeholder="Plan de péptidos" />
@@ -3062,6 +3073,9 @@ function PacientesView({
                       <div className="patient-card__name">{p.name}</div>
                       <div className="patient-card__sub">
                         {p.id} · {p.documentId ? `CC ${p.documentId} · ` : 'Sin cédula · '}{p.plan}
+                      </div>
+                      <div className="patient-card__sub">
+                        {[p.phone, p.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}
                       </div>
                     </div>
                     <span className={`tier${p.tier === 'VIP' ? ' tier--vip' : ''}`}>{p.tier}</span>

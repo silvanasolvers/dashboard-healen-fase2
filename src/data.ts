@@ -146,6 +146,8 @@ export interface Patient {
   clientUuid?: string;
   treatmentId?: string;
   documentId?: string | null;
+  phone?: string | null;
+  email?: string | null;
   name: string;
   plan: string;
   saleValue: number;
