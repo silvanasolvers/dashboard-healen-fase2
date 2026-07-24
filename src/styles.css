@@ -669,6 +669,14 @@ ul { margin: 0; padding: 0; list-style: none; }
   font-weight: 700;
 }
 .crm-cell-value { font-size: 0.8rem; white-space: nowrap; }
+.crm-segment-summary {
+  display: block;
+  max-width: 190px;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
 .crm-open-cell { width: 88px; }
 .crm-open-cell .btn { width: 34px; height: 34px; }
 .crm-row-actions { display: flex; justify-content: flex-end; gap: 5px; }
@@ -852,6 +860,20 @@ ul { margin: 0; padding: 0; list-style: none; }
 .crm-summary p { color: var(--ink-soft); font-size: 0.86rem; line-height: 1.55; }
 .crm-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .crm-tags span { padding: 5px 10px; border-radius: var(--r-pill); background: var(--brand-soft); color: var(--brand-strong); font-size: 0.7rem; font-weight: 600; }
+.crm-campaign-segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.crm-campaign-segments article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.crm-campaign-segments strong { color: var(--brand-strong); font-size: 0.82rem; }
+.crm-campaign-segments span { color: var(--muted); font-size: 0.66rem; font-weight: 650; text-transform: capitalize; }
+.crm-campaign-segments p,
+.crm-segments-empty { color: var(--ink-soft); font-size: 0.74rem; line-height: 1.45; }
 .crm-followup { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; border-radius: var(--r-md); background: var(--line-soft); overflow: hidden; }
 .crm-followup > div { display: flex; flex-direction: column; gap: 5px; padding: 14px; background: var(--surface-2); }
 .crm-followup strong { font-size: 0.84rem; }
@@ -874,6 +896,14 @@ ul { margin: 0; padding: 0; list-style: none; }
   outline: none;
 }
 .crm-edit-form textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.crm-patient-promotion-note {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
 .crm-form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .crm-move-form { display: flex; flex-direction: column; gap: 16px; }
 .crm-move-current { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; border-radius: var(--r-md); background: var(--surface-2); }
@@ -2552,6 +2582,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   .crm-detail__avatar { width: 62px; height: 62px; }
   .crm-detail__metric { padding-left: 0; margin-top: 0; }
   .crm-followup { grid-template-columns: 1fr; }
+  .crm-campaign-segments { grid-template-columns: 1fr; }
   .crm-pagination { align-items: flex-start; flex-direction: column; }
   .crm-pagination > div { width: 100%; justify-content: space-between; }
   .crm-edit-form .crm-form-actions { flex-direction: column-reverse; }

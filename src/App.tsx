@@ -36,6 +36,7 @@ import {
   Link as LinkIcon,
   LogOut,
   Mail,
+  Megaphone,
   Menu,
   MessageCircle,
   Minus,
@@ -1177,11 +1178,20 @@ function Priority({
    CRM — contactos, pipeline y revisión humana
    ============================================================ */
 type CrmTab = 'contacts' | 'pipeline' | 'review';
-type CrmTypeFilter = 'all' | 'patients' | Exclude<CrmContactType, 'patient'>;
+type CrmTypeFilter = 'all' | CrmContactType;
 type CrmPageSizeChoice = 50 | 75 | 100 | 'all';
 
 const CRM_BATCH_SIZE = 250;
 const CRM_REQUEST_TIMEOUT = 15_000;
+const CRM_CAMPAIGN_SEGMENTS = [
+  { code: 'tratamiento_activo', label: 'Tratamiento activo' },
+  { code: 'por_finalizar_30d', label: 'Por finalizar (30 días)' },
+  { code: 'reactivacion', label: 'Reactivación' },
+  { code: 'sin_tratamiento', label: 'Sin tratamiento' },
+  { code: 'cumpleanos_mes', label: 'Cumpleaños del mes' },
+  { code: 'vip', label: 'VIP' },
+  { code: 'sin_contacto_45d', label: 'Sin contacto (45 días)' },
+] as const;
 const CRM_EMPTY_COUNTS: CrmCounts = {
   contacts: 0,
   leads: 0,
@@ -1210,6 +1220,7 @@ function crmMatchesQuery(
   search: string,
   type: CrmTypeFilter,
   stage: 'all' | CrmStage,
+  segment: string,
 ): boolean {
   const normalizedSearch = search.trim().toLocaleLowerCase('es');
   const matchesSearch = !normalizedSearch || [
@@ -1220,9 +1231,10 @@ function crmMatchesQuery(
     contact.summary,
     ...contact.tags,
   ].filter(Boolean).join(' ').toLocaleLowerCase('es').includes(normalizedSearch);
-  const matchesType = type === 'all'
-    || (type === 'patients' ? contact.isPatient : !contact.isPatient && contact.contactType === type);
-  return matchesSearch && matchesType && (stage === 'all' || contact.stage === stage);
+  const matchesType = type === 'all' || contact.contactType === type;
+  const matchesSegment = segment === 'all'
+    || contact.patientSegments.some((item) => item.code === segment);
+  return matchesSearch && matchesType && matchesSegment && (stage === 'all' || contact.stage === stage);
 }
 
 const CRM_FIELD_LABELS: Record<string, string> = {
@@ -1299,8 +1311,8 @@ function crmMatchContext(candidate: CrmReviewCandidate): string {
     return 'No se vinculará automáticamente con ninguno de esos registros.';
   }
   const treatment = data.client_has_treatment === true
-    ? 'Paciente: tiene tratamiento real'
-    : 'Contacto sin tratamiento: permanece como lead';
+    ? 'Tiene tratamiento registrado'
+    : 'No tiene tratamiento registrado';
   const code = data.client_code ? `Código ${crmDisplayValue(data.client_code)}` : null;
   return [code, treatment].filter(Boolean).join(' · ');
 }
@@ -1325,10 +1337,7 @@ function crmTypeTone(contact: CrmContact): Tone {
 }
 
 function crmTypeLabel(contact: CrmContact): string {
-  if (contact.isPatient) return 'Paciente con tratamiento';
-  // Defensa visual: aun si un dato legado estuviera mal clasificado como
-  // patient, sin tratamiento no se presenta como paciente.
-  return contact.contactType === 'patient' ? 'Contacto CRM' : crmContactTypeLabel(contact.contactType);
+  return contact.isPatient ? 'Paciente' : crmContactTypeLabel(contact.contactType);
 }
 
 function crmCanMoveInPipeline(contact: CrmContact): boolean {
@@ -1351,6 +1360,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [stage, setStage] = useState<'all' | CrmStage>('all');
   const [type, setType] = useState<CrmTypeFilter>('all');
+  const [segment, setSegment] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<CrmPageSizeChoice>(initialCrmPageSize);
   const [loading, setLoading] = useState(true);
@@ -1379,7 +1389,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
   const pipelineRequestRef = useRef(0);
   const reviewsLoadedRef = useRef(false);
   const reviewsRequestRef = useRef(0);
-  const querySignature = `${debouncedSearch}\u0000${type}\u0000${stage}\u0000${pageSize}\u0000${pageSize === 'all' ? 1 : page}`;
+  const querySignature = `${debouncedSearch}\u0000${type}\u0000${stage}\u0000${segment}\u0000${pageSize}\u0000${pageSize === 'all' ? 1 : page}`;
   const querySignatureRef = useRef(querySignature);
   querySignatureRef.current = querySignature;
 
@@ -1451,6 +1461,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
         search: debouncedSearch,
         contactType: type,
         stage,
+        segment,
       };
 
       if (pageSize !== 'all') {
@@ -1467,7 +1478,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
           if (override && incoming.lockVersion >= override.lockVersion) {
             contactOverridesRef.current.delete(incoming.id);
           }
-          return crmMatchesQuery(contact, debouncedSearch, type, stage) ? [contact] : [];
+          return crmMatchesQuery(contact, debouncedSearch, type, stage, segment) ? [contact] : [];
         }));
         setCounts(result.counts);
         setFilteredTotal(result.filteredTotal);
@@ -1501,7 +1512,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
             if (override && incoming.lockVersion >= override.lockVersion) {
               contactOverridesRef.current.delete(incoming.id);
             }
-            if (crmMatchesQuery(contact, debouncedSearch, type, stage)) merged.set(contact.id, contact);
+            if (crmMatchesQuery(contact, debouncedSearch, type, stage, segment)) merged.set(contact.id, contact);
             else merged.delete(contact.id);
           });
           return Array.from(merged.values());
@@ -1541,7 +1552,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
       if (contactsRequestRef.current === requestId) contactsRequestRef.current += 1;
       controller.abort();
     };
-  }, [contactsVersion, debouncedSearch, page, pageSize, querySignature, stage, tab, type]);
+  }, [contactsVersion, debouncedSearch, page, pageSize, querySignature, segment, stage, tab, type]);
 
   // El pipeline no depende de la página visible del directorio: se carga al
   // abrir la pestaña y también avanza en bloques acotados.
@@ -1573,6 +1584,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
           search: '',
           contactType: 'lead',
           stage: 'all',
+          segment: 'all',
         }, { signal: controller.signal });
         if (requestId !== pipelineRequestRef.current) return;
         const receivedPage = batchPage;
@@ -1670,7 +1682,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
 
   function patchContact(nextContact: CrmContact) {
     contactOverridesRef.current.set(nextContact.id, nextContact);
-    const matchesDirectory = crmMatchesQuery(nextContact, debouncedSearch, type, stage);
+    const matchesDirectory = crmMatchesQuery(nextContact, debouncedSearch, type, stage, segment);
     setContacts((current) => current
       .map((contact) => contact.id === nextContact.id ? nextContact : contact)
       .filter((contact) => contact.id !== nextContact.id || matchesDirectory));
@@ -1713,6 +1725,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
         search: debouncedSearch,
         contactType: type,
         stage,
+        segment,
       }, { signal: controller.signal, force: true });
       if (querySignatureRef.current !== signature) return;
       setCounts(result.counts);
@@ -1775,7 +1788,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
     phone: string | null;
     email: string | null;
     city: string | null;
-    contactType: Exclude<CrmContactType, 'patient'>;
+    contactType: CrmContactType;
     summary: string | null;
     tags: string[];
   }) {
@@ -1790,7 +1803,8 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
         phone: fields.phone,
         email: fields.email,
         city: fields.city,
-        contactType: contact.isPatient ? contact.contactType : fields.contactType,
+        contactType: fields.contactType,
+        isPatient: contact.isPatient || fields.contactType === 'patient',
         summary: fields.summary,
         tags: fields.tags,
         lockVersion: contact.lockVersion + 1,
@@ -1800,7 +1814,9 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
       if (fresh) patchContact(fresh);
       setEditing(null);
       void refreshMetricsAfterMutation();
-      notify('Contacto actualizado y auditado');
+      notify(fields.contactType === 'patient' && !contact.isPatient
+        ? 'Paciente creado o vinculado; identidad y segmentos sincronizados'
+        : 'Contacto actualizado y auditado');
     } catch (err) {
       notify(crmErrorMessage(err, 'No se pudo actualizar el contacto.'), true);
     } finally {
@@ -1899,7 +1915,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
       <section className="kpi-grid" data-reveal>
         <SignalKpi icon={Users} tone="brand" label="Contactos" value={counts.contacts} hint="Identidades útiles en CRM" />
         <SignalKpi icon={UserPlus} tone="warn" label="Leads" value={counts.leads} hint="Contactos comerciales" />
-        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={counts.patients} hint="Solo con tratamiento registrado" />
+        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={counts.patients} hint="Fichas clínicas vinculadas al CRM" />
         <SignalKpi icon={ClipboardList} tone={counts.reviews ? 'warn' : 'ok'} label="Por revisar" value={counts.reviews} hint="Cambios aún no aplicados" />
       </section>
 
@@ -1912,6 +1928,8 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
             setStage={(value) => { setStage(value); setPage(1); }}
             type={type}
             setType={(value) => { setType(value); setPage(1); }}
+            segment={segment}
+            setSegment={(value) => { setSegment(value); setPage(1); }}
             count={filteredTotal}
             pageSize={pageSize}
             setPageSize={(value) => { setPageSize(value); setPage(1); }}
@@ -1999,6 +2017,8 @@ function CrmFilters({
   setStage,
   type,
   setType,
+  segment,
+  setSegment,
   count,
   pageSize,
   setPageSize,
@@ -2009,6 +2029,8 @@ function CrmFilters({
   setStage: (value: 'all' | CrmStage) => void;
   type: CrmTypeFilter;
   setType: (value: CrmTypeFilter) => void;
+  segment: string;
+  setSegment: (value: string) => void;
   count: number;
   pageSize: CrmPageSizeChoice;
   setPageSize: (value: CrmPageSizeChoice) => void;
@@ -2027,7 +2049,7 @@ function CrmFilters({
         <select value={type} onChange={(event) => setType(event.target.value as CrmTypeFilter)}>
           <option value="all">Todos</option>
           <option value="lead">Leads</option>
-          <option value="patients">Pacientes con tratamiento</option>
+          <option value="patient">Pacientes</option>
           <option value="supplier">Proveedores</option>
           <option value="staff">Equipo</option>
           <option value="partner">Aliados</option>
@@ -2035,6 +2057,15 @@ function CrmFilters({
           <option value="group_only">Solo en grupos</option>
           <option value="other">Otros</option>
           <option value="unknown">Sin clasificar</option>
+        </select>
+      </label>
+      <label className="crm-select">
+        <span>Campaña</span>
+        <select value={segment} onChange={(event) => setSegment(event.target.value)}>
+          <option value="all">Todos los segmentos</option>
+          {CRM_CAMPAIGN_SEGMENTS.map((item) => (
+            <option key={item.code} value={item.code}>{item.label}</option>
+          ))}
         </select>
       </label>
       <label className="crm-select">
@@ -2129,7 +2160,15 @@ function CrmContactsTable({
                     </span>
                   </button>
                 </td>
-                <td data-label="Clasificación"><Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} /></td>
+                <td data-label="Clasificación">
+                  <Badge label={crmTypeLabel(contact)} tone={crmTypeTone(contact)} />
+                  {contact.patientSegments.length > 0 && (
+                    <span className="crm-segment-summary">
+                      {contact.patientSegments.slice(0, 2).map((item) => item.name).join(' · ')}
+                      {contact.patientSegments.length > 2 ? ` +${contact.patientSegments.length - 2}` : ''}
+                    </span>
+                  )}
+                </td>
                 <td data-label="Etapa">
                   {crmCanMoveInPipeline(contact) ? (
                     <select
@@ -2420,13 +2459,13 @@ function CrmContactDetail({
             {contact.isPatient ? (
               <>
                 <Badge label="Paciente confirmado" tone="success" />
-                <p>{contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} registrado{contact.treatmentCount === 1 ? '' : 's'} en la base; {contact.activeTreatmentCount} activo{contact.activeTreatmentCount === 1 ? '' : 's'}.</p>
+                <p>Ficha clínica vinculada. {contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} registrado{contact.treatmentCount === 1 ? '' : 's'}; {contact.activeTreatmentCount} activo{contact.activeTreatmentCount === 1 ? '' : 's'}.</p>
                 {(contact.clientName || contact.clientCode) && <span className="crm-match-note">{contact.clientName || 'Paciente'} · {contact.clientCode || 'sin código'}</span>}
               </>
             ) : (
               <>
                 <Badge label="No es paciente" tone="neutral" />
-                <p>Este contacto permanece en CRM. Solo será paciente cuando exista un tratamiento real.</p>
+                <p>Este contacto permanece en CRM. Puedes convertirlo en paciente desde Editar; se creará o vinculará su ficha clínica sin exigir un tratamiento.</p>
               </>
             )}
             {confidence !== null && <span className="crm-match-note">Match de identidad: {confidence}% · {contact.matchMethod || contact.matchStatus || 'pendiente'}</span>}
@@ -2441,6 +2480,25 @@ function CrmContactDetail({
             </div>
             {contact.tags.length > 0 && <div className="crm-tags">{contact.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
           </section>
+
+          {contact.isPatient && (
+            <section className="detail-block" data-reveal>
+              <div className="label"><Megaphone size={17} /> Segmentos de campañas</div>
+              {contact.patientSegments.length > 0 ? (
+                <div className="crm-campaign-segments">
+                  {contact.patientSegments.map((segmentItem) => (
+                    <article key={segmentItem.code}>
+                      <strong>{segmentItem.name}</strong>
+                      <span>{segmentItem.campaignType.replace(/_/g, ' ')} · {segmentItem.cadence}</span>
+                      <p>{segmentItem.reason}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="crm-segments-empty">Este paciente no coincide hoy con una regla automática de campaña.</p>
+              )}
+            </section>
+          )}
 
           <section className="detail-block" data-reveal>
             <div className="label"><CalendarClock size={17} /> Seguimiento {canMove && <button className="detail-block__edit" onClick={onMove}><TrendingUp size={13} /> Mover</button>}</div>
@@ -2458,8 +2516,9 @@ function CrmContactDetail({
   );
 }
 
-const CRM_EDITABLE_TYPES: Array<{ id: Exclude<CrmContactType, 'patient'>; label: string }> = [
+const CRM_EDITABLE_TYPES: Array<{ id: CrmContactType; label: string }> = [
   { id: 'lead', label: 'Lead' },
+  { id: 'patient', label: 'Paciente' },
   { id: 'unknown', label: 'Sin clasificar' },
   { id: 'supplier', label: 'Proveedor' },
   { id: 'staff', label: 'Equipo' },
@@ -2482,13 +2541,13 @@ function CrmEditSheet({
     phone: string | null;
     email: string | null;
     city: string | null;
-    contactType: Exclude<CrmContactType, 'patient'>;
+    contactType: CrmContactType;
     summary: string | null;
     tags: string[];
   }) => void;
   onClose: () => void;
 }) {
-  const initialType: Exclude<CrmContactType, 'patient'> = contact.contactType === 'patient' ? 'lead' : contact.contactType;
+  const initialType: CrmContactType = contact.contactType;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2498,7 +2557,7 @@ function CrmEditSheet({
       phone: String(form.get('phone') || '').trim() || null,
       email: String(form.get('email') || '').trim().toLocaleLowerCase('es') || null,
       city: String(form.get('city') || '').trim() || null,
-      contactType: String(form.get('contactType') || initialType) as Exclude<CrmContactType, 'patient'>,
+      contactType: String(form.get('contactType') || initialType) as CrmContactType,
       summary: String(form.get('summary') || '').trim() || null,
       tags: String(form.get('tags') || '').split(',').map((tag) => tag.trim()).filter(Boolean),
     });
@@ -2513,10 +2572,16 @@ function CrmEditSheet({
         <label className="field"><span>Ciudad</span><input name="city" defaultValue={contact.city || ''} placeholder="Medellín" /></label>
         <label className="field"><span>Clasificación</span>
           <select name="contactType" defaultValue={initialType} disabled={contact.isPatient}>
-            {contact.isPatient && <option value="lead">Paciente con tratamiento</option>}
-            {!contact.isPatient && CRM_EDITABLE_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            {contact.isPatient
+              ? <option value="patient">Paciente</option>
+              : CRM_EDITABLE_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
         </label>
+        {!contact.isPatient && (
+          <p className="crm-patient-promotion-note field--full">
+            Al elegir Paciente se creará o vinculará una ficha clínica y se sincronizarán nombre, teléfono y correo. El tratamiento se gestiona por separado.
+          </p>
+        )}
         <label className="field field--full"><span>Resumen comercial</span><textarea name="summary" defaultValue={contact.summary || ''} placeholder="Necesidad, interés y contexto relevante del contacto" rows={4} /></label>
         <label className="field field--full"><span>Etiquetas, separadas por coma</span><input name="tags" defaultValue={contact.tags.join(', ')} placeholder="NAD+, seguimiento, referido" /></label>
         <div className="crm-form-actions field--full">
