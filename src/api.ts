@@ -681,6 +681,9 @@ export async function fetchFinanceRows(range: DateRange): Promise<FinanceMovemen
 export function createPatient(f: FormData) {
   return rpc('dash_create_patient', {
     p_name: String(f.get('name') || ''),
+    p_document_id: String(f.get('documentId') || '') || null,
+    p_phone: String(f.get('phone') || '') || null,
+    p_email: String(f.get('email') || '') || null,
     p_plan: String(f.get('plan') || ''),
     p_sale_value: Number(f.get('saleValue')) || 0,
     p_peptide: String(f.get('peptide') || ''),
