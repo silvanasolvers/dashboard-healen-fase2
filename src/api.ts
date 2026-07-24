@@ -559,13 +559,11 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
     supabase.from('v_patient_related').select('*').eq('client_id', clientUuid).maybeSingle(),
   ]);
   if (summary.error) throw new Error(summary.error.message);
-  if (notes.error) throw new Error(notes.error.message);
-  if (milestones.error) throw new Error(milestones.error.message);
-  if (timeline.error) throw new Error(timeline.error.message);
-  if (revenue.error) throw new Error(revenue.error.message);
-  if (related.error) throw new Error(related.error.message);
 
-  const noteRows = (notes.data ?? []) as ClinicalNote[];
+  // La identidad del paciente es la sección mínima obligatoria. Las secciones
+  // clínicas son independientes: un error puntual en notas, hitos o dinero no
+  // debe ocultar teléfono/correo ni bloquear la edición de la ficha.
+  const noteRows = (notes.error ? [] : (notes.data ?? [])) as ClinicalNote[];
   noteRows.sort(
     (a, b) => Number(b.pinned) - Number(a.pinned) || (a.created_at < b.created_at ? 1 : -1),
   );
@@ -573,10 +571,10 @@ export async function fetchDossier(clientUuid: string): Promise<PatientDossier> 
   return {
     summary: (summary.data ?? null) as PatientSummary | null,
     notes: noteRows,
-    milestones: (milestones.data ?? []) as PatientMilestone[],
-    timeline: (timeline.data ?? []) as TimelineEvent[],
-    revenue: (revenue.data ?? []) as RevenuePoint[],
-    related: (related.data ?? null) as PatientRelated | null,
+    milestones: (milestones.error ? [] : (milestones.data ?? [])) as PatientMilestone[],
+    timeline: (timeline.error ? [] : (timeline.data ?? [])) as TimelineEvent[],
+    revenue: (revenue.error ? [] : (revenue.data ?? [])) as RevenuePoint[],
+    related: (related.error ? null : (related.data ?? null)) as PatientRelated | null,
   };
 }
 

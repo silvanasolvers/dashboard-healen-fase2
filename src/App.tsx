@@ -5790,9 +5790,9 @@ function PatientInfoCard({
   const [error, setError] = useState('');
 
   const name = summary?.full_name || patient.name;
-  const documentId = summary?.document_id ?? null;
-  const phone = summary?.phone ?? null;
-  const email = summary?.email ?? null;
+  const documentId = summary?.document_id ?? patient.documentId ?? null;
+  const phone = summary?.phone ?? patient.phone ?? null;
+  const email = summary?.email ?? patient.email ?? null;
   const birthdate = summary?.birthdate ?? null;
   const address = summary?.address ?? null;
   const notes = summary?.notes ?? null;
