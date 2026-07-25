@@ -1477,17 +1477,28 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 }
 .info-form textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
 .info-form__actions { display: flex; gap: 10px; align-items: center; }
-.info-profile-hint {
+.info-profile-summary {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
   margin: 2px 0 0;
-  padding-top: 12px;
+  padding: 13px 0 0;
   border-top: 1px solid var(--line-soft);
+  text-align: left;
   color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.45;
+  transition: color var(--t-fast);
 }
+.info-profile-summary:hover { color: var(--brand-strong); }
+.info-profile-summary > span { display: grid; gap: 3px; }
+.info-profile-summary strong { color: var(--ink); font-size: 0.86rem; }
+.info-profile-summary small { font-size: 0.76rem; line-height: 1.4; }
+.info-profile-summary > svg { flex: 0 0 auto; color: var(--brand); }
 
-/* ---- Contexto de ingreso: vista legible de importaciones históricas ---- */
+/* ---- Resumen clínico: vista legible de importaciones históricas ---- */
+.profile-context { scroll-margin-top: 146px; }
 .profile-context > .label { margin-bottom: 8px; }
 .profile-context__source {
   min-width: 0;

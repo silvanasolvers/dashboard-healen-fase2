@@ -5718,11 +5718,19 @@ function ResumenPanel({
   const balance = dossier?.summary?.balance ?? 0;
   const sessions = dossier?.summary?.sales_count ?? 0;
   const since = daysSince(dossier?.summary?.last_sale);
+  const openClinicalSummary = () => {
+    document.getElementById('resumen-clinico')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   return (
     <div className="detail__grid">
       <aside className="detail__aside">
         <NextStepsPanel steps={steps} onAct={onAct} />
-        <PatientInfoCard summary={dossier?.summary ?? null} patient={patient} onSaved={reload} />
+        <PatientInfoCard
+          summary={dossier?.summary ?? null}
+          patient={patient}
+          onSaved={reload}
+          onOpenClinicalSummary={openClinicalSummary}
+        />
         <div className="fact-card" data-reveal>
           <div className="fact">
             <span>Valor de vida</span>
@@ -5763,8 +5771,8 @@ function ResumenPanel({
         </div>
       </aside>
       <main className="detail__main">
-        <TreatmentBlock patient={patient} />
         <ClinicalContextCard notes={dossier?.summary?.notes ?? null} onOpenNotes={onOpenNotes} />
+        <TreatmentBlock patient={patient} />
         <ClinicalFlags dossier={dossier} />
         <MilestonesPanel patient={patient} milestones={dossier?.milestones ?? []} loading={!dossier} onChanged={reload} />
       </main>
@@ -5857,9 +5865,9 @@ function ClinicalContextCard({ notes, onOpenNotes }: { notes: string | null; onO
   );
 
   return (
-    <section className="detail-block profile-context" data-reveal>
+    <section id="resumen-clinico" className="detail-block profile-context" data-reveal>
       <div className="label">
-        <ClipboardList size={17} /> {intake.isStructured ? 'Contexto de ingreso' : 'Observación de ficha'}
+        <ClipboardList size={17} /> {intake.isStructured ? 'Resumen clínico' : 'Observación de ficha'}
         <span className="profile-context__source">{intake.source}</span>
         <button className="detail-block__edit" onClick={onOpenNotes}>
           <FileText size={14} /> Notas clínicas
@@ -5906,10 +5914,12 @@ function PatientInfoCard({
   summary,
   patient,
   onSaved,
+  onOpenClinicalSummary,
 }: {
   summary: PatientSummary | null;
   patient: Patient;
   onSaved: () => void;
+  onOpenClinicalSummary: () => void;
 }) {
   const clientUuid = patient.clientUuid;
   // Solo se puede editar cuando el summary YA cargó: si no, el form se
@@ -6065,9 +6075,13 @@ function PatientInfoCard({
           </div>
           <InfoRow k="Dirección" v={address} full />
           {notes && (
-            <p className="info-profile-hint">
-              El contexto de ingreso y las observaciones están organizados en el resumen clínico.
-            </p>
+            <button className="info-profile-summary" type="button" onClick={onOpenClinicalSummary}>
+              <span>
+                <strong>Resumen clínico</strong>
+                <small>Ver motivo, antecedentes, medicamentos y hábitos</small>
+              </span>
+              <ChevronRight size={18} aria-hidden="true" />
+            </button>
           )}
         </div>
       )}
