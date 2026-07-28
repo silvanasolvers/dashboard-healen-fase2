@@ -86,6 +86,7 @@ import {
   formatMonth,
   InventoryItem,
   isReceivable,
+  JulyPatientFinanceRow,
   KV,
   MILESTONE_CATEGORIES,
   milestoneCategoryLabel,
@@ -146,6 +147,7 @@ import {
   fetchDossier,
   fetchFinanceRows,
   fetchFinanceSummary,
+  fetchJulyPatientFinance,
   fetchPayees,
   fetchPlans,
   financeEntry,
@@ -4317,6 +4319,7 @@ function ContabilidadView({
   const [range, setRange] = useState<DateRange>(emptyRange);
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [rows, setRows] = useState<FinanceMovement[]>([]);
+  const [julyPatients, setJulyPatients] = useState<JulyPatientFinanceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<AccountingTab>('ingresos');
   const [support, setSupport] = useState<FinanceMovement | null>(null);
@@ -4334,16 +4337,18 @@ function ContabilidadView({
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    Promise.all([fetchFinanceSummary(range), fetchFinanceRows(range)])
-      .then(([s, r]) => {
+    Promise.all([fetchFinanceSummary(range), fetchFinanceRows(range), fetchJulyPatientFinance()])
+      .then(([s, r, jp]) => {
         if (!alive) return;
         setSummary(s);
         setRows(r);
+        setJulyPatients(jp);
       })
       .catch(() => {
         if (!alive) return;
         setSummary(null);
         setRows([]);
+        setJulyPatients([]);
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -4491,6 +4496,8 @@ function ContabilidadView({
               </div>
             ))}
           </div>
+
+          {tab === 'ingresos' && <JulyPatientFinancePanel patients={julyPatients} />}
 
           <div className="breakdown">
             <article>
@@ -4854,6 +4861,72 @@ function MovementForm({
         </div>
       </form>
     </article>
+  );
+}
+
+function JulyPatientFinancePanel({ patients }: { patients: JulyPatientFinanceRow[] }) {
+  if (!patients.length) return null;
+  const totals = patients.reduce(
+    (acc, p) => {
+      acc.plan += Number(p.plan_value ?? 0);
+      acc.paid += Number(p.paid_value ?? 0);
+      acc.balance += Number(p.balance_value ?? 0);
+      acc.items += Number(p.item_rows ?? 0);
+      return acc;
+    },
+    { plan: 0, paid: 0, balance: 0, items: 0 },
+  );
+  const topBalance = [...patients].sort((a, b) => Number(b.balance_value ?? 0) - Number(a.balance_value ?? 0)).slice(0, 8);
+
+  return (
+    <section className="july-patients" aria-label="Resumen pacientes julio">
+      <div className="july-patients__head">
+        <div>
+          <span className="eyebrow">Cuadro de pacientes</span>
+          <h3>Pacientes julio</h3>
+          <p>Fuente Libro1.xlsx · filas de julio organizadas para Caja.</p>
+        </div>
+        <Badge label="Julio 2026" tone="neutral" />
+      </div>
+
+      <div className="july-patients__kpis">
+        <div><span>Pacientes</span><strong>{patients.length}</strong></div>
+        <div><span>Items / filas</span><strong>{totals.items}</strong></div>
+        <div><span>Valor planes</span><strong>{formatCurrency(totals.plan)}</strong></div>
+        <div><span>Pagado</span><strong>{formatCurrency(totals.paid)}</strong></div>
+        <div><span>Saldo pendiente</span><strong>{formatCurrency(totals.balance)}</strong></div>
+      </div>
+
+      <div className="july-patients__table">
+        <table className="table table--compact">
+          <thead>
+            <tr>
+              <th>Paciente</th>
+              <th>Items</th>
+              <th>Valor plan</th>
+              <th>Pagado</th>
+              <th>Saldo</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {topBalance.map((p) => (
+              <tr key={p.patient_name}>
+                <td>
+                  <strong>{p.patient_name}</strong>
+                  <small>{p.items_summary || 'Sin detalle de items'}</small>
+                </td>
+                <td>{p.item_rows}</td>
+                <td className="num">{formatCurrency(Number(p.plan_value ?? 0))}</td>
+                <td className="num">{formatCurrency(Number(p.paid_value ?? 0))}</td>
+                <td className="num">{formatCurrency(Number(p.balance_value ?? 0))}</td>
+                <td><Badge label={p.payment_status || 'Sin estado'} tone={Number(p.balance_value ?? 0) > 0 ? 'warning' : 'ok'} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

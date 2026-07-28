@@ -13,6 +13,7 @@ import type {
   FinanceMovement,
   FinanceSummary,
   InventoryItem,
+  JulyPatientFinanceRow,
   MovementPayload,
   NoteKind,
   Patient,
@@ -679,6 +680,16 @@ export async function fetchFinanceRows(range: DateRange): Promise<FinanceMovemen
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return (data ?? []) as FinanceMovement[];
+}
+
+export async function fetchJulyPatientFinance(): Promise<JulyPatientFinanceRow[]> {
+  const { data, error } = await supabase
+    .from('july_patient_finance_summary')
+    .select('patient_name,source_ids,item_rows,first_date,last_date,plan_value,paid_value,balance_value,payment_status,payment_method,items_summary')
+    .order('balance_value', { ascending: false })
+    .order('plan_value', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as JulyPatientFinanceRow[];
 }
 
 // ---------- Mutaciones (1:1 con los formularios) ----------
