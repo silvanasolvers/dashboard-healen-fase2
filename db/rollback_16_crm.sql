@@ -10,6 +10,7 @@ begin;
 
 -- Los únicos objetos de 16 instalados sobre una tabla preexistente.
 drop trigger if exists trg_crm_treatment_delete_sync on treatments;
+drop trigger if exists trg_crm_treatment_insert_sync on treatments;
 drop trigger if exists trg_crm_treatment_move_sync on treatments;
 
 drop view if exists v_crm_review_queue;
@@ -43,6 +44,7 @@ drop table if exists crm_contacts;
 
 -- Helpers de triggers: las tablas CRM y triggers sobre treatments ya no existen.
 drop function if exists crm_downgrade_contact_without_treatment();
+drop function if exists crm_sync_contact_treatment_lifecycle();
 drop function if exists crm_assert_patient_has_treatment();
 drop function if exists crm_bump_lock_version();
 
@@ -64,7 +66,7 @@ begin
   end if;
   if exists (
     select 1 from pg_trigger
-    where tgname in ('trg_crm_treatment_delete_sync', 'trg_crm_treatment_move_sync')
+    where tgname in ('trg_crm_treatment_delete_sync', 'trg_crm_treatment_insert_sync', 'trg_crm_treatment_move_sync')
       and not tgisinternal
   ) then
     raise exception 'Rollback CRM incompleto: aún existen triggers sobre treatments';

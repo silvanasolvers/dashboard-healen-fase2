@@ -389,6 +389,26 @@ function Badge({ label, tone }: { label: string; tone: Tone }) {
   return <span className={`badge badge--${tone}`}>{label}</span>;
 }
 
+function treatmentProgress(patient: Patient): number {
+  const elapsed = Math.max(0, patient.totalDays - patient.daysLeft);
+  return Math.round(Math.min(100, Math.max(0, (elapsed / Math.max(patient.totalDays, 1)) * 100)));
+}
+
+function patientEvolutionLabel(patient: Patient): string {
+  const progress = treatmentProgress(patient);
+  if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return `Cierre / recompra · ${progress}%`;
+  if (patient.daysLeft <= 12) return `Control cercano · ${progress}%`;
+  return `En evolución · ${progress}%`;
+}
+
+function patientNextAction(patient: Patient): string {
+  const urgent = mostUrgentPeptide(patient);
+  if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return 'Revisar evolución clínica, saldo y recompra.';
+  if (urgent && urgent.signal !== 'ok') return `Confirmar continuidad de ${urgent.name} (${urgent.endsInDays}d).`;
+  if (patient.weeklySerum) return `Mantener suero semanal${patient.serumDay && patient.serumDay !== '-' ? ` · ${patient.serumDay}` : ''}.`;
+  return 'Seguimiento activo sin alerta crítica.';
+}
+
 function Field({
   label,
   children,
@@ -1035,14 +1055,29 @@ function InicioView({
               Ver todos <ChevronRight size={15} />
             </button>
           </div>
-          <div className="today__rings">
-            {featuredPatients.map((p) => (
-              <button key={p.id} className="urgent-ring" onClick={() => onOpenPatient(p)}>
-                <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={72} stroke={6} />
-                <span className="urgent-ring__name">{p.name.split(' ')[0]}</span>
-                <span className="urgent-ring__plan">{p.plan}</span>
-              </button>
-            ))}
+          <div className="today__evolution">
+            {featuredPatients.map((p) => {
+              const progress = treatmentProgress(p);
+              const signal = treatmentSignal(p.daysLeft);
+              return (
+                <button key={p.id} className={`evolution-row evolution-row--${signal}`} onClick={() => onOpenPatient(p)}>
+                  <TreatmentRing daysLeft={p.daysLeft} totalDays={p.totalDays} size={54} stroke={5} showUnit={false} />
+                  <span className="evolution-row__body">
+                    <span className="evolution-row__top">
+                      <strong>{p.name}</strong>
+                      <small>{p.id}</small>
+                    </span>
+                    <span className="evolution-row__meta">
+                      {patientEvolutionLabel(p)} · {p.plan}
+                    </span>
+                    <span className="evolution-row__bar" aria-label={`Evolución ${progress}%`}>
+                      <span style={{ width: `${progress}%` }} />
+                    </span>
+                    <span className="evolution-row__next">{patientNextAction(p)}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </article>
       </section>
@@ -1313,8 +1348,8 @@ function crmMatchContext(candidate: CrmReviewCandidate): string {
     return 'No se vinculará automáticamente con ninguno de esos registros.';
   }
   const treatment = data.client_has_treatment === true
-    ? 'Tiene tratamiento registrado'
-    : 'No tiene tratamiento registrado';
+    ? 'Paciente: tiene tratamiento activo'
+    : 'Sin tratamiento activo: permanece en CRM o recuperación';
   const code = data.client_code ? `Código ${crmDisplayValue(data.client_code)}` : null;
   return [code, treatment].filter(Boolean).join(' · ');
 }
@@ -1339,7 +1374,11 @@ function crmTypeTone(contact: CrmContact): Tone {
 }
 
 function crmTypeLabel(contact: CrmContact): string {
-  return contact.isPatient ? 'Paciente' : crmContactTypeLabel(contact.contactType);
+  if (contact.isPatient) return 'Paciente activo';
+  if (contact.treatmentCount > 0) return 'Paciente histórico';
+  // Defensa visual: aun si un dato legado estuviera mal clasificado como
+  // patient, sin tratamiento no se presenta como paciente.
+  return contact.contactType === 'patient' ? 'Contacto CRM' : crmContactTypeLabel(contact.contactType);
 }
 
 function crmCanMoveInPipeline(contact: CrmContact): boolean {
@@ -1917,7 +1956,7 @@ function CrmView({ notify }: { notify: (msg: string, error?: boolean) => void })
       <section className="kpi-grid" data-reveal>
         <SignalKpi icon={Users} tone="brand" label="Contactos" value={counts.contacts} hint="Identidades útiles en CRM" />
         <SignalKpi icon={UserPlus} tone="warn" label="Leads" value={counts.leads} hint="Contactos comerciales" />
-        <SignalKpi icon={Activity} tone="ok" label="Pacientes" value={counts.patients} hint="Fichas clínicas vinculadas al CRM" />
+        <SignalKpi icon={Activity} tone="ok" label="Pacientes activos" value={counts.patients} hint="Solo con tratamiento activo" />
         <SignalKpi icon={ClipboardList} tone={counts.reviews ? 'warn' : 'ok'} label="Por revisar" value={counts.reviews} hint="Cambios aún no aplicados" />
       </section>
 
@@ -2460,14 +2499,20 @@ function CrmContactDetail({
             <div className="label"><Dna size={17} /> Relación clínica</div>
             {contact.isPatient ? (
               <>
-                <Badge label="Paciente confirmado" tone="success" />
-                <p>Ficha clínica vinculada. {contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} registrado{contact.treatmentCount === 1 ? '' : 's'}; {contact.activeTreatmentCount} activo{contact.activeTreatmentCount === 1 ? '' : 's'}.</p>
+                <Badge label="Paciente activo" tone="success" />
+                <p>{contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} registrado{contact.treatmentCount === 1 ? '' : 's'} en la base; {contact.activeTreatmentCount} activo{contact.activeTreatmentCount === 1 ? '' : 's'}.</p>
+                {(contact.clientName || contact.clientCode) && <span className="crm-match-note">{contact.clientName || 'Paciente'} · {contact.clientCode || 'sin código'}</span>}
+              </>
+            ) : contact.treatmentCount > 0 ? (
+              <>
+                <Badge label="Paciente histórico · recuperación" tone="warning" />
+                <p>Conserva {contact.treatmentCount} tratamiento{contact.treatmentCount === 1 ? '' : 's'} en la historia, pero ninguno está activo. Permanece relacionado con su ficha clínica y entra al flujo de recuperación.</p>
                 {(contact.clientName || contact.clientCode) && <span className="crm-match-note">{contact.clientName || 'Paciente'} · {contact.clientCode || 'sin código'}</span>}
               </>
             ) : (
               <>
-                <Badge label="No es paciente" tone="neutral" />
-                <p>Este contacto permanece en CRM. Puedes convertirlo en paciente desde Editar; se creará o vinculará su ficha clínica sin exigir un tratamiento.</p>
+                <Badge label="Lead / contacto CRM" tone="neutral" />
+                <p>Este contacto permanece únicamente en CRM. Solo será paciente cuando exista un tratamiento activo.</p>
               </>
             )}
             {confidence !== null && <span className="crm-match-note">Match de identidad: {confidence}% · {contact.matchMethod || contact.matchStatus || 'pendiente'}</span>}

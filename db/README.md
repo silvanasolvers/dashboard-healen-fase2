@@ -24,6 +24,8 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `19_crm_cleanup.sql` | Archiva contactos WhatsApp sin información útil y excluye archivados del directorio |
 | `20_crm_operations.sql` | Edición auditada de contactos y movimientos del pipeline |
 | `21_crm_pagination.sql` | Listado CRM paginado, filtros server-side, métricas e índices de rendimiento |
+| `19_active_patient_lifecycle.sql` | Separa leads, pacientes con tratamiento activo y pacientes históricos en recuperación, conservando la relación CRM–ficha clínica |
+| `20_crm_active_match_semantics.sql` | Propaga la regla de tratamiento activo al matching, revisión y aplicación de candidatos CRM |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar
@@ -36,6 +38,8 @@ for f in db/[0-9][0-9]_*.sql; do python3 db/run.py "$f"; done
 HEALEN_SBP=... python3 db/run.py db/19_crm_cleanup.sql
 HEALEN_SBP=... python3 db/run.py db/20_crm_operations.sql
 HEALEN_SBP=... python3 db/run.py db/21_crm_pagination.sql
+HEALEN_SBP=... python3 db/run.py db/19_active_patient_lifecycle.sql
+HEALEN_SBP=... python3 db/run.py db/20_crm_active_match_semantics.sql
 
 # Solo ante rollback total del CRM (elimina sus datos)
 HEALEN_SBP=... python3 db/run.py db/rollback_16_crm.sql

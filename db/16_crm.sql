@@ -919,7 +919,11 @@ begin
     into v_phone_match, v_email_match
     from clients c where c.id = v_client_id;
     v_match_status := 'matched';
-    select exists (select 1 from treatments t where t.client_id = v_client_id)
+    select exists (
+      select 1 from treatments t
+      where t.client_id = v_client_id
+        and t.status in ('activo', 'por_finalizar')
+    )
       into v_client_has_treatment;
     v_match_method := case when v_phone_match and v_email_match then 'exact_phone_email'
                            when v_phone_match then 'exact_phone'
@@ -1506,7 +1510,11 @@ begin
       v_unique := v_unique + 1;
       if not coalesce(p_dry_run, true) then
         select c.id, c.full_name, c.code, c.phone, c.email,
-          exists (select 1 from treatments t where t.client_id = c.id) as has_treatment
+          exists (
+            select 1 from treatments t
+            where t.client_id = c.id
+              and t.status in ('activo', 'por_finalizar')
+          ) as has_treatment
         into v_client from clients c where c.id = v_clients[1];
         update crm_import_candidates set
           candidate_type = 'contact_match', matched_client_id = v_client.id,

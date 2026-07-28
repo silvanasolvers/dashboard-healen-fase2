@@ -37,6 +37,7 @@ export type CrmStage =
   | 'appointment_scheduled'
   | 'converted'
   | 'follow_up'
+  | 'recovery'
   | 'lost'
   | 'unclassified';
 export type CrmReviewDecision = 'approved' | 'rejected';
@@ -110,6 +111,7 @@ export const CRM_STAGES: Array<{ id: CrmStage; label: string }> = [
   { id: 'appointment_pending', label: 'Cita pendiente' },
   { id: 'appointment_scheduled', label: 'Cita agendada' },
   { id: 'follow_up', label: 'Seguimiento' },
+  { id: 'recovery', label: 'Recuperación' },
   { id: 'converted', label: 'Convertido' },
   { id: 'lost', label: 'Perdido' },
   { id: 'unclassified', label: 'Sin clasificar' },

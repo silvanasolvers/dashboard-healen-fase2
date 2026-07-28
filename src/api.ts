@@ -105,6 +105,7 @@ const CRM_STAGE_IDS = new Set<CrmStage>([
   'appointment_scheduled',
   'converted',
   'follow_up',
+  'recovery',
   'lost',
   'unclassified',
 ]);
@@ -262,8 +263,13 @@ function normalizeCrmContact(row: DbRow): CrmContact {
   const treatmentCount = rowNumber(row, 'treatment_count');
   const contactType = crmType(rowString(row, 'contact_type'));
   const clientId = rowString(row, 'client_id');
-  // La categoría se deriva del vínculo 1:1 con clients, no de tratamientos.
-  const isPatient = contactType === 'patient' && clientId !== null;
+  const activeTreatmentCount = rowNumber(row, 'active_treatment_count');
+  // Paciente es una categoría clínica activa. El historial conserva el vínculo
+  // con clients, pero pasa a recuperación cuando no queda tratamiento activo.
+  const isPatient = rowBoolean(row, 'has_treatment') && activeTreatmentCount > 0;
+  const stage = treatmentCount > 0 && activeTreatmentCount === 0
+    ? 'recovery'
+    : crmStage(rowString(row, 'current_opportunity_stage'));
   const confidenceRaw = rowValue(row, 'match_confidence');
   const matchConfidence = confidenceRaw === null ? null : rowNumber(row, 'match_confidence');
   return {
@@ -273,7 +279,7 @@ function normalizeCrmContact(row: DbRow): CrmContact {
     email: rowString(row, 'primary_email'),
     city: rowString(row, 'city'),
     contactType,
-    stage: crmStage(rowString(row, 'current_opportunity_stage')),
+    stage,
     lifecycleStage: rowString(row, 'lifecycle_stage'),
     responsible: rowString(row, 'owner_name'),
     summary: rowString(row, 'last_summary'),
@@ -286,7 +292,7 @@ function normalizeCrmContact(row: DbRow): CrmContact {
     clientCode: rowString(row, 'client_code'),
     clientName: rowString(row, 'client_name'),
     treatmentCount,
-    activeTreatmentCount: rowNumber(row, 'active_treatment_count'),
+    activeTreatmentCount,
     patientSegments: rowPatientSegments(row),
     matchStatus: rowString(row, 'match_status'),
     matchMethod: rowString(row, 'match_method'),

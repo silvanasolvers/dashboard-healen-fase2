@@ -461,29 +461,41 @@ ul { margin: 0; padding: 0; list-style: none; }
 }
 .hero__chip .dot { box-shadow: none; }
 
-/* Pared de anillos: pacientes ordenados por urgencia */
-.today { display: flex; flex-direction: column; }
-.today__head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+/* Evolución por paciente: pacientes ordenados por urgencia */
+.today { display: flex; flex-direction: column; max-height: 100%; }
+.today__head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
 .today__head h2 { font-size: 1.08rem; }
-.today__rings {
+.today__evolution {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 14px;
+  gap: 10px;
+  max-height: min(520px, 64vh);
+  overflow: auto;
+  padding-right: 2px;
 }
-.urgent-ring {
-  display: flex;
-  flex-direction: column;
+.evolution-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
   align-items: center;
-  gap: 9px;
-  padding: 14px 8px;
+  padding: 12px;
   border-radius: var(--r-lg);
   background: var(--surface);
+  border: 1px solid var(--line-soft);
   box-shadow: var(--shadow-sm);
-  transition: transform var(--t-mid) var(--e-out), box-shadow var(--t-mid);
+  text-align: left;
+  transition: transform var(--t-mid) var(--e-out), box-shadow var(--t-mid), border-color var(--t-fast);
 }
-.urgent-ring:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
-.urgent-ring__name { font-size: 0.78rem; font-weight: 600; text-align: center; line-height: 1.15; }
-.urgent-ring__plan { font-size: 0.68rem; color: var(--muted); text-align: center; }
+.evolution-row:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: oklch(0.72 0.11 300 / 0.35); }
+.evolution-row__body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.evolution-row__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.evolution-row__top strong { font-size: 0.9rem; letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evolution-row__top small { font-size: 0.68rem; color: var(--muted); font-weight: 700; flex-shrink: 0; }
+.evolution-row__meta { font-size: 0.74rem; color: var(--ink-soft); font-weight: 600; line-height: 1.25; }
+.evolution-row__bar { height: 7px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
+.evolution-row__bar span { display: block; height: 100%; border-radius: inherit; background: var(--ok); }
+.evolution-row--warn .evolution-row__bar span { background: var(--warn); }
+.evolution-row--danger .evolution-row__bar span { background: var(--danger); }
+.evolution-row__next { color: var(--muted); font-size: 0.72rem; line-height: 1.25; }
 
 /* Tira de dinero */
 .money-strip {
@@ -697,7 +709,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .crm-stage--follow_up { background: var(--brand-soft); color: var(--brand-strong); }
 .crm-stage--interested,
 .crm-stage--qualified,
-.crm-stage--appointment_pending { background: var(--warn-soft); color: oklch(0.52 0.13 64); }
+.crm-stage--appointment_pending,
+.crm-stage--recovery { background: var(--warn-soft); color: oklch(0.52 0.13 64); }
 .crm-stage--appointment_scheduled,
 .crm-stage--converted { background: var(--ok-soft); color: oklch(0.46 0.14 158); }
 .crm-stage--lost { background: var(--danger-soft); color: var(--danger); }
