@@ -4316,7 +4316,9 @@ function ContabilidadView({
   intent: string | null;
   onIntentDone: () => void;
 }) {
-  const [range, setRange] = useState<DateRange>(emptyRange);
+  // Laura pidió que Caja no mezcle meses: por defecto abrimos julio 2026.
+  // Enero/febrero quedan disponibles al elegir el rango del mes correspondiente.
+  const [range, setRange] = useState<DateRange>({ from: '2026-07-01', to: '2026-07-31' });
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [rows, setRows] = useState<FinanceMovement[]>([]);
   const [julyPatients, setJulyPatients] = useState<JulyPatientFinanceRow[]>([]);
@@ -4920,7 +4922,7 @@ function JulyPatientFinancePanel({ patients }: { patients: JulyPatientFinanceRow
                 <td className="num">{formatCurrency(Number(p.plan_value ?? 0))}</td>
                 <td className="num">{formatCurrency(Number(p.paid_value ?? 0))}</td>
                 <td className="num">{formatCurrency(Number(p.balance_value ?? 0))}</td>
-                <td><Badge label={p.payment_status || 'Sin estado'} tone={Number(p.balance_value ?? 0) > 0 ? 'warning' : 'ok'} /></td>
+                <td><Badge label={p.payment_status || 'Sin estado'} tone={Number(p.balance_value ?? 0) > 0 ? 'warning' : 'success'} /></td>
               </tr>
             ))}
           </tbody>
