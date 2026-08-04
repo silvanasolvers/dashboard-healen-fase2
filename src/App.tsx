@@ -3396,17 +3396,9 @@ function InventarioView({
                   <div className="inv-row__id">
                     <span className={`dot dot--${signal}`} />
                     <div>
-                      <strong>
-                        {item.product}
-                        {item.marginPct != null && (
-                          <b className={`inv-mg inv-mg--${item.marginPct >= 40 ? 'good' : item.marginPct >= 15 ? 'mid' : 'low'}`}>
-                            {item.marginPct}%
-                          </b>
-                        )}
-                      </strong>
+                      <strong>{item.product}</strong>
                       <span>
-                        {item.type} · {formatCurrency(item.unitCost)}
-                        {item.salePrice > 0 && <> → {formatCurrency(item.salePrice)}</>} ·{' '}
+                        {item.type} · costo {formatCurrency(item.unitCost)} ·{' '}
                         {item.expiration ? `vence ${formatDate(item.expiration)}` : 's/v'}
                       </span>
                     </div>
