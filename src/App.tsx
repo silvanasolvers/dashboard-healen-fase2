@@ -3026,6 +3026,27 @@ function PacientesView({
     const order = { danger: 0, warn: 1, ok: 2 } as const;
     return order[a.signal] - order[b.signal] || a.daysLeft - b.daysLeft;
   });
+  // Agrupar alertas por paciente para que todo lo de un paciente quede junto.
+  type AlertGroup = { patientId: string; patientName: string; plan: string; signal: Signal; items: PatientProductAlert[] };
+  const alertsByPatient = Array.from(
+    alerts.reduce<Map<string, PatientProductAlert[]>>((acc, a) => {
+      const arr = acc.get(a.patientId) ?? [];
+      arr.push(a);
+      acc.set(a.patientId, arr);
+      return acc;
+    }, new Map()),
+    ([patientId, items]): AlertGroup => ({
+      patientId,
+      patientName: items[0].patientName,
+      plan: items[0].plan,
+      // El peor semáforo del grupo manda.
+      signal: items.some((i) => i.signal === 'danger') ? 'danger' : items.some((i) => i.signal === 'warn') ? 'warn' : 'ok',
+      items,
+    }),
+  ).sort((a, b) => {
+    const order: Record<Signal, number> = { danger: 0, warn: 1, ok: 2 };
+    return order[a.signal] - order[b.signal];
+  });
   const green = alerts.filter((a) => a.signal === 'ok').length;
   const orange = alerts.filter((a) => a.signal === 'warn').length;
   const red = alerts.filter((a) => a.signal === 'danger').length;
@@ -3164,30 +3185,40 @@ function PacientesView({
             <SignalKpi icon={Package} tone="brand" label="Productos" value={alerts.length} hint="En seguimiento" />
           </section>
           <section className="alert-board">
-            {alerts.map((a) => (
-              <button key={a.id} className={`alert-card alert-card--${a.signal}`} data-reveal onClick={() => onOpenAlert(a)}>
+            {alertsByPatient.map((g) => (
+              <button key={g.patientId} className={`alert-card alert-card--${g.signal}`} data-reveal onClick={() => onOpenAlert(g.items[0])}>
                 <div className="alert-card__head">
                   <div>
-                    <strong>{a.patientName}</strong>
+                    <strong>{g.patientName}</strong>
                     <span>
-                      {a.patientId} · {a.plan}
+                      {g.patientId} · {g.plan}
                     </span>
                   </div>
-                  <TreatmentRing daysLeft={a.daysLeft} totalDays={30} size={52} stroke={5} showUnit={false} />
+                  <TreatmentRing daysLeft={Math.min(...g.items.map((i) => i.daysLeft))} totalDays={30} size={52} stroke={5} showUnit={false} />
                 </div>
-                <div className="alert-card__product">
-                  <Dna size={18} style={{ color: 'var(--brand)' }} />
-                  <div>
-                    <strong>{a.product}</strong>
-                    <span>{a.dose}</span>
-                  </div>
+                <div className="alert-card__products">
+                  {g.items.map((a) => (
+                    <div key={a.id} className="alert-card__product">
+                      <Dna size={18} style={{ color: 'var(--brand)' }} />
+                      <div>
+                        <strong>{a.product}</strong>
+                        <span>{a.dose}</span>
+                      </div>
+                      <span className={`dot dot--${a.signal}`} />
+                    </div>
+                  ))}
                 </div>
                 <div className="alert-card__metrics">
-                  <span>{a.daysLeft} días</span>
-                  <span>{a.inventoryStock === null ? 'Sin stock vinculado' : `${a.inventoryStock} ${a.inventoryUnit}`}</span>
-                  <span>{a.statusText}</span>
+                  <span>{g.items.length} producto{g.items.length > 1 ? 's' : ''}</span>
+                  <span>{g.signal === 'danger' ? 'Reposición inmediata' : g.signal === 'warn' ? '5 días o bajo stock' : 'Estable'}</span>
                 </div>
-                <p className="alert-card__action">{a.nextAction}</p>
+                <p className="alert-card__action">
+                  {g.items
+                    .filter((i) => i.signal !== 'ok')
+                    .map((i) => i.nextAction)
+                    .filter((v, i, arr) => arr.indexOf(v) === i)
+                    .join(' · ') || 'Productos estables. Mantener seguimiento.'}
+                </p>
                 <span className="alert-card__more">
                   <ClipboardList size={15} /> Ver histórico
                 </span>

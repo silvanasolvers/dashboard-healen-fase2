@@ -1026,8 +1026,10 @@ ul { margin: 0; padding: 0; list-style: none; }
 .alert-card__head strong { font-size: 0.94rem; }
 .alert-card__head span { font-size: 0.74rem; color: var(--muted); display: block; }
 .alert-card__product { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); }
+.alert-card__products { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .alert-card__product strong { font-size: 0.88rem; display: block; }
 .alert-card__product span { font-size: 0.74rem; color: var(--muted); }
+.alert-card__product .dot { margin-left: auto; flex-shrink: 0; }
 .alert-card__metrics { display: flex; flex-wrap: wrap; gap: 6px; }
 .alert-card__metrics span { font-size: 0.74rem; color: var(--ink-soft); background: var(--surface-2); padding: 4px 9px; border-radius: var(--r-pill); }
 .alert-card__action { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
