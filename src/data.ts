@@ -150,6 +150,8 @@ export interface Patient {
   documentId?: string | null;
   phone?: string | null;
   email?: string | null;
+  lastAttentionDate?: string | null;
+  lastAttentionService?: string | null;
   name: string;
   plan: string;
   saleValue: number;

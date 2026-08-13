@@ -3145,6 +3145,15 @@ function PacientesView({
                       <div className="patient-card__sub">
                         {[p.phone, p.email].filter(Boolean).join(' · ') || 'Sin datos de contacto'}
                       </div>
+                      <div className="patient-card__attention">
+                        <CalendarClock size={14} aria-hidden="true" />
+                        <span>
+                          <strong>Última atención:</strong>{' '}
+                          {p.lastAttentionDate && p.lastAttentionService
+                            ? `${formatDate(p.lastAttentionDate)} · ${p.lastAttentionService}`
+                            : 'Sin atención registrada'}
+                        </span>
+                      </div>
                     </div>
                     <span className={`tier${p.tier === 'VIP' ? ' tier--vip' : ''}`}>{p.tier}</span>
                   </div>

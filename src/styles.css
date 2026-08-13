@@ -988,6 +988,20 @@ ul { margin: 0; padding: 0; list-style: none; }
 .patient-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .patient-card__name { font-size: 1.02rem; font-weight: 600; letter-spacing: -0.02em; }
 .patient-card__sub { font-size: 0.78rem; color: var(--muted); }
+.patient-card__attention {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 7px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.patient-card__attention svg { flex: 0 0 auto; margin-top: 1px; color: var(--brand); }
+.patient-card__attention strong { color: var(--ink); font-weight: 650; }
 .patient-card__meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .patient-card__value { font-size: 0.84rem; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .peptide-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
