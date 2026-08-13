@@ -4378,17 +4378,18 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
           <strong>{formatCurrency(latest.salesTotal)}</strong>
         </div>
         <div className="closure-hero__grid">
-          <div><span>Ingresó al banco</span><strong>{formatCurrency(latest.bankInflow)}</strong></div>
+          <div><span>Pago del día</span><strong>{formatCurrency(latest.bankInflow)}</strong></div>
           <div><span>Gastos empresa</span><strong>{formatCurrency(latest.businessExpenses)}</strong></div>
-          <div><span>Efectivo</span><strong>{formatCurrency(latest.cashBalance)}</strong></div>
-          <div><span>Inicio del día</span><strong>{latest.openingBank === null ? 'No informado' : formatCurrency(latest.openingBank)}</strong></div>
+          <div><span>Efectivo en caja</span><strong>{formatCurrency(latest.cashBalance)}</strong></div>
+          <div><span>Saldo al inicio del día</span><strong>{latest.openingBank === null ? 'No informado' : formatCurrency(latest.openingBank)}</strong></div>
+          <div><span>Saldo final del día</span><strong>{latest.closingBank === null ? 'No informado' : formatCurrency(latest.closingBank)}</strong></div>
         </div>
       </section>
 
       <section className="kpi-grid" data-reveal>
         <SignalKpi icon={ClipboardList} tone="brand" label="Cierres registrados" value={closures.length} hint="Histórico operativo" />
         <SignalKpi icon={TrendingUp} tone="ok" label="Ventas acumuladas" value={formatCurrency(totals.sales)} hint="Según cierres" />
-        <SignalKpi icon={CreditCard} tone="brand" label="Ingresos al banco" value={formatCurrency(totals.inflow)} hint="Recaudo bancario" />
+        <SignalKpi icon={CreditCard} tone="brand" label="Pagos del día" value={formatCurrency(totals.inflow)} hint="Acumulado de cierres" />
         <SignalKpi icon={Building2} tone="warn" label="Gastos empresa" value={formatCurrency(totals.business)} hint="Egresos del negocio" />
       </section>
 
@@ -4398,7 +4399,7 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
             <span className="eyebrow">Histórico</span>
             <h2>Cierres por día</h2>
           </div>
-          <span className="closure-legend">Pagos = dinero ingresado al banco</span>
+          <span className="closure-legend">Pago del día = dinero ingresado al banco</span>
         </div>
         <div className="table-wrap">
           <table className="table closure-table">
@@ -4406,11 +4407,11 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
               <tr>
                 <th>Fecha</th>
                 <th>Ventas</th>
-                <th>Ingresó banco</th>
+                <th>Pago del día</th>
                 <th>Gasto empresa</th>
-                <th>Efectivo</th>
-                <th>Inicio día</th>
-                <th>Banco final</th>
+                <th>Efectivo en caja</th>
+                <th>Saldo al inicio del día</th>
+                <th>Saldo final del día</th>
                 <th>Bold</th>
               </tr>
             </thead>
