@@ -191,7 +191,7 @@ function normalizeClosure(row: DbRow): DailyClosure {
     return Number.isFinite(parsed) ? parsed : null;
   };
   const bankBalance = optionalNumber(rowValue(row, 'bank_balance'));
-  const boldBalance = optionalNumber(rowValue(row, 'bold_bank_balance'));
+  const boldBalance = optionalNumber(raw.saldo_bold_final ?? raw.bold);
   const cashBalance = optionalNumber(rowValue(row, 'cash_balance'));
   const balancesConfirmed = raw.saldos_finales_confirmados === true;
   return {
