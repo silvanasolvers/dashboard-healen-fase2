@@ -972,6 +972,8 @@ function inDays(n: number): string {
  *  productos estén holgados (y viceversa). */
 export function overallSignal(patient: Patient): Signal {
   const c = patientSignalCounts(patient);
+  const openFollowUp = patient.plan.toLocaleLowerCase('es').startsWith('seguimiento');
+  if (openFollowUp && !patient.peptides.length) return 'ok';
   const planSig = treatmentSignal(patient.daysLeft);
   if (!patient.peptides.length) return planSig;
   const pepSig: Signal = c.danger ? 'danger' : c.warn ? 'warn' : 'ok';
@@ -992,6 +994,8 @@ export function mostUrgentPeptide(
  *  cierre del plan cuando este urge y llega antes (o no hay productos). */
 export function verdictPhrase(patient: Patient): string {
   const mu = mostUrgentPeptide(patient);
+  const openFollowUp = patient.plan.toLocaleLowerCase('es').startsWith('seguimiento');
+  if (openFollowUp && !mu) return patient.plan;
   const planSig = treatmentSignal(patient.daysLeft);
   const planUrgent = planSig !== 'ok';
   const pepUrgent = !!mu && mu.signal !== 'ok';
@@ -1077,7 +1081,8 @@ export function buildNextSteps(patient: Patient, dossier: PatientDossier | null)
   }
 
   // 2. Plan por cerrar (si no hay ya un producto urgente que lo cubra).
-  if (patient.daysLeft <= 12 && !urgent.length) {
+  const openFollowUp = patient.plan.toLocaleLowerCase('es').startsWith('seguimiento');
+  if (!openFollowUp && patient.daysLeft <= 12 && !urgent.length) {
     steps.push({
       id: 'close',
       signal: patient.daysLeft <= 5 ? 'danger' : 'warn',
