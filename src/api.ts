@@ -204,7 +204,10 @@ function normalizeClosure(row: DbRow): DailyClosure {
     personalExpenses: optionalNumber(raw.gastos_personales) ?? 0,
     totalExpenses: optionalNumber(raw.gasto_total) ?? rowNumber(row, 'business_expenses_total'),
     cashBalance: cashBalance ?? 0,
+    openingBalance: optionalNumber(raw.saldo_inicial_total),
     openingBank: optionalNumber(raw.banco_inicial),
+    openingBold: optionalNumber(raw.bold_inicial),
+    openingCash: optionalNumber(raw.efectivo_inicial),
     bankBalance,
     closingBank: balancesConfirmed && bankBalance !== null && boldBalance !== null && cashBalance !== null
       ? bankBalance + boldBalance + cashBalance
