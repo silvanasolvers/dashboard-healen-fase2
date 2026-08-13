@@ -654,7 +654,6 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const companyExpenses = companyMovements
     .filter((m) => m.kind === 'Gasto')
     .reduce((t, m) => t + m.value, 0);
-  const personalOut = finance.filter((m) => m.scope !== 'Empresa').reduce((t, m) => t + m.value, 0);
   const netProfit = companyIncome - companyExpenses;
   const lowStock = inventory.filter((i) => i.stock <= i.minimum || i.status !== 'Disponible').length;
   const homePeptidePatients = patients.filter((p) => HOME_PEPTIDE_PATIENT_IDS.has(p.id));
@@ -4351,9 +4350,8 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
       sales: acc.sales + item.salesTotal,
       inflow: acc.inflow + item.bankInflow,
       business: acc.business + item.businessExpenses,
-      personal: acc.personal + item.personalExpenses,
     }),
-    { sales: 0, inflow: 0, business: 0, personal: 0 },
+    { sales: 0, inflow: 0, business: 0 },
   );
 
   if (!latest) {
@@ -4382,8 +4380,6 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
         <div className="closure-hero__grid">
           <div><span>Ingresó al banco</span><strong>{formatCurrency(latest.bankInflow)}</strong></div>
           <div><span>Gastos empresa</span><strong>{formatCurrency(latest.businessExpenses)}</strong></div>
-          <div><span>Gastos personales</span><strong>{formatCurrency(latest.personalExpenses)}</strong></div>
-          <div><span>Gasto total</span><strong>{formatCurrency(latest.totalExpenses)}</strong></div>
           <div><span>Efectivo</span><strong>{formatCurrency(latest.cashBalance)}</strong></div>
           <div><span>Inicio del día</span><strong>{latest.openingBank === null ? 'No informado' : formatCurrency(latest.openingBank)}</strong></div>
         </div>
@@ -4412,8 +4408,6 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
                 <th>Ventas</th>
                 <th>Ingresó banco</th>
                 <th>Gasto empresa</th>
-                <th>Gasto personal</th>
-                <th>Gasto total</th>
                 <th>Efectivo</th>
                 <th>Inicio día</th>
                 <th>Banco final</th>
@@ -4427,8 +4421,6 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
                   <td className="num"><strong>{formatCurrency(item.salesTotal)}</strong></td>
                   <td className="num closure-table__inflow"><strong>{formatCurrency(item.bankInflow)}</strong></td>
                   <td className="num">{formatCurrency(item.businessExpenses)}</td>
-                  <td className="num">{formatCurrency(item.personalExpenses)}</td>
-                  <td className="num"><strong>{formatCurrency(item.totalExpenses)}</strong></td>
                   <td className="num">{formatCurrency(item.cashBalance)}</td>
                   <td className="num">{item.openingBank === null ? <span>No informado</span> : formatCurrency(item.openingBank)}</td>
                   <td className="num">{item.closingBank === null ? <span>No informado</span> : formatCurrency(item.closingBank)}</td>
@@ -4438,7 +4430,7 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
             </tbody>
           </table>
         </div>
-        <p className="closure-note">Los gastos personales se muestran para control, pero permanecen separados de los egresos de la empresa.</p>
+        <p className="closure-note">Esta sección muestra únicamente información operativa de la empresa.</p>
       </section>
     </>
   );
@@ -4503,7 +4495,7 @@ function ContabilidadView({
 
   // Filas por pestaña (filtro barato, no agregación: los totales vienen del backend).
   const ingresoRows = rows.filter((m) => m.kind === 'Ingreso' && m.scope === 'Empresa');
-  const egresoRows = rows.filter((m) => m.kind === 'Gasto');
+  const egresoRows = rows.filter((m) => m.kind === 'Gasto' && m.scope === 'Empresa');
   const cobrarRows = rows.filter(isReceivable);
   const active = tab === 'ingresos' ? ingresoRows : tab === 'egresos' ? egresoRows : cobrarRows;
 
@@ -4519,9 +4511,9 @@ function ContabilidadView({
         ]
       : tab === 'egresos'
         ? [
-            ['Egresos', formatCompact(s.expenses)],
+            ['Egresos', formatCompact(s.expenses_company)],
             ['Empresa', formatCompact(s.expenses_company)],
-            ['No empresa', formatCompact(s.personal_out)],
+            ['Registros', String(egresoRows.length)],
             ['Soportes', `${s.supports_with}/${s.supports_total}`],
           ]
         : [
@@ -4532,8 +4524,15 @@ function ContabilidadView({
           ];
 
   const primaryTitle = tab === 'egresos' ? 'Centros de costo' : tab === 'cobrar' ? 'Estado de recaudo' : 'Categorías';
-  const primaryBreak: KV[] = !s ? [] : tab === 'ingresos' ? s.income_by_category : tab === 'egresos' ? s.expense_by_center : s.receivable_by_status;
-  const paymentBreak: KV[] = !s ? [] : tab === 'egresos' ? s.expense_by_payment : s.income_by_payment;
+  const groupCompanyExpenses = (key: 'costCenter' | 'paymentMethod'): KV[] => Object.entries(
+    egresoRows.reduce<Record<string, number>>((acc, row) => {
+      const label = row[key] || 'Sin especificar';
+      acc[label] = (acc[label] ?? 0) + row.value;
+      return acc;
+    }, {}),
+  ).map(([k, v]) => ({ k, v }));
+  const primaryBreak: KV[] = !s ? [] : tab === 'ingresos' ? s.income_by_category : tab === 'egresos' ? groupCompanyExpenses('costCenter') : s.receivable_by_status;
+  const paymentBreak: KV[] = !s ? [] : tab === 'egresos' ? groupCompanyExpenses('paymentMethod') : s.income_by_payment;
   const showPayment = tab !== 'cobrar';
 
   function exportRows(): { headers: string[]; rows: Array<Array<string | number>> } {
@@ -4585,7 +4584,7 @@ function ContabilidadView({
         subtitle: rangeLabel(range),
         kpis: [
           { label: 'Ingresos', value: formatCompact(s.income) },
-          { label: 'Egresos', value: formatCompact(s.expenses_company + s.personal_out) },
+          { label: 'Egresos', value: formatCompact(s.expenses_company) },
           { label: 'Por cobrar', value: formatCompact(s.receivable) },
           { label: 'Utilidad', value: formatCompact(s.income - s.expenses_company) },
         ],
@@ -4615,7 +4614,7 @@ function ContabilidadView({
           <span className="acct-tab__top">
             <CreditCard size={16} /> Egresos
           </span>
-          <strong>{formatCompact((s?.expenses_company ?? 0) + (s?.personal_out ?? 0))}</strong>
+          <strong>{formatCompact(s?.expenses_company ?? 0)}</strong>
         </button>
         <button className={`acct-tab${tab === 'cobrar' ? ' is-active' : ''}`} onClick={() => setTab('cobrar')} role="tab">
           <span className="acct-tab__top">
@@ -5229,14 +5228,13 @@ function ReportesView({
   }, [range, dataVersion]);
 
   const a = data;
-  const max = a ? Math.max(a.company_income, a.company_expenses, a.personal_out, Math.abs(a.net_profit), 1) : 1;
+  const max = a ? Math.max(a.company_income, a.company_expenses, Math.abs(a.net_profit), 1) : 1;
   const monthMax = a && a.monthly.length ? Math.max(...a.monthly.map((m) => Math.max(m.income, m.expenses)), 1) : 1;
   const bars = a
     ? [
         { label: 'Ingresos empresa', value: a.company_income, tone: 'success' as const },
         { label: 'Gastos empresa', value: a.company_expenses, tone: 'warning' as const },
         { label: 'Utilidad real', value: a.net_profit, tone: 'neutral' as const },
-        { label: 'Personal / retiros', value: a.personal_out, tone: 'warning' as const },
       ]
     : [];
 
@@ -5310,7 +5308,6 @@ function ReportesView({
         <SignalKpi icon={Activity} tone="ok" label="Margen" value={`${a?.margin_pct ?? 0}%`} hint="Utilidad / ingresos" />
         <SignalKpi icon={Sparkles} tone="brand" label="Pacientes VIP" value={a?.vip_count ?? 0} hint="Por valor de venta" />
         <Kpi icon={Package} tone="warn" label="Valor inventario" value={formatCompact(a?.stock_value ?? 0)} hint="Stock valorizado" />
-        <Kpi icon={Wallet} tone="brand" label="Separado personal" value={formatCompact(a?.personal_out ?? 0)} hint="No afecta utilidad" />
       </section>
 
       <div className="grid-2">
