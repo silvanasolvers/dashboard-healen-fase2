@@ -190,10 +190,14 @@ function normalizeClosure(row: DbRow): DailyClosure {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const bankBalance = optionalNumber(rowValue(row, 'bank_balance'));
-  const boldBalance = optionalNumber(raw.saldo_bold_final ?? raw.bold);
+  const bankBalance = raw.bancolombia_final_informado === false
+    ? null
+    : optionalNumber(rowValue(row, 'bank_balance'));
+  const boldBalance = raw.bold_final_informado === false
+    ? null
+    : optionalNumber(raw.saldo_bold_final ?? raw.bold);
   const cashBalance = optionalNumber(rowValue(row, 'cash_balance'));
-  const balancesConfirmed = raw.saldos_finales_confirmados === true;
+  const explicitClosingBalance = optionalNumber(raw.saldo_final_total ?? raw.liquidez_total_final);
   return {
     id: rowString(row, 'id') ?? '',
     date: rowString(row, 'closure_date') ?? '',
@@ -209,9 +213,11 @@ function normalizeClosure(row: DbRow): DailyClosure {
     openingBold: optionalNumber(raw.bold_inicial),
     openingCash: optionalNumber(raw.efectivo_inicial),
     bankBalance,
-    closingBank: balancesConfirmed && bankBalance !== null && boldBalance !== null && cashBalance !== null
-      ? bankBalance + boldBalance + cashBalance
-      : null,
+    closingBank: explicitClosingBalance ?? (
+      bankBalance !== null && boldBalance !== null && cashBalance !== null
+        ? bankBalance + boldBalance + cashBalance
+        : null
+    ),
     boldBalance,
     notes: rowString(row, 'notes'),
   };
