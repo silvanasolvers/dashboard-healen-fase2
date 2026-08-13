@@ -2,7 +2,7 @@
 // Centro de medicina regenerativa: pacientes con planes de péptidos/sueros,
 // inventario clínico, y caja separada empresa vs. socio.
 
-export type View = 'inicio' | 'agenda' | 'crm' | 'pacientes' | 'inventario' | 'contabilidad' | 'reportes';
+export type View = 'inicio' | 'agenda' | 'crm' | 'pacientes' | 'inventario' | 'contabilidad' | 'cierres' | 'reportes';
 export type PatientTier = 'Basico' | 'Medio' | 'Alto' | 'VIP';
 export type PatientStatus = 'Activo' | 'Por finalizar' | 'Finalizado';
 export type InventoryStatus = 'Disponible' | 'Bajo stock' | 'Agotado' | 'Proximo a vencer';
@@ -164,6 +164,22 @@ export interface Patient {
   serumDay: string;
   status: PatientStatus;
   peptides: PeptideLine[];
+}
+
+export interface DailyClosure {
+  id: string;
+  date: string;
+  weekday: string;
+  salesTotal: number;
+  bankInflow: number;
+  businessExpenses: number;
+  personalExpenses: number;
+  totalExpenses: number;
+  cashBalance: number;
+  openingBank: number | null;
+  closingBank: number | null;
+  boldBalance: number | null;
+  notes: string | null;
 }
 
 export interface PatientHistoryItem {

@@ -72,6 +72,7 @@ import {
   CrmReviewCandidate,
   CrmStage,
   CRM_STAGES,
+  DailyClosure,
   crmContactTypeLabel,
   crmStageLabel,
   DateRange,
@@ -201,6 +202,7 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
   { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
   { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
+  { id: 'cierres', label: 'Cierres diarios', short: 'Cierres', icon: ClipboardList },
   { id: 'reportes', label: 'Reportes', short: 'Reportes', icon: BarChart3 },
 ];
 
@@ -211,6 +213,7 @@ const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
   inventario: { eyebrow: 'Insumos', title: 'Inventario' },
   contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
+  cierres: { eyebrow: 'Control operativo', title: 'Cierres diarios' },
   reportes: { eyebrow: 'Analitica', title: 'Reportes' },
 };
 
@@ -575,6 +578,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
   const [inventoryMovements, setInventoryMovements] = useState<MovementRow[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [finance, setFinance] = useState<FinanceMovement[]>([]);
+  const [closures, setClosures] = useState<DailyClosure[]>([]);
 
   const [patientSearch, setPatientSearch] = useState('');
   // Sube en cada recarga de datos: Contabilidad/Reportes re-piden su agregado al cambiar.
@@ -590,6 +594,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
       setFinance(data.finance);
       setInventoryMovements(data.movements);
       setAppointments(data.appointments);
+      setClosures(data.closures);
       setDataVersion((v) => v + 1);
       setLoadError(false);
     } catch {
@@ -844,6 +849,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 onIntentDone={() => setIntent(null)}
               />
             )}
+            {view === 'cierres' && <CierresView closures={closures} />}
             {view === 'reportes' && <ReportesView dataVersion={dataVersion} notify={notify} />}
               </>
             )}
@@ -4332,6 +4338,109 @@ function DateRangeBar({
         </button>
       </div>
     </div>
+  );
+}
+
+/* ============================================================
+   CIERRES DIARIOS
+   ============================================================ */
+function CierresView({ closures }: { closures: DailyClosure[] }) {
+  const latest = closures[0] ?? null;
+  const totals = closures.reduce(
+    (acc, item) => ({
+      sales: acc.sales + item.salesTotal,
+      inflow: acc.inflow + item.bankInflow,
+      business: acc.business + item.businessExpenses,
+      personal: acc.personal + item.personalExpenses,
+    }),
+    { sales: 0, inflow: 0, business: 0, personal: 0 },
+  );
+
+  if (!latest) {
+    return (
+      <section className="panel" data-reveal>
+        <div className="panel__head">
+          <div><span className="eyebrow">Control operativo</span><h2>Cierres diarios</h2></div>
+        </div>
+        <p className="closure-empty">Todavía no hay cierres diarios registrados.</p>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <section className="closure-hero panel" data-reveal>
+        <div className="closure-hero__lead">
+          <span className="eyebrow">Último cierre registrado</span>
+          <h2>{latest.weekday} · {formatLongDate(latest.date)}</h2>
+          <p>Vista operativa independiente de Caja y de las ventas individuales por paciente.</p>
+        </div>
+        <div className="closure-hero__amount">
+          <span>Venta del día</span>
+          <strong>{formatCurrency(latest.salesTotal)}</strong>
+        </div>
+        <div className="closure-hero__grid">
+          <div><span>Ingresó al banco</span><strong>{formatCurrency(latest.bankInflow)}</strong></div>
+          <div><span>Gastos empresa</span><strong>{formatCurrency(latest.businessExpenses)}</strong></div>
+          <div><span>Gastos personales</span><strong>{formatCurrency(latest.personalExpenses)}</strong></div>
+          <div><span>Gasto total</span><strong>{formatCurrency(latest.totalExpenses)}</strong></div>
+          <div><span>Efectivo</span><strong>{formatCurrency(latest.cashBalance)}</strong></div>
+          <div><span>Inicio del día</span><strong>{latest.openingBank === null ? 'No informado' : formatCurrency(latest.openingBank)}</strong></div>
+        </div>
+      </section>
+
+      <section className="kpi-grid" data-reveal>
+        <SignalKpi icon={ClipboardList} tone="brand" label="Cierres registrados" value={closures.length} hint="Histórico operativo" />
+        <SignalKpi icon={TrendingUp} tone="ok" label="Ventas acumuladas" value={formatCurrency(totals.sales)} hint="Según cierres" />
+        <SignalKpi icon={CreditCard} tone="brand" label="Ingresos al banco" value={formatCurrency(totals.inflow)} hint="Recaudo bancario" />
+        <SignalKpi icon={Building2} tone="warn" label="Gastos empresa" value={formatCurrency(totals.business)} hint="Egresos del negocio" />
+      </section>
+
+      <section className="panel" data-reveal>
+        <div className="panel__head">
+          <div>
+            <span className="eyebrow">Histórico</span>
+            <h2>Cierres por día</h2>
+          </div>
+          <span className="closure-legend">Pagos = dinero ingresado al banco</span>
+        </div>
+        <div className="table-wrap">
+          <table className="table closure-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Ventas</th>
+                <th>Ingresó banco</th>
+                <th>Gasto empresa</th>
+                <th>Gasto personal</th>
+                <th>Gasto total</th>
+                <th>Efectivo</th>
+                <th>Inicio día</th>
+                <th>Banco final</th>
+                <th>Bold</th>
+              </tr>
+            </thead>
+            <tbody>
+              {closures.map((item) => (
+                <tr key={item.id}>
+                  <td><strong>{formatDate(item.date)}</strong><span>{item.weekday}</span></td>
+                  <td className="num"><strong>{formatCurrency(item.salesTotal)}</strong></td>
+                  <td className="num closure-table__inflow"><strong>{formatCurrency(item.bankInflow)}</strong></td>
+                  <td className="num">{formatCurrency(item.businessExpenses)}</td>
+                  <td className="num">{formatCurrency(item.personalExpenses)}</td>
+                  <td className="num"><strong>{formatCurrency(item.totalExpenses)}</strong></td>
+                  <td className="num">{formatCurrency(item.cashBalance)}</td>
+                  <td className="num">{item.openingBank === null ? <span>No informado</span> : formatCurrency(item.openingBank)}</td>
+                  <td className="num">{item.closingBank === null ? <span>No informado</span> : formatCurrency(item.closingBank)}</td>
+                  <td className="num">{item.boldBalance === null ? <span>No informado</span> : formatCurrency(item.boldBalance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="closure-note">Los gastos personales se muestran para control, pero permanecen separados de los egresos de la empresa.</p>
+      </section>
+    </>
   );
 }
 

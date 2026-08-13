@@ -1050,6 +1050,49 @@ ul { margin: 0; padding: 0; list-style: none; }
 .alert-card__more { display: flex; align-items: center; gap: 7px; font-size: 0.76rem; font-weight: 600; color: var(--brand); }
 
 /* ============================================================
+   CIERRES DIARIOS
+   ============================================================ */
+.closure-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+  gap: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--brand) 18%, transparent), transparent 42%),
+    var(--glass-strong);
+}
+.closure-hero__lead h2 { margin-top: 3px; font-size: clamp(1.25rem, 2.3vw, 1.75rem); }
+.closure-hero__lead p { margin-top: 8px; color: var(--muted); max-width: 62ch; font-size: 0.86rem; }
+.closure-hero__amount {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 18px;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--brand) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--line-soft));
+}
+.closure-hero__amount span, .closure-hero__grid span { color: var(--muted); font-size: 0.75rem; }
+.closure-hero__amount strong { font-size: clamp(1.65rem, 3vw, 2.25rem); color: var(--brand); letter-spacing: -0.04em; }
+.closure-hero__grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.closure-hero__grid > div { display: flex; flex-direction: column; gap: 3px; padding: 13px 15px; border-radius: var(--r-md); background: var(--surface-2); }
+.closure-hero__grid strong { font-size: 0.98rem; font-variant-numeric: tabular-nums; }
+.closure-legend { font-size: 0.76rem; color: var(--brand); font-weight: 650; padding: 6px 10px; border-radius: var(--r-pill); background: var(--brand-soft); }
+.closure-table { min-width: 1180px; }
+.closure-table__inflow strong { color: oklch(0.48 0.13 158); }
+.closure-note, .closure-empty { margin-top: 16px; color: var(--muted); font-size: 0.8rem; line-height: 1.5; }
+@media (max-width: 720px) {
+  .closure-hero { grid-template-columns: 1fr; }
+  .closure-hero__amount { align-items: flex-start; }
+  .closure-hero__grid { grid-template-columns: repeat(2, 1fr); }
+  .closure-legend { display: none; }
+}
+@media (max-width: 430px) {
+  .closure-hero__grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
    KPIs (cuadrícula de tarjetas-estado)
    ============================================================ */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }

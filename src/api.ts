@@ -9,6 +9,7 @@ import type {
   CrmReviewCandidate,
   CrmReviewDecision,
   CrmStage,
+  DailyClosure,
   DateRange,
   FinanceMovement,
   FinanceSummary,
@@ -179,6 +180,31 @@ export interface HealenData {
   finance: FinanceMovement[];
   movements: MovementRow[];
   appointments: AppointmentRow[];
+  closures: DailyClosure[];
+}
+
+function normalizeClosure(row: DbRow): DailyClosure {
+  const raw = rowObject(row, 'raw_payload');
+  const optionalNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    id: rowString(row, 'id') ?? '',
+    date: rowString(row, 'closure_date') ?? '',
+    weekday: rowString(row, 'weekday') ?? '',
+    salesTotal: rowNumber(row, 'sales_total'),
+    bankInflow: rowNumber(row, 'payments_total'),
+    businessExpenses: rowNumber(row, 'business_expenses_total'),
+    personalExpenses: optionalNumber(raw.gastos_personales) ?? 0,
+    totalExpenses: optionalNumber(raw.gasto_total) ?? rowNumber(row, 'business_expenses_total'),
+    cashBalance: rowNumber(row, 'cash_balance'),
+    openingBank: optionalNumber(raw.banco_inicial),
+    closingBank: optionalNumber(raw.saldo_banco_final ?? raw.saldo_banco_final_conservado),
+    boldBalance: optionalNumber(raw.bold),
+    notes: rowString(row, 'notes'),
+  };
 }
 
 /** Producto del catálogo de recetas (con defaults inteligentes + stock). */
@@ -242,12 +268,13 @@ function unwrap<T>(res: { data: T | null; error: { message: string } | null }): 
 
 /** Carga todo el estado del dashboard en paralelo. */
 export async function fetchAll(): Promise<HealenData> {
-  const [patients, inventory, finance, movements, appointments] = await Promise.all([
+  const [patients, inventory, finance, movements, appointments, closures] = await Promise.all([
     supabase.from('v_dashboard_patients').select('*'),
     supabase.from('v_dashboard_inventory').select('*'),
     supabase.from('v_dashboard_finance').select('*').order('date', { ascending: false }),
     supabase.from('v_dashboard_inventory_movements').select('*').limit(20),
     supabase.from('v_dashboard_appointments').select('*').order('date', { ascending: true }).order('time', { ascending: true }),
+    supabase.from('daily_operational_closures').select('*').order('closure_date', { ascending: false }),
   ]);
   return {
     patients: unwrap<Patient[]>(patients),
@@ -255,6 +282,7 @@ export async function fetchAll(): Promise<HealenData> {
     finance: unwrap<FinanceMovement[]>(finance),
     movements: unwrap<MovementRow[]>(movements),
     appointments: unwrap<AppointmentRow[]>(appointments),
+    closures: unwrap<DbRow[]>(closures).map(normalizeClosure),
   };
 }
 
