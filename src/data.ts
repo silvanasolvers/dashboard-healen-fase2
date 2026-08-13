@@ -177,6 +177,7 @@ export interface DailyClosure {
   totalExpenses: number;
   cashBalance: number;
   openingBank: number | null;
+  bankBalance: number | null;
   closingBank: number | null;
   boldBalance: number | null;
   notes: string | null;

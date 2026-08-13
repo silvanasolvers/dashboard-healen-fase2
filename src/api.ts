@@ -190,6 +190,10 @@ function normalizeClosure(row: DbRow): DailyClosure {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
+  const bankBalance = optionalNumber(rowValue(row, 'bank_balance'));
+  const boldBalance = optionalNumber(rowValue(row, 'bold_bank_balance'));
+  const cashBalance = optionalNumber(rowValue(row, 'cash_balance'));
+  const balancesConfirmed = raw.saldos_finales_confirmados === true;
   return {
     id: rowString(row, 'id') ?? '',
     date: rowString(row, 'closure_date') ?? '',
@@ -199,10 +203,13 @@ function normalizeClosure(row: DbRow): DailyClosure {
     businessExpenses: rowNumber(row, 'business_expenses_total'),
     personalExpenses: optionalNumber(raw.gastos_personales) ?? 0,
     totalExpenses: optionalNumber(raw.gasto_total) ?? rowNumber(row, 'business_expenses_total'),
-    cashBalance: rowNumber(row, 'cash_balance'),
+    cashBalance: cashBalance ?? 0,
     openingBank: optionalNumber(raw.banco_inicial),
-    closingBank: optionalNumber(rowValue(row, 'bank_balance')),
-    boldBalance: optionalNumber(rowValue(row, 'bold_bank_balance')),
+    bankBalance,
+    closingBank: balancesConfirmed && bankBalance !== null && boldBalance !== null && cashBalance !== null
+      ? bankBalance + boldBalance + cashBalance
+      : null,
+    boldBalance,
     notes: rowString(row, 'notes'),
   };
 }

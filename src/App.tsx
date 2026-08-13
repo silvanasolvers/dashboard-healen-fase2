@@ -4380,6 +4380,8 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
         <div className="closure-hero__grid">
           <div><span>Pago del día</span><strong>{formatCurrency(latest.bankInflow)}</strong></div>
           <div><span>Gastos empresa</span><strong>{formatCurrency(latest.businessExpenses)}</strong></div>
+          <div><span>Bancolombia al cierre</span><strong>{latest.bankBalance === null ? 'No informado' : formatCurrency(latest.bankBalance)}</strong></div>
+          <div><span>Bold al cierre</span><strong>{latest.boldBalance === null ? 'No informado' : formatCurrency(latest.boldBalance)}</strong></div>
           <div><span>Efectivo en caja</span><strong>{formatCurrency(latest.cashBalance)}</strong></div>
           <div><span>Saldo al inicio del día</span><strong>{latest.openingBank === null ? 'No informado' : formatCurrency(latest.openingBank)}</strong></div>
           <div><span>Saldo final del día</span><strong>{latest.closingBank === null ? 'No informado' : formatCurrency(latest.closingBank)}</strong></div>
@@ -4409,10 +4411,11 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
                 <th>Ventas</th>
                 <th>Pago del día</th>
                 <th>Gasto empresa</th>
+                <th>Bancolombia</th>
+                <th>Bold</th>
                 <th>Efectivo en caja</th>
                 <th>Saldo al inicio del día</th>
                 <th>Saldo final del día</th>
-                <th>Bold</th>
               </tr>
             </thead>
             <tbody>
@@ -4422,10 +4425,11 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
                   <td className="num"><strong>{formatCurrency(item.salesTotal)}</strong></td>
                   <td className="num closure-table__inflow"><strong>{formatCurrency(item.bankInflow)}</strong></td>
                   <td className="num">{formatCurrency(item.businessExpenses)}</td>
+                  <td className="num">{item.bankBalance === null ? <span>No informado</span> : formatCurrency(item.bankBalance)}</td>
+                  <td className="num">{item.boldBalance === null ? <span>No informado</span> : formatCurrency(item.boldBalance)}</td>
                   <td className="num">{formatCurrency(item.cashBalance)}</td>
                   <td className="num">{item.openingBank === null ? <span>No informado</span> : formatCurrency(item.openingBank)}</td>
                   <td className="num">{item.closingBank === null ? <span>No informado</span> : formatCurrency(item.closingBank)}</td>
-                  <td className="num">{item.boldBalance === null ? <span>No informado</span> : formatCurrency(item.boldBalance)}</td>
                 </tr>
               ))}
             </tbody>
