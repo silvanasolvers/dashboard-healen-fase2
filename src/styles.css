@@ -1255,26 +1255,6 @@ table.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .acct-focus span { font-size: 0.76rem; color: var(--muted); }
 .acct-focus strong { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 
-.july-patients {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-lg);
-  padding: clamp(16px, 2vw, 20px);
-  background:
-    radial-gradient(circle at top left, var(--brand-soft), transparent 32%),
-    var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-.july-patients__head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
-.july-patients__head h3 { font-size: 1.08rem; letter-spacing: -0.03em; margin-top: 2px; }
-.july-patients__head p { color: var(--muted); font-size: 0.82rem; margin-top: 3px; }
-.july-patients__kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; margin-bottom: 14px; }
-.july-patients__kpis div { padding: 13px; border-radius: var(--r-md); background: color-mix(in oklch, var(--surface-2) 86%, white); border: 1px solid var(--line-soft); }
-.july-patients__kpis span { display: block; color: var(--muted); font-size: 0.72rem; margin-bottom: 4px; }
-.july-patients__kpis strong { font-size: 1rem; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.july-patients__table { max-height: 360px; overflow: auto; border-radius: var(--r-md); border: 1px solid var(--line-soft); background: var(--surface); }
-.table--compact th, .table--compact td { padding: 10px 12px; }
-.table--compact td small { display: block; margin-top: 3px; max-width: 420px; color: var(--muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
 .breakdown article { padding: 16px; border-radius: var(--r-md); background: var(--surface-2); }
 .breakdown article > strong { font-size: 0.82rem; display: block; margin-bottom: 10px; color: var(--ink-soft); }

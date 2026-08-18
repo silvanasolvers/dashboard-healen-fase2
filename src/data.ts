@@ -1230,20 +1230,6 @@ export interface KV {
   v: number;
 }
 
-export interface JulyPatientFinanceRow {
-  patient_name: string;
-  source_ids: string | null;
-  item_rows: number;
-  first_date: string | null;
-  last_date: string | null;
-  plan_value: number;
-  paid_value: number;
-  balance_value: number;
-  payment_status: string | null;
-  payment_method: string | null;
-  items_summary: string | null;
-}
-
 export interface FinanceSummary {
   income: number;
   income_count: number;
