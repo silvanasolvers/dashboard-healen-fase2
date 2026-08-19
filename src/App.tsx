@@ -63,6 +63,7 @@ import { startAurora } from './aurora';
 import {
   AccountingTab,
   ageFromBirthdate,
+  ageFromNotes,
   Analytics,
   buildNextSteps,
   buildPatientProductAlerts,
@@ -6131,7 +6132,10 @@ function PatientInfoCard({
   const birthdate = summary?.birthdate ?? null;
   const address = summary?.address ?? null;
   const notes = summary?.notes ?? null;
-  const age = ageFromBirthdate(birthdate);
+  const ageFromDate = ageFromBirthdate(birthdate);
+  const reportedAge = ageFromNotes(notes);
+  const age = ageFromDate ?? reportedAge;
+  const ageIsReported = ageFromDate === null && reportedAge !== null;
 
   const [form, setForm] = useState({
     full_name: '',
@@ -6230,7 +6234,7 @@ function PatientInfoCard({
           <InfoRow
             k="Edad"
             v={age !== null ? `${age} años` : null}
-            sub={age !== null && birthdate ? formatLongDate(birthdate) : undefined}
+            sub={age !== null && birthdate ? formatLongDate(birthdate) : ageIsReported ? 'Edad referida' : undefined}
           />
           <InfoRow k="Código" v={patient.id} />
           <div className="info-row">

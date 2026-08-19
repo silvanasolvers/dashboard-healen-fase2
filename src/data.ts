@@ -1052,6 +1052,18 @@ export function ageFromBirthdate(birthdate?: string | null): number | null {
   return age < 0 || age > 130 ? null : age;
 }
 
+/** Edad explícitamente referida en notas cuando no se conoce la fecha de nacimiento.
+ * Solo acepta etiquetas inequívocas ("Edad: 28 años", "Edad referida: 44 años")
+ * para no confundir dosis, precios, duraciones u otros números del texto.
+ */
+export function ageFromNotes(notes?: string | null): number | null {
+  if (!notes) return null;
+  const match = notes.match(/\bedad(?:\s+(?:referida|reportada|informada))?\s*:\s*(\d{1,3})\s*años?\b/i);
+  if (!match) return null;
+  const age = Number(match[1]);
+  return Number.isInteger(age) && age >= 0 && age <= 130 ? age : null;
+}
+
 /** Fecha legible larga "12 mar 1991" para mostrar bajo la edad. */
 export function formatLongDate(value?: string | null): string {
   if (!value) return '';
