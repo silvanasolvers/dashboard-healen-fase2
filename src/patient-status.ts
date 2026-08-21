@@ -5,8 +5,13 @@ function treatmentProgress(patient: Patient): number {
   return Math.round(Math.min(100, Math.max(0, (elapsed / Math.max(patient.totalDays, 1)) * 100)));
 }
 
+function isServicePlan(patient: Patient): boolean {
+  return /(suero|nebuliza|biopuntura|consulta|procedimiento)/i.test(patient.plan);
+}
+
 export function patientEvolutionLabel(patient: Patient): string {
   if (patient.status === 'Finalizado') return 'Atención finalizada';
+  if (isServicePlan(patient)) return 'Plan de servicio activo';
 
   const progress = treatmentProgress(patient);
   if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return `Cierre / recompra · ${progress}%`;
@@ -16,6 +21,7 @@ export function patientEvolutionLabel(patient: Patient): string {
 
 export function patientNextAction(patient: Patient): string {
   if (patient.status === 'Finalizado') return 'Servicio finalizado · sin alerta de recompra.';
+  if (isServicePlan(patient)) return 'Programar y registrar cada sesión del plan.';
 
   const urgent = mostUrgentPeptide(patient);
   if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return 'Revisar evolución clínica, saldo y recompra.';

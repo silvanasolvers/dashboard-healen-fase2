@@ -30,3 +30,24 @@ describe('finalized patient visibility', () => {
     expect(patientNextAction(finalizedService)).toBe('Servicio finalizado · sin alerta de recompra.');
   });
 });
+
+describe('active service plans without a confirmed end date', () => {
+  const fourSerumPlan: Patient = {
+    ...finalizedService,
+    id: 'HLN-249',
+    clientUuid: 'client-maria-victoria',
+    treatmentId: 'treatment-four-serums',
+    name: 'María Victoria López',
+    plan: 'Plan de 4 sueros',
+    saleValue: 1400000,
+    status: 'Activo',
+  };
+
+  it('does not label a service plan as recompra only because it has no end date', () => {
+    expect(patientEvolutionLabel(fourSerumPlan)).toBe('Plan de servicio activo');
+  });
+
+  it('asks to program sessions instead of suggesting a recompra', () => {
+    expect(patientNextAction(fourSerumPlan)).toBe('Programar y registrar cada sesión del plan.');
+  });
+});
