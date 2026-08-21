@@ -60,6 +60,7 @@ import {
   X,
 } from 'lucide-react';
 import { startAurora } from './aurora';
+import { patientEvolutionLabel, patientNextAction } from './patient-status';
 import {
   AccountingTab,
   ageFromBirthdate,
@@ -391,26 +392,6 @@ function TreatmentRing({
 
 function Badge({ label, tone }: { label: string; tone: Tone }) {
   return <span className={`badge badge--${tone}`}>{label}</span>;
-}
-
-function treatmentProgress(patient: Patient): number {
-  const elapsed = Math.max(0, patient.totalDays - patient.daysLeft);
-  return Math.round(Math.min(100, Math.max(0, (elapsed / Math.max(patient.totalDays, 1)) * 100)));
-}
-
-function patientEvolutionLabel(patient: Patient): string {
-  const progress = treatmentProgress(patient);
-  if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return `Cierre / recompra · ${progress}%`;
-  if (patient.daysLeft <= 12) return `Control cercano · ${progress}%`;
-  return `En evolución · ${progress}%`;
-}
-
-function patientNextAction(patient: Patient): string {
-  const urgent = mostUrgentPeptide(patient);
-  if (patient.status === 'Por finalizar' || patient.daysLeft <= 5) return 'Revisar evolución clínica, saldo y recompra.';
-  if (urgent && urgent.signal !== 'ok') return `Confirmar continuidad de ${urgent.name} (${urgent.endsInDays}d).`;
-  if (patient.weeklySerum) return `Mantener suero semanal${patient.serumDay && patient.serumDay !== '-' ? ` · ${patient.serumDay}` : ''}.`;
-  return 'Seguimiento activo sin alerta crítica.';
 }
 
 function Field({
