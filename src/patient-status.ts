@@ -1,6 +1,6 @@
 import { mostUrgentPeptide, type Patient } from './data';
 
-function treatmentProgress(patient: Patient): number {
+export function treatmentProgress(patient: Patient): number {
   const elapsed = Math.max(0, patient.totalDays - patient.daysLeft);
   return Math.round(Math.min(100, Math.max(0, (elapsed / Math.max(patient.totalDays, 1)) * 100)));
 }

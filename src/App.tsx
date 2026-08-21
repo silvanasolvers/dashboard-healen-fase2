@@ -60,7 +60,7 @@ import {
   X,
 } from 'lucide-react';
 import { startAurora } from './aurora';
-import { patientEvolutionLabel, patientNextAction } from './patient-status';
+import { patientEvolutionLabel, patientNextAction, treatmentProgress } from './patient-status';
 import {
   AccountingTab,
   ageFromBirthdate,
