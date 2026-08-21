@@ -49,6 +49,7 @@ join lateral (
       or (
         tr.status = 'finalizado'
         and tr.start_date between current_date - 6 and current_date
+        and tr.name not ilike 'Seguimiento%'
         and tr.name not ilike '%oportunidad cerrada%'
         and tr.name not ilike '%no interesado%'
       )
