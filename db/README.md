@@ -19,6 +19,7 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `10_clinical.sql`–`15_plans.sql` | Historia clínica, reportes, pagos, storage, precios y plantillas de receta |
 | `16_crm.sql` | CRM WhatsApp: contactos, pipeline, staging, matching exacto, revisión y auditoría |
 | `16_patient_milestones.sql` | Hitos clínicos/operativos estructurados y auditables por paciente |
+| `16_phase2_missing_ddl.sql` | Baseline versionado de agenda, relaciones e importaciones; permite crear staging desde cero |
 | `17_phase2_dashboard.sql` | Agenda, dossier relacionado y vistas de dashboard para Fase 2 |
 | `18_crm_view_hardening.sql` | Revoca explícitamente acceso anon/PUBLIC a las vistas CRM |
 | `19_crm_cleanup.sql` | Archiva contactos WhatsApp sin información útil y excluye archivados del directorio |
@@ -26,6 +27,9 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `21_crm_pagination.sql` | Listado CRM paginado, filtros server-side, métricas e índices de rendimiento |
 | `19_active_patient_lifecycle.sql` | Separa leads, pacientes con tratamiento activo y pacientes históricos en recuperación, conservando la relación CRM–ficha clínica |
 | `20_crm_active_match_semantics.sql` | Propaga la regla de tratamiento activo al matching, revisión y aplicación de candidatos CRM |
+| `22_crm_patient_category_segments.sql` | Identidad paciente como categoría CRM y segmentaciones de campaña |
+| `23_patient_crm_identity_sync.sql` | Sincronización 1:1 de identidad `clients` ↔ CRM |
+| `29_portal_core_bridge.sql` | Superficie clínica mínima de Basics para el Portal separado; solo service role y publicación explícita |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar
@@ -40,6 +44,9 @@ HEALEN_SBP=... python3 db/run.py db/20_crm_operations.sql
 HEALEN_SBP=... python3 db/run.py db/21_crm_pagination.sql
 HEALEN_SBP=... python3 db/run.py db/19_active_patient_lifecycle.sql
 HEALEN_SBP=... python3 db/run.py db/20_crm_active_match_semantics.sql
+
+# Portal separado: Basics recibe solo el bridge clínico, después de backup y preflight.
+HEALEN_SBP=... python3 db/run.py db/29_portal_core_bridge.sql
 
 # Solo ante rollback total del CRM (elimina sus datos)
 HEALEN_SBP=... python3 db/run.py db/rollback_16_crm.sql

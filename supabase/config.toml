@@ -1,0 +1,5 @@
+[functions.portal-core]
+verify_jwt = false
+
+[functions.portal-admin-bridge]
+verify_jwt = true

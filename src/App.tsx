@@ -31,6 +31,7 @@ import {
   Eye,
   FileDown,
   FileText,
+  Globe2,
   LayoutDashboard,
   Lightbulb,
   Link as LinkIcon,
@@ -151,6 +152,7 @@ import {
   fetchFinanceSummary,
   fetchPayees,
   fetchPlans,
+  fetchPortalPatientStatus,
   financeEntry,
   savePlan,
   deletePlan,
@@ -158,10 +160,14 @@ import {
   supportUrl,
   uploadSupport,
   inventoryMovement,
+  invitePortalPatient,
   MovementRow,
   moveCrmContact,
   prescribeCheckout,
   PrescribeResult,
+  type PortalPatientStatus,
+  publishPortalTreatment,
+  queuePortalAiAnalysis,
   reviewCrmCandidate,
   toggleMilestone,
   updateClient,
@@ -5459,7 +5465,7 @@ function PatientDetail({
   go: (v: View) => void;
 }) {
   const ref = useScrollReveal(`${patient.id}-${0}`);
-  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero'>('resumen');
+  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero' | 'portal'>('resumen');
   const [dossier, setDossier] = useState<PatientDossier | null>(null);
   const [loading, setLoading] = useState(true);
   const signal = overallSignal(patient);
@@ -5503,6 +5509,7 @@ function PatientDetail({
     { id: 'historial' as const, label: 'Historial', icon: ClipboardList, count: dossier?.timeline.length },
     { id: 'relacionado' as const, label: 'Relacionado', icon: LinkIcon, count: dossier?.related ? dossier.related.treatments.length + dossier.related.sales.length + dossier.related.appointments.length + dossier.related.relationships.length : undefined },
     { id: 'dinero' as const, label: 'Dinero', icon: Wallet, count: undefined },
+    { id: 'portal' as const, label: 'Portal', icon: Globe2, count: undefined },
   ];
 
   return (
@@ -5580,8 +5587,77 @@ function PatientDetail({
       {tab === 'historial' && <HistorialPanel patient={patient} dossier={dossier} loading={loading} />}
       {tab === 'relacionado' && <RelacionadoPanel dossier={dossier} loading={loading} />}
       {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
+      {tab === 'portal' && <PortalPatientPanel patient={patient} dossier={dossier} />}
     </div>
   );
+}
+
+function PortalPatientPanel({ patient, dossier }: { patient: Patient; dossier: PatientDossier | null }) {
+  const [status, setStatus] = useState<PortalPatientStatus | null>(null);
+  const [email, setEmail] = useState(patient.email ?? dossier?.summary?.email ?? '');
+  const [entitlement, setEntitlement] = useState<NonNullable<PortalPatientStatus['entitlement']>>(patient.status === 'Finalizado' ? 'former_limited' : 'active_full');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [temporaryPassword, setTemporaryPassword] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [publishBusy, setPublishBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!patient.clientUuid) return;
+    try { setStatus(await fetchPortalPatientStatus(patient.clientUuid)); } catch { setStatus(null); }
+  }, [patient.clientUuid]);
+  useEffect(() => { void load(); }, [load]);
+
+  async function invite() {
+    if (!patient.clientUuid || !email.trim()) return;
+    setBusy(true); setMessage(''); setTemporaryPassword('');
+    try {
+      const result = await invitePortalPatient(patient.clientUuid, email.trim(), entitlement);
+      setTemporaryPassword(result.temporaryPassword);
+      setMessage('Cuenta creada. Comparte la contraseña temporal por un canal seguro; solo se mostrará en esta pantalla.');
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo crear la invitación.'); }
+    finally { setBusy(false); }
+  }
+
+  async function queueAi() {
+    if (!patient.clientUuid) return;
+    setAiBusy(true); setMessage('');
+    try { const result = await queuePortalAiAnalysis(patient.clientUuid); setMessage(`Análisis ${result.status}: ${result.validatedMetrics} mediciones validadas.`); await load(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo encolar el análisis.'); }
+    finally { setAiBusy(false); }
+  }
+
+  async function togglePublish() {
+    if (!patient.treatmentId) return;
+    setPublishBusy(true); setMessage('');
+    try { const result = await publishPortalTreatment(patient.treatmentId, !status?.treatmentPublished); setMessage(result.published ? 'Plan e indicaciones publicados para el paciente.' : 'Plan retirado del portal.'); await load(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo actualizar la publicación.'); }
+    finally { setPublishBusy(false); }
+  }
+
+  return <section className="panel portal-admin">
+    <div className="panel__head"><div><span className="eyebrow">Acceso del paciente</span><h2>Portal Healen</h2></div><span className={`badge badge--${status?.account?.status === 'active' ? 'ok' : 'neutral'}`}>{status?.account ? status.account.status : 'Sin cuenta'}</span></div>
+    <div className="portal-admin__stats">
+      <article><span>Acceso</span><strong>{status?.entitlement ?? 'Sin definir'}</strong></article>
+      <article><span>Check-ins pendientes</span><strong>{status?.pendingCheckins ?? 0}</strong></article>
+      <article><span>Solicitudes pendientes</span><strong>{status?.pendingRequests ?? 0}</strong></article>
+      <article><span>Último acceso</span><strong>{status?.account?.lastAccessAt ? formatLongDate(status.account.lastAccessAt) : 'Nunca'}</strong></article>
+      <article><span>Documentos por revisar</span><strong>{status?.pendingDocuments ?? 0}</strong></article>
+      <article><span>Borradores IA</span><strong>{status?.aiDrafts ?? 0}</strong></article>
+      <article><span>Puntos</span><strong>{status?.rewardPoints ?? 0}</strong></article>
+    </div>
+    <div className="portal-admin__actions"><button className="btn btn--secondary" disabled={aiBusy} onClick={queueAi}><Sparkles size={17} />{aiBusy ? 'Encolando…' : 'Generar borrador IA'}</button>{patient.treatmentId && <button className="btn btn--secondary" disabled={publishBusy} onClick={togglePublish}>{status?.treatmentPublished ? <Eye size={17} /> : <Upload size={17} />}{publishBusy ? 'Actualizando…' : status?.treatmentPublished ? 'Retirar plan del portal' : 'Publicar plan actual'}</button>}<span>IA solo usa métricas validadas. Publicar el plan requiere rol clínico.</span></div>
+    <div className="portal-admin__invite">
+      <label className="field"><span>Correo de acceso autorizado</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="paciente@correo.com" disabled={!!status?.account} /></label>
+      <label className="field"><span>Tipo de acceso</span><select value={entitlement} onChange={(event) => setEntitlement(event.target.value as NonNullable<PortalPatientStatus['entitlement']>)}><option value="active_full">Tratamiento activo</option><option value="purchased_pending_setup">Compra · preparando plan</option><option value="former_limited">Paciente anterior</option><option value="suspended">Suspendido</option></select></label>
+      <button className="btn btn--primary" disabled={busy || !email.trim() || !!status?.account} onClick={invite}><Mail size={17} />{busy ? 'Creando…' : status?.account ? 'Acceso ya vinculado' : 'Crear cuenta del portal'}</button>
+    </div>
+    {message && <p className="portal-admin__message">{message}</p>}
+    {temporaryPassword && <div className="portal-admin__message" role="status"><strong>Contraseña temporal:</strong> <code>{temporaryPassword}</code><br /><span>Guárdala ahora: no se almacena ni volverá a mostrarse.</span></div>}
+    {status?.account && <p className="muted-line">Correo de acceso: {status.account.email}. Cambiar el correo de contacto de la ficha no modifica esta cuenta.</p>}
+    <p className="muted-line">Admite cualquier proveedor de correo. El paciente entra con una contraseña temporal y debe reemplazarla antes de consultar información. La cuenta se vincula explícitamente con esta ficha; nunca por nombre, teléfono o coincidencia de correo.</p>
+  </section>;
 }
 
 /* ---- Próximos pasos auto-gestionados ---- */

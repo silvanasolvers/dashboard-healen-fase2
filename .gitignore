@@ -1,4 +1,7 @@
 node_modules
+.impeccable/
+supabase/.temp/
+/portal/
 dist
 .env
 .env.*
@@ -6,5 +9,6 @@ dist
 .vercel
 .hermes
 .DS_Store
+*.tsbuildinfo
 
 .claude/

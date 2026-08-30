@@ -308,10 +308,10 @@ function normalizeCrmContact(row: DbRow): CrmContact {
   const contactType = crmType(rowString(row, 'contact_type'));
   const clientId = rowString(row, 'client_id');
   const activeTreatmentCount = rowNumber(row, 'active_treatment_count');
-  // Paciente es una categoría clínica activa. El historial conserva el vínculo
-  // con clients, pero pasa a recuperación cuando no queda tratamiento activo.
-  const isPatient = rowBoolean(row, 'has_treatment') && activeTreatmentCount > 0;
-  const stage = treatmentCount > 0 && activeTreatmentCount === 0
+  // El vínculo con la ficha clínica define la categoría Paciente. La vigencia
+  // del tratamiento define su etapa (activo o recuperación), no borra la relación.
+  const isPatient = contactType === 'patient' || Boolean(clientId);
+  const stage = isPatient && treatmentCount > 0 && activeTreatmentCount === 0
     ? 'recovery'
     : crmStage(rowString(row, 'current_opportunity_stage'));
   const confidenceRaw = rowValue(row, 'match_confidence');
@@ -570,6 +570,12 @@ async function rpc(fn: string, args: Record<string, unknown>) {
   const { data, error } = await supabase.rpc(fn, args);
   if (error) throw new Error(error.message);
   return data;
+}
+
+async function edge<T>(name: string, body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) throw new Error(error.message);
+  return data as T;
 }
 
 /** Catálogo de productos para recetar (con defaults + stock). */
@@ -864,4 +870,61 @@ export function financeEntry(p: MovementPayload) {
     p_client_id: p.clientId,
     p_supplier_id: p.supplierId,
   });
+}
+
+// ---------- Portal del paciente (controles staff) ----------
+export interface PortalPatientStatus {
+  invitation: null;
+  account: { status: string; email: string; lastAccessAt: string | null; onboardingCompletedAt: string | null; mustChangePassword?: boolean } | null;
+  entitlement: 'active_full' | 'purchased_pending_setup' | 'former_limited' | 'suspended' | null;
+  pendingCheckins: number;
+  pendingRequests: number;
+  pendingDocuments: number;
+  aiDrafts: number;
+  rewardPoints: number;
+  treatmentPublished: boolean;
+}
+
+/** Lee solo el estado operativo del portal para una ficha; requiere staff. */
+export function fetchPortalPatientStatus(clientId: string) {
+  return Promise.all([
+    edge<{ data: { status: string; email?: string; lastAccessAt?: string; mustChangePassword?: boolean; entitlement?: PortalPatientStatus['entitlement'] } }>('portal-admin-bridge', { action: 'status', basicsClientId: clientId }),
+    supabase.from('treatments').select('portal_visibility').eq('client_id', clientId).in('status', ['activo', 'por_finalizar']).limit(1).maybeSingle(),
+  ]).then(([portal, treatment]) => {
+    const linked = portal.data.status !== 'not_provisioned';
+    return {
+      invitation: null,
+      account: linked ? {
+        status: portal.data.status,
+        email: portal.data.email ?? '',
+        lastAccessAt: portal.data.lastAccessAt ?? null,
+        onboardingCompletedAt: null,
+        mustChangePassword: portal.data.mustChangePassword,
+      } : null,
+      entitlement: portal.data.entitlement ?? null,
+      pendingCheckins: 0,
+      pendingRequests: 0,
+      pendingDocuments: 0,
+      aiDrafts: 0,
+      rewardPoints: 0,
+      treatmentPublished: treatment.data?.portal_visibility === 'patient_published',
+    } satisfies PortalPatientStatus;
+  });
+}
+
+/** Autoriza un correo de acceso de cualquier proveedor; no crea pacientes ni envía correo. */
+export function invitePortalPatient(clientId: string, email: string, entitlement?: PortalPatientStatus['entitlement']) {
+  return edge<{ data: { authUserId: string; email: string; status: string }; temporaryPassword: string }>('portal-admin-bridge', {
+    action: 'provision', basicsClientId: clientId, email, entitlement: entitlement ?? 'former_limited',
+  });
+}
+
+/** Encola un análisis seudonimizado hecho solo con métricas validadas. */
+export function queuePortalAiAnalysis(clientId: string) {
+  return rpc('dash_portal_queue_ai', { p_client: clientId, p_job_type: 'progress_summary' }) as Promise<{ id: string; status: string; validatedMetrics: number }>;
+}
+
+/** Publica o retira del portal el plan y sus instrucciones; requiere rol clínico. */
+export function publishPortalTreatment(treatmentId: string, publish: boolean) {
+  return rpc('dash_portal_publish_treatment', { p_treatment: treatmentId, p_publish: publish }) as Promise<{ id: string; published: boolean }>;
 }

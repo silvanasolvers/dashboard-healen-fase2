@@ -205,9 +205,8 @@ via `is_staff()`. La **service role NUNCA va al browser** (solo backend/scripts)
   2. Cada mutador llama `require_staff()` al inicio: bloquea a usuarios autenticados sin
      perfil de staff (p. ej. auto-registros). No afecta a la service role ni al SQL directo
      (en esos contextos `auth.uid()` es null).
-- **Usuarios demo de staff** (creados vía Auth admin API):
-  `admin@healen.co` (rol admin) y `recepcion@healen.co` (rol recepcion), contraseña `Healen2026!`.
-- Para agregar staff: crear el usuario en Auth y su fila en `profiles` con el rol.
+- No se versionan ni muestran credenciales demo. Para agregar staff, crear el usuario
+  mediante Auth Admin, exigir una contraseña única/rotada y crear su fila en `profiles`.
 
 ---
 

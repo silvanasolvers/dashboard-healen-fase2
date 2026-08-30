@@ -38,7 +38,7 @@ export function useSession() {
 }
 
 export function Login() {
-  const [email, setEmail] = useState('admin@healen.co');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +81,6 @@ export function Login() {
             {busy ? 'Entrando…' : 'Entrar'}
           </button>
         </form>
-        <p className="login__hint">Demo · admin@healen.co · Healen2026!</p>
       </div>
     </div>
   );
