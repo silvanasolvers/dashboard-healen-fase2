@@ -37,13 +37,30 @@ Deno.serve(async (request) => {
     const rpcName = {
       home: 'portal_core_get_home',
       treatment: 'portal_core_get_treatment',
+      progress: 'portal_core_get_progress',
       appointments: 'portal_core_get_appointments',
+      documents: 'portal_core_get_documents',
+      packages: 'portal_core_get_packages',
+      billing: 'portal_core_get_billing',
+      rewards: 'portal_core_get_rewards',
+      submit_checkin: 'portal_core_submit_checkin',
+      request_appointment: 'portal_core_request_appointment',
+      confirm_appointment: 'portal_core_confirm_appointment',
+      request_profile_change: 'portal_core_request_profile_change',
+      request_records: 'portal_core_request_records',
+      redeem_reward: 'portal_core_redeem_reward',
+      document_url: 'portal_core_get_document_url',
     }[envelope.action];
-    const { data, error } = await admin.rpc(rpcName, {
+    if (!rpcName) return respond({ error: 'ACTION_NOT_AVAILABLE' }, 400);
+    const rpcParams: Record<string, unknown> = {
       p_client_id: envelope.basicsClientId,
       p_portal_user_id: envelope.portalUserId,
       p_request_id: envelope.requestId,
-    });
+    };
+    if (!['home', 'treatment', 'appointments', 'documents', 'packages', 'billing', 'rewards', 'request_records'].includes(envelope.action)) {
+      rpcParams.p_params = envelope.params ?? {};
+    }
+    const { data, error } = await admin.rpc(rpcName, rpcParams);
     if (error) throw error;
     return respond({ data });
   } catch (error) {

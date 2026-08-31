@@ -1,9 +1,33 @@
+export type CoreAction =
+  | 'home'
+  | 'treatment'
+  | 'progress'
+  | 'appointments'
+  | 'documents'
+  | 'packages'
+  | 'billing'
+  | 'rewards'
+  | 'submit_checkin'
+  | 'request_appointment'
+  | 'confirm_appointment'
+  | 'request_profile_change'
+  | 'request_records'
+  | 'redeem_reward'
+  | 'document_url';
+
+const coreActions: CoreAction[] = [
+  'home', 'treatment', 'progress', 'appointments', 'documents', 'packages',
+  'billing', 'rewards', 'submit_checkin', 'request_appointment',
+  'confirm_appointment', 'request_profile_change', 'request_records',
+  'redeem_reward', 'document_url',
+];
+
 export type IntegrationEnvelope = {
   version: 1;
   requestId: string;
   portalUserId: string;
   basicsClientId: string;
-  action: 'home' | 'treatment' | 'appointments';
+  action: CoreAction;
   params: Record<string, unknown>;
   issuedAt: string;
   expiresAt: string;
@@ -49,7 +73,7 @@ export function assertFreshEnvelope(value: unknown, now = Date.now()): asserts v
       !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(envelope.requestId ?? '') ||
       !/^[0-9a-f-]{36}$/i.test(envelope.portalUserId ?? '') ||
       !/^[0-9a-f-]{36}$/i.test(envelope.basicsClientId ?? '') ||
-      !['home', 'treatment', 'appointments'].includes(envelope.action ?? '')) {
+      !coreActions.includes(envelope.action as CoreAction)) {
     throw new Error('INVALID_ENVELOPE');
   }
   const issued = Date.parse(envelope.issuedAt ?? '');
