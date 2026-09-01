@@ -14,6 +14,7 @@ const appointmentOperationsSql = readFileSync(resolve(root, 'db/33_portal_appoin
 const documentCustodySql = readFileSync(resolve(root, 'db/34_portal_document_custody.sql'), 'utf8');
 const documentSecurity = readFileSync(resolve(root, 'supabase/functions/_shared/document-security.ts'), 'utf8');
 const documentAdmin = readFileSync(resolve(root, 'supabase/functions/portal-document-admin/index.ts'), 'utf8');
+const activityCenterSql = readFileSync(resolve(root, 'db/35_portal_activity_center.sql'), 'utf8');
 
 function signature(name: string) {
   return rpcSql.match(new RegExp(`create or replace function ${name}\\(([^)]*)\\)`, 'i'))?.[1] ?? '';
@@ -103,6 +104,15 @@ describe('portal API isolation guardrails', () => {
     expect(documentAdmin).toContain("staffClient.rpc('is_staff')");
     expect(documentAdmin).toContain("document.scan_status !== 'clean'");
     expect(documentAdmin).toContain("action: 'staff_document_download'");
+  });
+
+  it('scopes activity and read mutations to the linked patient', () => {
+    expect(activityCenterSql).toContain('where client_id = p_client_id');
+    expect(activityCenterSql).toContain('where id = v_notification and client_id = p_client_id');
+    expect(activityCenterSql).toContain("portal_core_request_valid(p_request_id, p_portal_user_id, p_client_id, 'activity')");
+    expect(activityCenterSql).toContain("portal_core_request_valid(p_request_id, p_portal_user_id, p_client_id, 'mark_notification_read')");
+    expect(activityCenterSql).toContain('from public, anon, authenticated');
+    expect(activityCenterSql).toContain('to service_role');
   });
 });
 

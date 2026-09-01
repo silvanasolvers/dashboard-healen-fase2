@@ -246,6 +246,7 @@ Deno.serve(async (request) => {
       progress: 'portal_core_get_progress',
       appointments: 'portal_core_get_appointments',
       documents: 'portal_core_get_documents',
+      activity: 'portal_core_get_activity',
       packages: 'portal_core_get_packages',
       billing: 'portal_core_get_billing',
       rewards: 'portal_core_get_rewards',
@@ -255,6 +256,7 @@ Deno.serve(async (request) => {
       request_profile_change: 'portal_core_request_profile_change',
       request_records: 'portal_core_request_records',
       redeem_reward: 'portal_core_redeem_reward',
+      mark_notification_read: 'portal_core_mark_notification_read',
     }[envelope.action];
     if (!rpcName) return respond({ error: 'ACTION_NOT_AVAILABLE' }, 400);
     const rpcParams: Record<string, unknown> = {
