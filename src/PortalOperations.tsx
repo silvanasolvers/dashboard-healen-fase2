@@ -15,6 +15,8 @@ import {
   LockKeyhole,
   MapPin,
   RefreshCw,
+  RotateCcw,
+  Search,
   Send,
   ShieldCheck,
   Upload,
@@ -26,11 +28,13 @@ import {
   fetchPortalAppointmentOperations,
   fetchPortalCheckinOperations,
   openPortalDocument,
+  searchPortalDocumentPatients,
   type PortalAppointmentOperation,
   type PortalAppointmentScope,
   type PortalCheckinOperation,
   type PortalCheckinScope,
   type PortalDocumentOperation,
+  type PortalDocumentPatientOption,
   type PortalDocumentScope,
   updatePortalAppointment,
   updatePortalCheckin,
@@ -95,6 +99,13 @@ function CheckinOperations({ notify, onOpenPatient, previewSnapshot }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showIntake, setShowIntake] = useState(false);
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patientResults, setPatientResults] = useState<PortalDocumentPatientOption[]>([]);
+  const [uploadPatient, setUploadPatient] = useState<PortalDocumentPatientOption | null>(null);
+  const [searchingPatients, setSearchingPatients] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'reject' | 'revoke' | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const load = useCallback(async (quiet = false) => {
     if (previewSnapshot) { setSnapshot(previewSnapshot); setSelectedId((current) => current ?? previewSnapshot.items[0]?.id ?? null); setLoading(false); return; }
@@ -531,13 +542,15 @@ function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: 
   const selected = useMemo(() => snapshot?.items.find((item) => item.id === selectedId) ?? null, [selectedId, snapshot]);
   useEffect(() => { if (selected) setMetadata({ title: selected.title, category: selected.category }); }, [selected]);
 
-  async function act(action: 'publish' | 'reject' | 'revoke' | 'retry_scan') {
+  async function act(action: 'publish' | 'reject' | 'revoke' | 'restore' | 'retry_scan') {
     if (!selected) return;
     if (previewDocumentSnapshot) { notify('Vista de prueba: la acción no modifica datos.'); return; }
     setBusy(true);
     try {
-      await updatePortalDocument(selected.id, action, action === 'publish' ? metadata : {});
-      notify(action === 'publish' ? 'Documento publicado para el paciente.' : action === 'revoke' ? 'Documento retirado del portal.' : action === 'retry_scan' ? 'Archivo verificado nuevamente.' : 'Documento rechazado y retirado.');
+      await updatePortalDocument(selected.id, action, action === 'publish' ? metadata : action === 'reject' ? { reason: rejectReason.trim() || 'Requiere corrección antes de publicarse' } : {});
+      notify(action === 'publish' ? 'Documento publicado para el paciente.' : action === 'revoke' ? 'Documento retirado del portal y devuelto a revisión.' : action === 'restore' ? 'Documento devuelto a revisión.' : action === 'retry_scan' ? 'Archivo verificado nuevamente.' : 'Documento rechazado; el original permanece bajo custodia.');
+      setConfirmAction(null);
+      setRejectReason('');
       await load(true);
     } catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo actualizar el documento.', true); }
     finally { setBusy(false); }
@@ -554,13 +567,23 @@ function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: 
     finally { setBusy(false); }
   }
 
-  async function upload(file: File) {
-    if (!selected) return;
+  async function findPatients() {
+    if (previewDocumentSnapshot) return;
+    setSearchingPatients(true);
+    try { setPatientResults(await searchPortalDocumentPatients(patientQuery)); }
+    catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo buscar pacientes.', true); }
+    finally { setSearchingPatients(false); }
+  }
+
+  async function uploadFor(clientId: string, file: File) {
     if (previewDocumentSnapshot) { notify('Vista de prueba: la carga no modifica datos.'); return; }
     setBusy(true);
     try {
-      await uploadPortalDocument(selected.clientId, file, { title: file.name.replace(/\.[^.]+$/, ''), category: metadata.category });
-      notify('Archivo recibido, escaneado y agregado a la revisión del paciente.');
+      const completed = await uploadPortalDocument(clientId, file, { title: file.name.replace(/\.[^.]+$/, ''), category: 'Documento clínico' });
+      notify(completed.status === 'pending_verification' ? 'Archivo recibido. La verificación seguirá en segundo plano; no necesitas cargarlo otra vez.' : 'Archivo recibido, verificado y agregado a revisión.');
+      setShowIntake(false);
+      setUploadPatient(null);
+      setPatientQuery('');
       setScope('pending');
       await load(true);
     } catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo cargar el archivo.', true); }
@@ -569,8 +592,10 @@ function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: 
 
   const summary = snapshot?.summary ?? { pending: 0, scanning: 0, published: 0, rejected: 0 };
   const state = selected ? documentState(selected) : null;
+  const publishable = Boolean(selected && selected.scanStatus === 'clean' && selected.visibility === 'internal' && selected.reviewStatus === 'pending_review');
   return <section className="portal-ops portal-documents" aria-labelledby="portal-documents-title">
-    <header className="portal-ops__intro" data-reveal><div><h2 id="portal-documents-title">Custodia documental</h2><p>Revisa cada archivo limpio, ajusta cómo lo verá el paciente y publícalo con trazabilidad completa.</p></div><button className="btn btn--ghost" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'is-spinning' : ''} /> Actualizar</button></header>
+    <header className="portal-ops__intro" data-reveal><div><h2 id="portal-documents-title">Custodia documental</h2><p>Revisa cada archivo limpio, ajusta cómo lo verá el paciente y publícalo con trazabilidad completa.</p></div><div className="portal-document-intro__actions"><button className="btn btn--primary" onClick={() => { setShowIntake((current) => !current); setUploadPatient(null); if (!showIntake) void findPatients(); }}><Upload size={16} /> Subir para paciente</button><button className="btn btn--ghost" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'is-spinning' : ''} /> Actualizar</button></div></header>
+    {showIntake && <section className="portal-document-intake" aria-labelledby="document-intake-title"><header><div><h3 id="document-intake-title">Nuevo documento</h3><p>Selecciona primero al paciente. El archivo quedará aislado hasta superar la verificación.</p></div><button className="btn btn--ghost" onClick={() => setShowIntake(false)}>Cerrar</button></header><form onSubmit={(event) => { event.preventDefault(); void findPatients(); }}><label><span>Buscar paciente</span><span className="portal-document-intake__search"><Search size={17} /><input value={patientQuery} onChange={(event) => setPatientQuery(event.target.value)} placeholder="Nombre, código o teléfono" /><button className="btn btn--soft" disabled={searchingPatients}>{searchingPatients ? 'Buscando…' : 'Buscar'}</button></span></label></form><div className="portal-document-intake__results" aria-live="polite">{patientResults.map((patient) => <button key={patient.id} className={uploadPatient?.id === patient.id ? 'is-selected' : ''} onClick={() => setUploadPatient(patient)}><strong>{patient.name}</strong><span>{patient.code || 'Sin código'}{patient.phone ? ` · ${patient.phone}` : ''}</span></button>)}</div>{uploadPatient && <label className="portal-document-review__upload"><Upload size={17} /><span>Elegir archivo para {uploadPatient.name}</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadFor(uploadPatient.id, file); event.currentTarget.value = ''; }} /></label>}</section>}
     <div className="portal-ops__pulse" data-reveal aria-label="Resumen documental"><article><span>Por revisar</span><strong>{number.format(summary.pending)}</strong></article><article><span>Verificando</span><strong>{number.format(summary.scanning)}</strong></article><article><span>Publicados</span><strong>{number.format(summary.published)}</strong></article><article className={summary.rejected ? 'is-overdue' : ''}><span>Bloqueados</span><strong>{number.format(summary.rejected)}</strong></article></div>
     <div className="portal-ops__filters" data-reveal role="tablist" aria-label="Filtrar documentos">{documentScopes.map((item) => <button key={item.id} role="tab" aria-selected={scope === item.id} className={scope === item.id ? 'is-active' : ''} onClick={() => setScope(item.id)}>{item.label}</button>)}</div>
     {error && <div className="portal-ops__state portal-ops__state--error" role="alert"><FileWarning size={22} /><strong>No pudimos abrir los documentos</strong><span>{error}</span><button className="btn btn--soft" onClick={() => void load()}>Intentar de nuevo</button></div>}
@@ -580,10 +605,11 @@ function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: 
       <div className="portal-ops__queue" aria-label="Documentos clínicos">{snapshot.items.map((item) => { const itemState = documentState(item); return <button key={item.id} className={`portal-checkin portal-document-row${selectedId === item.id ? ' is-active' : ''}`} onClick={() => setSelectedId(item.id)}><span className="portal-document-row__icon">{item.scanStatus === 'clean' ? <FileCheck2 size={17} /> : <LockKeyhole size={17} />}</span><span className="portal-checkin__body"><span className="portal-checkin__top"><strong>{item.patientName}</strong><time>{dateTime.format(new Date(item.createdAt))}</time></span><span className="portal-checkin__metrics">{item.title} · {fileSize(item.sizeBytes)}</span><span className={`portal-review__priority portal-review__priority--${itemState.tone}`}>{itemState.label}</span></span><ArrowRight size={16} /></button>; })}</div>
       {selected && state && <article className="portal-review portal-document-review" aria-live="polite"><header className="portal-review__head"><div><span className={`portal-review__priority portal-review__priority--${state.tone}`}>{state.label}</span><h3>{selected.patientName}</h3><p>{selected.patientCode || 'Sin código'} · {selected.uploadedByPatient ? 'Compartido por el paciente' : 'Cargado por el equipo'}</p></div>{onOpenPatient && <button className="btn btn--ghost" onClick={() => onOpenPatient(selected.clientId)}>Abrir ficha</button>}</header>
         <div className="portal-document-review__file"><FileText size={22} /><div><span>Archivo recibido</span><strong>{selected.originalName || selected.title}</strong><small>{selected.mimeType || 'Tipo no registrado'} · {fileSize(selected.sizeBytes)}</small></div>{selected.scanStatus === 'clean' && <button className="btn btn--ghost" disabled={busy} onClick={() => void download()}><Download size={16} /> Abrir</button>}</div>
-        <div className="portal-document-form"><label><span>Título visible para el paciente</span><input value={metadata.title} maxLength={180} onChange={(event) => setMetadata((current) => ({ ...current, title: event.target.value }))} /></label><label><span>Categoría</span><select value={metadata.category} onChange={(event) => setMetadata((current) => ({ ...current, category: event.target.value }))}><option>Documento clínico</option><option>Resultado de laboratorio</option><option>Fórmula médica</option><option>Consentimiento</option><option>Resumen clínico</option><option>Factura</option></select></label></div>
+        <div className="portal-document-form"><label><span>Título visible para el paciente</span><input disabled={!publishable} value={metadata.title} maxLength={180} onChange={(event) => setMetadata((current) => ({ ...current, title: event.target.value }))} /></label><label><span>Categoría</span><select disabled={!publishable} value={metadata.category} onChange={(event) => setMetadata((current) => ({ ...current, category: event.target.value }))}><option>Documento clínico</option><option>Resultado de laboratorio</option><option>Fórmula médica</option><option>Consentimiento</option><option>Resumen clínico</option><option>Factura</option></select></label></div>
         <div className="portal-document-review__custody"><ShieldCheck size={18} /><div><strong>{selected.scanStatus === 'clean' ? 'Verificación de seguridad superada' : 'El archivo todavía no se puede publicar'}</strong><span>{selected.scanStatus === 'clean' ? 'La descarga usa un enlace privado que vence en 90 segundos.' : 'Healen mantiene el archivo aislado hasta que el escáner confirme que está limpio.'}</span></div></div>
-        <label className="portal-document-review__upload"><Upload size={17} /><span>Agregar otro archivo para {selected.patientName}</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ''; }} /></label>
-        <footer className="portal-review__actions">{selected.scanStatus === 'error' ? <button className="btn btn--primary" disabled={busy} onClick={() => void act('retry_scan')}><RefreshCw size={16} /> Verificar de nuevo</button> : selected.visibility === 'patient_published' ? <button className="btn btn--ghost" disabled={busy} onClick={() => void act('revoke')}><LockKeyhole size={16} /> Retirar del portal</button> : selected.reviewStatus !== 'rejected' && <><button className="btn btn--ghost" disabled={busy} onClick={() => void act('reject')}><XCircle size={16} /> Rechazar</button><button className="btn btn--primary" disabled={busy || selected.scanStatus !== 'clean' || metadata.title.trim().length < 3} onClick={() => void act('publish')}><FileCheck2 size={16} /> Publicar para el paciente</button></>}</footer>
+        <label className="portal-document-review__upload"><Upload size={17} /><span>Agregar otro archivo para {selected.patientName}</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadFor(selected.clientId, file); event.currentTarget.value = ''; }} /></label>
+        {confirmAction && <section className="portal-document-confirm" role="alertdialog" aria-labelledby="document-confirm-title"><div><strong id="document-confirm-title">{confirmAction === 'reject' ? '¿Marcar este documento como no aceptado?' : '¿Retirarlo del portal del paciente?'}</strong><p>{confirmAction === 'reject' ? 'El original seguirá guardado de forma privada y podrás devolverlo a revisión.' : 'El paciente dejará de verlo, pero el documento volverá a la cola de revisión.'}</p></div>{confirmAction === 'reject' && <label><span>Motivo para el equipo</span><textarea value={rejectReason} maxLength={400} onChange={(event) => setRejectReason(event.target.value)} placeholder="Ej. documento ilegible o corresponde a otra fecha" /></label>}<footer><button className="btn btn--ghost" disabled={busy} onClick={() => setConfirmAction(null)}>Cancelar</button><button className="btn btn--primary" disabled={busy} onClick={() => void act(confirmAction)}>{busy ? 'Procesando…' : 'Confirmar'}</button></footer></section>}
+        <footer className="portal-review__actions">{selected.scanStatus === 'error' ? <button className="btn btn--primary" disabled={busy} onClick={() => void act('retry_scan')}><RefreshCw size={16} /> Verificar de nuevo</button> : selected.reviewStatus === 'rejected' && selected.scanStatus === 'clean' ? <button className="btn btn--ghost" disabled={busy} onClick={() => void act('restore')}><RotateCcw size={16} /> Volver a revisión</button> : selected.visibility === 'patient_published' ? <button className="btn btn--ghost" disabled={busy || Boolean(confirmAction)} onClick={() => setConfirmAction('revoke')}><LockKeyhole size={16} /> Retirar del portal</button> : selected.reviewStatus !== 'rejected' && <><button className="btn btn--ghost" disabled={busy || Boolean(confirmAction)} onClick={() => setConfirmAction('reject')}><XCircle size={16} /> Rechazar</button><button className="btn btn--primary" disabled={busy || !publishable || metadata.title.trim().length < 3} onClick={() => void act('publish')}><FileCheck2 size={16} /> Publicar para el paciente</button></>}</footer>
       </article>}
     </div>}
   </section>;

@@ -60,6 +60,20 @@ Deno.serve(async (request) => {
       if (error) throw error;
       return response({ data });
     }
+    if (action === 'patients') {
+      const query = String(body.query ?? '').replace(/[,%()]/g, ' ').trim().slice(0, 80);
+      let patients = admin.from('clients').select('id,full_name,code,phone').eq('active', true)
+        .order('updated_at', { ascending: false }).limit(8);
+      if (query) patients = patients.or(`full_name.ilike.%${query}%,code.ilike.%${query}%,phone.ilike.%${query}%`);
+      const { data, error } = await patients;
+      if (error) throw error;
+      return response({ data: (data ?? []).map((patient) => ({
+        id: patient.id,
+        name: patient.full_name || 'Paciente sin nombre',
+        code: patient.code ?? null,
+        phone: patient.phone ?? null,
+      })) });
+    }
     if (action === 'prepare_upload') {
       if (!isUuid(body.clientId)) throw new HttpError('CLIENT_REQUIRED');
       const { data: client } = await admin.from('clients').select('id').eq('id', body.clientId).eq('active', true).maybeSingle();
@@ -89,7 +103,13 @@ Deno.serve(async (request) => {
     if (!document) throw new HttpError('DOCUMENT_NOT_FOUND', 404);
 
     if (action === 'complete_upload' || action === 'retry_scan') {
-      const data = await scanAndPromoteDocument(admin, documentId);
+      let data: { documentId: string; status: 'clean' | 'pending_verification' };
+      try {
+        data = await scanAndPromoteDocument(admin, documentId);
+      } catch (error) {
+        if (!(error instanceof DocumentError) || error.message !== 'DOCUMENT_SCAN_UNAVAILABLE') throw error;
+        data = { documentId, status: 'pending_verification' };
+      }
       await admin.from('portal_access_audit').insert({
         auth_user_id: authData.user.id, client_id: document.client_id, action: 'staff_document_scan',
         resource_type: 'patient_document', resource_id: documentId,
@@ -122,11 +142,8 @@ Deno.serve(async (request) => {
       return response({ data: { documentId, status: 'published' } });
     }
     if (action === 'reject') {
-      if (document.storage_path && [DOCUMENT_BUCKET, QUARANTINE_BUCKET].includes(document.storage_bucket)) {
-        await admin.storage.from(document.storage_bucket).remove([document.storage_path]);
-      }
       const { error } = await admin.from('patient_documents').update({
-        visibility: 'internal', review_status: 'rejected', removed_at: new Date().toISOString(),
+        visibility: 'internal', review_status: 'rejected', published_at: null, published_by: null,
         scan_details: { ...(document.scan_details ?? {}), rejectionReason: String(body.reason ?? 'Rechazado por el equipo').slice(0, 400) },
       }).eq('id', documentId);
       if (error) throw error;
@@ -138,7 +155,7 @@ Deno.serve(async (request) => {
     }
     if (action === 'revoke') {
       const { error } = await admin.from('patient_documents').update({
-        visibility: 'internal', published_at: null, published_by: null,
+        visibility: 'internal', review_status: 'pending_review', published_at: null, published_by: null,
       }).eq('id', documentId);
       if (error) throw error;
       await admin.from('portal_access_audit').insert({
@@ -146,6 +163,22 @@ Deno.serve(async (request) => {
         resource_type: 'patient_document', resource_id: documentId,
       });
       return response({ data: { documentId, status: 'revoked' } });
+    }
+    if (action === 'restore') {
+      if (document.scan_status !== 'clean' || document.storage_bucket !== DOCUMENT_BUCKET || !document.storage_path) {
+        throw new HttpError('DOCUMENT_NOT_RESTORABLE', 409);
+      }
+      const details = { ...(document.scan_details ?? {}) } as Record<string, unknown>;
+      delete details.rejectionReason;
+      const { error } = await admin.from('patient_documents').update({
+        visibility: 'internal', review_status: 'pending_review', removed_at: null, scan_details: details,
+      }).eq('id', documentId);
+      if (error) throw error;
+      await admin.from('portal_access_audit').insert({
+        auth_user_id: authData.user.id, client_id: document.client_id, action: 'staff_document_restore',
+        resource_type: 'patient_document', resource_id: documentId,
+      });
+      return response({ data: { documentId, status: 'pending_review' } });
     }
     if (action === 'signed_url') {
       if (document.scan_status !== 'clean' || document.storage_bucket !== DOCUMENT_BUCKET || !document.storage_path) {

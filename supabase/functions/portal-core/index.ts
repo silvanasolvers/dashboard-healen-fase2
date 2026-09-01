@@ -169,16 +169,22 @@ async function prepareDocumentUpload(envelope: PortalEnvelope) {
 async function completeDocumentUpload(envelope: PortalEnvelope) {
   const documentId = envelope.params.documentId;
   if (!uuid(documentId)) throw new HttpError('DOCUMENT_REQUIRED', 400);
-  const result = await scanAndPromoteDocument(admin, String(documentId), {
-    clientId: envelope.basicsClientId,
-    portalUserId: envelope.portalUserId,
-  });
+  let result: { documentId: string; status: 'clean' | 'pending_verification' };
+  try {
+    result = await scanAndPromoteDocument(admin, String(documentId), {
+      clientId: envelope.basicsClientId,
+      portalUserId: envelope.portalUserId,
+    });
+  } catch (error) {
+    if (!(error instanceof DocumentError) || error.message !== 'DOCUMENT_SCAN_UNAVAILABLE') throw error;
+    result = { documentId: String(documentId), status: 'pending_verification' };
+  }
   await admin.from('portal_core_access_audit').insert({
     request_id: envelope.requestId,
     portal_user_id: envelope.portalUserId,
     client_id: envelope.basicsClientId,
     action: 'document_upload_complete',
-    metadata: { documentId },
+    metadata: { documentId, status: result.status },
   });
   return result;
 }

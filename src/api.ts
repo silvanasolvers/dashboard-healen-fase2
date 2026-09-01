@@ -1021,6 +1021,13 @@ export interface PortalDocumentOperationsSnapshot {
   items: PortalDocumentOperation[];
 }
 
+export interface PortalDocumentPatientOption {
+  id: string;
+  name: string;
+  code: string | null;
+  phone: string | null;
+}
+
 export async function fetchPortalDocumentOperations(scope: PortalDocumentScope = 'pending') {
   const result = await edge<{ data: PortalDocumentOperationsSnapshot }>('portal-document-admin', { action: 'list', scope });
   return result.data;
@@ -1028,11 +1035,18 @@ export async function fetchPortalDocumentOperations(scope: PortalDocumentScope =
 
 export async function updatePortalDocument(
   documentId: string,
-  action: 'publish' | 'reject' | 'revoke' | 'retry_scan',
+  action: 'publish' | 'reject' | 'revoke' | 'restore' | 'retry_scan',
   payload: { title?: string; category?: string; reason?: string } = {},
 ) {
   const result = await edge<{ data: { documentId: string; status: string } }>('portal-document-admin', {
     action, documentId, ...payload,
+  });
+  return result.data;
+}
+
+export async function searchPortalDocumentPatients(query = '') {
+  const result = await edge<{ data: PortalDocumentPatientOption[] }>('portal-document-admin', {
+    action: 'patients', query,
   });
   return result.data;
 }
