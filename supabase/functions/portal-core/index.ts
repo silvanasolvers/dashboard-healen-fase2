@@ -215,6 +215,7 @@ async function documentUrl(envelope: PortalEnvelope) {
 
 Deno.serve(async (request) => {
   if (request.method !== 'POST') return respond({ error: 'METHOD_NOT_ALLOWED' }, 405);
+  let currentAction = 'unknown';
   try {
     const raw = await request.text();
     const signature = request.headers.get('x-healen-signature') ?? '';
@@ -223,6 +224,7 @@ Deno.serve(async (request) => {
     }
     const envelope: unknown = JSON.parse(raw);
     assertFreshEnvelope(envelope);
+    currentAction = envelope.action;
 
     const expiresAt = envelope.expiresAt;
     const { data: registered, error: registerError } = await admin.rpc('portal_core_register_request', {
@@ -274,7 +276,12 @@ Deno.serve(async (request) => {
       : data;
     return respond({ data: safeData });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'UNKNOWN';
+    const candidate = error as { message?: unknown; code?: unknown } | null;
+    const message = error instanceof Error
+      ? error.message
+      : typeof candidate?.message === 'string' ? candidate.message : 'UNKNOWN';
+    const code = typeof candidate?.code === 'string' ? candidate.code : undefined;
+    console.error(JSON.stringify({ scope: 'portal-core', action: currentAction, code, error: message }));
     if (error instanceof HttpError) return respond({ error: error.message }, error.status);
     if (error instanceof DocumentError) return respond({ error: error.message }, error.status);
     return respond({ error: message === 'EXPIRED_ENVELOPE' ? message : 'INTEGRATION_ERROR' },

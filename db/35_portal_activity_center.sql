@@ -1,6 +1,52 @@
 -- Patient-safe notification center. Basics remains the source of truth; the
 -- portal receives only its linked client's published operational messages.
 
+-- Keep the signed bridge allowlist in the same migration that introduces the
+-- activity actions. Without this replacement portal-core rejects the request
+-- before either scoped RPC can run.
+alter table public.portal_core_request_receipts
+  drop constraint if exists portal_core_request_receipts_action_check;
+alter table public.portal_core_request_receipts
+  add constraint portal_core_request_receipts_action_check check (action in (
+    'home', 'treatment', 'progress', 'appointments', 'documents', 'packages',
+    'billing', 'create_checkout', 'payment_status', 'rewards', 'submit_checkin',
+    'request_appointment', 'confirm_appointment', 'request_profile_change',
+    'request_records', 'redeem_reward', 'document_url',
+    'document_upload_prepare', 'document_upload_complete',
+    'activity', 'mark_notification_read'
+  ));
+
+create or replace function public.portal_core_register_request(
+  p_request_id uuid,
+  p_portal_user_id uuid,
+  p_client_id uuid,
+  p_action text,
+  p_expires_at timestamptz
+) returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_action not in (
+    'home', 'treatment', 'progress', 'appointments', 'documents', 'packages',
+    'billing', 'create_checkout', 'payment_status', 'rewards', 'submit_checkin',
+    'request_appointment', 'confirm_appointment', 'request_profile_change',
+    'request_records', 'redeem_reward', 'document_url',
+    'document_upload_prepare', 'document_upload_complete',
+    'activity', 'mark_notification_read'
+  ) or p_expires_at <= now() or p_expires_at > now() + interval '2 minutes'
+     or not exists (select 1 from public.clients c where c.id = p_client_id and c.active) then
+    return false;
+  end if;
+  delete from public.portal_core_request_receipts where expires_at < now() - interval '10 minutes';
+  insert into public.portal_core_request_receipts(request_id, portal_user_id, client_id, action, expires_at)
+  values (p_request_id, p_portal_user_id, p_client_id, p_action, p_expires_at);
+  return true;
+exception when unique_violation then return false;
+end;
+$$;
+
 create or replace function public.portal_core_get_activity(
   p_client_id uuid,
   p_portal_user_id uuid,
@@ -123,5 +169,7 @@ $$;
 
 revoke all on function public.portal_core_get_activity(uuid, uuid, uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.portal_core_mark_notification_read(uuid, uuid, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.portal_core_register_request(uuid, uuid, uuid, text, timestamptz) from public, anon, authenticated;
 grant execute on function public.portal_core_get_activity(uuid, uuid, uuid, jsonb) to service_role;
 grant execute on function public.portal_core_mark_notification_read(uuid, uuid, uuid, jsonb) to service_role;
+grant execute on function public.portal_core_register_request(uuid, uuid, uuid, text, timestamptz) to service_role;

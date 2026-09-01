@@ -9,6 +9,7 @@ const portalSource = readFileSync(resolve(root, 'portal/src/App.tsx'), 'utf8');
 const pwaConfig = readFileSync(resolve(root, 'portal/vite.config.ts'), 'utf8');
 const coreBridgeSql = readFileSync(resolve(root, 'db/29_portal_core_bridge.sql'), 'utf8');
 const coreFunction = readFileSync(resolve(root, 'supabase/functions/portal-core/index.ts'), 'utf8');
+const coreIntegration = readFileSync(resolve(root, 'supabase/functions/_shared/portal-integration.ts'), 'utf8');
 const adminBridge = readFileSync(resolve(root, 'supabase/functions/portal-admin-bridge/index.ts'), 'utf8');
 const appointmentOperationsSql = readFileSync(resolve(root, 'db/33_portal_appointment_operations.sql'), 'utf8');
 const documentCustodySql = readFileSync(resolve(root, 'db/34_portal_document_custody.sql'), 'utf8');
@@ -107,6 +108,10 @@ describe('portal API isolation guardrails', () => {
   });
 
   it('scopes activity and read mutations to the linked patient', () => {
+    expect(activityCenterSql).toContain("'activity', 'mark_notification_read'");
+    expect(activityCenterSql).toContain('portal_core_request_receipts_action_check');
+    expect(activityCenterSql).toContain('create or replace function public.portal_core_register_request');
+    expect(coreIntegration).toContain("'activity', 'mark_notification_read'");
     expect(activityCenterSql).toContain('where client_id = p_client_id');
     expect(activityCenterSql).toContain('where id = v_notification and client_id = p_client_id');
     expect(activityCenterSql).toContain("portal_core_request_valid(p_request_id, p_portal_user_id, p_client_id, 'activity')");
