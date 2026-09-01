@@ -99,13 +99,6 @@ function CheckinOperations({ notify, onOpenPatient, previewSnapshot }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [showIntake, setShowIntake] = useState(false);
-  const [patientQuery, setPatientQuery] = useState('');
-  const [patientResults, setPatientResults] = useState<PortalDocumentPatientOption[]>([]);
-  const [uploadPatient, setUploadPatient] = useState<PortalDocumentPatientOption | null>(null);
-  const [searchingPatients, setSearchingPatients] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'reject' | 'revoke' | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
 
   const load = useCallback(async (quiet = false) => {
     if (previewSnapshot) { setSnapshot(previewSnapshot); setSelectedId((current) => current ?? previewSnapshot.items[0]?.id ?? null); setLoading(false); return; }
@@ -524,6 +517,13 @@ function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: 
   const [loading, setLoading] = useState(!previewDocumentSnapshot);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [showIntake, setShowIntake] = useState(false);
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patientResults, setPatientResults] = useState<PortalDocumentPatientOption[]>([]);
+  const [uploadPatient, setUploadPatient] = useState<PortalDocumentPatientOption | null>(null);
+  const [searchingPatients, setSearchingPatients] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'reject' | 'revoke' | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const load = useCallback(async (quiet = false) => {
     if (previewDocumentSnapshot) { setSnapshot(previewDocumentSnapshot); setLoading(false); return; }
