@@ -177,6 +177,7 @@ import {
 import { downloadCsv, downloadPdf } from './lib/export';
 import { DatePicker } from './components/DatePicker';
 import { Login, useSession } from './auth';
+import { PortalOperations, PortalOperationsPreview } from './PortalOperations';
 
 const ROUTES = ['subcutanea', 'intramuscular', 'intravenosa', 'oral', 'sublingual', 'topica', 'nasal'];
 const FREQS = ['diario', '2x semana', 'semanal', 'quincenal', 'mensual', 'ciclo'];
@@ -206,17 +207,21 @@ const NAV: Array<{ id: View; label: string; short: string; icon: ElementType }> 
   { id: 'crm', label: 'CRM', short: 'CRM', icon: MessageCircle },
   { id: 'agenda', label: 'Agenda', short: 'Agenda', icon: CalendarClock },
   { id: 'pacientes', label: 'Pacientes', short: 'Pacientes', icon: Users },
+  { id: 'portal', label: 'Portal pacientes', short: 'Portal', icon: Globe2 },
   { id: 'inventario', label: 'Inventario', short: 'Stock', icon: Package },
   { id: 'contabilidad', label: 'Caja', short: 'Caja', icon: Wallet },
   { id: 'cierres', label: 'Cierres diarios', short: 'Cierres', icon: ClipboardList },
   { id: 'reportes', label: 'Reportes', short: 'Reportes', icon: BarChart3 },
 ];
 
+const MOBILE_NAV = NAV.filter((item) => ['inicio', 'crm', 'agenda', 'pacientes', 'portal'].includes(item.id));
+
 const VIEW_LEAD: Record<View, { eyebrow: string; title: string }> = {
   inicio: { eyebrow: 'Healen OS', title: 'Pacientes péptidos TOP' },
   crm: { eyebrow: 'Relaciones', title: 'CRM' },
   agenda: { eyebrow: 'Operación clínica', title: 'Agenda' },
   pacientes: { eyebrow: 'Tratamientos', title: 'Pacientes' },
+  portal: { eyebrow: 'Experiencia del paciente', title: 'Portal' },
   inventario: { eyebrow: 'Insumos', title: 'Inventario' },
   contabilidad: { eyebrow: 'Finanzas', title: 'Caja' },
   cierres: { eyebrow: 'Control operativo', title: 'Cierres diarios' },
@@ -524,6 +529,9 @@ function QuickCreate({ onAction }: { onAction: (view: View, intent: string) => v
    ============================================================ */
 export function App() {
   const { session, loading: authLoading, signOut } = useSession();
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('portalOpsPreview') === '1') {
+    return <main className="main"><header className="topbar"><div className="topbar__lead"><span className="eyebrow">Experiencia del paciente</span><h1 className="topbar__title">Portal</h1></div></header><div className="view"><PortalOperationsPreview /></div></main>;
+  }
   if (authLoading) return <Loader />;
   if (!session) return <Login />;
   const meta = (session.user.user_metadata ?? {}) as { full_name?: string };
@@ -813,6 +821,16 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
                 onIntentDone={() => setIntent(null)}
               />
             )}
+            {view === 'portal' && (
+              <PortalOperations
+                notify={notify}
+                onOpenPatient={(clientId) => {
+                  const patient = patients.find((item) => item.clientUuid === clientId);
+                  if (patient) setDetailPatient(patient);
+                  else notify('No se encontró la ficha clínica vinculada.', true);
+                }}
+              />
+            )}
             {view === 'inventario' && (
               <InventarioView
                 inventory={inventory}
@@ -842,7 +860,7 @@ function Dashboard({ userLabel, onSignOut }: { userLabel: string; onSignOut: () 
         </main>
 
         <nav className="tabbar" aria-label="Navegación principal">
-          {NAV.map((item) => (
+          {MOBILE_NAV.map((item) => (
             <button
               key={item.id}
               className={`tabbar__item${view === item.id ? ' is-active' : ''}`}

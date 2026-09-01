@@ -885,12 +885,56 @@ export interface PortalPatientStatus {
   treatmentPublished: boolean;
 }
 
+export interface PortalCheckinOperation {
+  id: string;
+  clientId: string;
+  patientCode: string | null;
+  patientName: string;
+  patientPhone: string | null;
+  reviewStatus: 'pending' | 'escalated' | 'reviewed' | 'dismissed';
+  priority: 'routine' | 'priority' | 'urgent';
+  answers: Record<string, unknown>;
+  alarmFlags: string[];
+  assignedTo: string | null;
+  assignedName: string | null;
+  assignedAt: string | null;
+  dueAt: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  responseToPatient: string | null;
+  isOverdue: boolean;
+}
+
+export interface PortalOperationsSnapshot {
+  summary: { open: number; priority: number; overdue: number; reviewedToday: number };
+  items: PortalCheckinOperation[];
+}
+
+export type PortalCheckinScope = 'open' | 'priority' | 'reviewed' | 'all';
+
+export function fetchPortalCheckinOperations(scope: PortalCheckinScope = 'open') {
+  return rpc('dash_portal_checkin_operations', { p_scope: scope, p_limit: 100 }) as Promise<PortalOperationsSnapshot>;
+}
+
+export function updatePortalCheckin(
+  checkinId: string,
+  action: 'assign_to_me' | 'review_complete' | 'dismiss',
+  response?: string,
+) {
+  return rpc('dash_portal_checkin_action', {
+    p_checkin: checkinId,
+    p_action: action,
+    p_response: response?.trim() || null,
+  }) as Promise<{ id: string; action: string; ok: boolean }>;
+}
+
 /** Lee solo el estado operativo del portal para una ficha; requiere staff. */
 export function fetchPortalPatientStatus(clientId: string) {
   return Promise.all([
     edge<{ data: { status: string; email?: string; lastAccessAt?: string; mustChangePassword?: boolean; entitlement?: PortalPatientStatus['entitlement'] } }>('portal-admin-bridge', { action: 'status', basicsClientId: clientId }),
+    rpc('dash_portal_patient_status', { p_client: clientId }) as Promise<Partial<PortalPatientStatus>>,
     supabase.from('treatments').select('portal_visibility').eq('client_id', clientId).in('status', ['activo', 'por_finalizar']).limit(1).maybeSingle(),
-  ]).then(([portal, treatment]) => {
+  ]).then(([portal, basics, treatment]) => {
     const linked = portal.data.status !== 'not_provisioned';
     return {
       invitation: null,
@@ -902,11 +946,11 @@ export function fetchPortalPatientStatus(clientId: string) {
         mustChangePassword: portal.data.mustChangePassword,
       } : null,
       entitlement: portal.data.entitlement ?? null,
-      pendingCheckins: 0,
-      pendingRequests: 0,
-      pendingDocuments: 0,
-      aiDrafts: 0,
-      rewardPoints: 0,
+      pendingCheckins: Number(basics.pendingCheckins ?? 0),
+      pendingRequests: Number(basics.pendingRequests ?? 0),
+      pendingDocuments: Number(basics.pendingDocuments ?? 0),
+      aiDrafts: Number(basics.aiDrafts ?? 0),
+      rewardPoints: Number(basics.rewardPoints ?? 0),
       treatmentPublished: treatment.data?.portal_visibility === 'patient_published',
     } satisfies PortalPatientStatus;
   });
