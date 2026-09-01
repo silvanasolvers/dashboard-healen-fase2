@@ -61,5 +61,15 @@ Solo `recetar = checkout` sigue siendo overlay (tarea enfocada, command-palette)
 - `src/styles.css` — tokens + componentes.
 - `src/App.tsx` — shell, vistas, anillos, modales (sheets).
 
-## Pendiente
-Front-only con datos demo en memoria. Siguiente: backend (Supabase) para persistir.
+## Operación del portal
+
+El dashboard y el portal son dos proyecciones de la misma operación clínica en
+Supabase. El paciente expresa una preferencia; el equipo confirma el dato
+canónico. En citas, la cola muestra tipo, urgencia, SLA, responsable y contexto.
+Aceptar crea, reprograma o cancela `appointments` y devuelve una respuesta al
+paciente. Ningún cambio clínico se ejecuta automáticamente desde la interfaz del
+paciente.
+
+Los estados de carga, vacío, error y resolución son explícitos. Los controles
+operativos mantienen un objetivo táctil mínimo de 44 px y no sacrifican la
+semántica de botones para construir listas visuales.

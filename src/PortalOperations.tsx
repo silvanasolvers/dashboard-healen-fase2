@@ -2,17 +2,26 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  CalendarClock,
+  CalendarPlus,
+  CalendarX,
   Check,
   ClipboardList,
   Clock3,
+  MapPin,
   RefreshCw,
   Send,
   UserCheck,
+  XCircle,
 } from 'lucide-react';
 import {
+  fetchPortalAppointmentOperations,
   fetchPortalCheckinOperations,
+  type PortalAppointmentOperation,
+  type PortalAppointmentScope,
   type PortalCheckinOperation,
   type PortalCheckinScope,
+  updatePortalAppointment,
   updatePortalCheckin,
 } from './api';
 
@@ -20,6 +29,7 @@ type Props = {
   notify: (message: string, error?: boolean) => void;
   onOpenPatient?: (clientId: string) => void;
   previewSnapshot?: Awaited<ReturnType<typeof fetchPortalCheckinOperations>>;
+  previewAppointmentSnapshot?: Awaited<ReturnType<typeof fetchPortalAppointmentOperations>>;
 };
 
 const scopes: Array<{ id: PortalCheckinScope; label: string }> = [
@@ -27,6 +37,14 @@ const scopes: Array<{ id: PortalCheckinScope; label: string }> = [
   { id: 'priority', label: 'Prioridad' },
   { id: 'reviewed', label: 'Revisados' },
   { id: 'all', label: 'Todos' },
+];
+
+const appointmentScopes: Array<{ id: PortalAppointmentScope; label: string }> = [
+  { id: 'open', label: 'Pendientes' },
+  { id: 'new', label: 'Nuevas' },
+  { id: 'reschedule', label: 'Reprogramar' },
+  { id: 'cancel', label: 'Cancelar' },
+  { id: 'resolved', label: 'Resueltas' },
 ];
 
 const number = new Intl.NumberFormat('es-CO');
@@ -48,7 +66,7 @@ function relativeDue(value: string | null): string {
   return `Vence en ${Math.round(minutes / 60)} h`;
 }
 
-export function PortalOperations({ notify, onOpenPatient, previewSnapshot }: Props) {
+function CheckinOperations({ notify, onOpenPatient, previewSnapshot }: Props) {
   const [scope, setScope] = useState<PortalCheckinScope>('open');
   const [snapshot, setSnapshot] = useState<Awaited<ReturnType<typeof fetchPortalCheckinOperations>> | null>(previewSnapshot ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -102,10 +120,10 @@ export function PortalOperations({ notify, onOpenPatient, previewSnapshot }: Pro
   const closed = selected?.reviewStatus === 'reviewed' || selected?.reviewStatus === 'dismissed';
 
   return (
-    <section className="portal-ops" aria-labelledby="portal-ops-title">
+    <section className="portal-ops" aria-labelledby="portal-checkins-title">
       <header className="portal-ops__intro" data-reveal>
         <div>
-          <h2 id="portal-ops-title">Seguimiento del portal</h2>
+          <h2 id="portal-checkins-title">Seguimiento clínico</h2>
           <p>Revisa señales del paciente, deja una respuesta clínica y valida la evolución desde un solo lugar.</p>
         </div>
         <button className="btn btn--ghost" onClick={() => void load()} disabled={loading}>
@@ -147,11 +165,10 @@ export function PortalOperations({ notify, onOpenPatient, previewSnapshot }: Pro
 
       {!error && !loading && snapshot && snapshot.items.length > 0 && (
         <div className="portal-ops__workspace" data-reveal>
-          <div className="portal-ops__queue" role="list" aria-label="Check-ins">
+          <div className="portal-ops__queue" aria-label="Check-ins">
             {snapshot.items.map((item) => (
               <button
                 key={item.id}
-                role="listitem"
                 className={`portal-checkin${selectedId === item.id ? ' is-active' : ''}${item.reviewStatus === 'escalated' ? ' is-urgent' : ''}`}
                 onClick={() => setSelectedId(item.id)}
               >
@@ -231,9 +248,263 @@ export function PortalOperations({ notify, onOpenPatient, previewSnapshot }: Pro
   );
 }
 
+function appointmentTypeLabel(item: PortalAppointmentOperation): string {
+  if (item.requestType === 'reschedule') return 'Reprogramación';
+  if (item.requestType === 'cancel') return 'Cancelación';
+  return 'Nueva cita';
+}
+
+function localDateTimeValue(value?: string | null): string {
+  const date = value ? new Date(value) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (!value) date.setHours(9, 0, 0, 0);
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function initialAppointmentResponse(item: PortalAppointmentOperation): string {
+  if (item.staffResponse) return item.staffResponse;
+  if (item.requestType === 'cancel') return 'Confirmamos la cancelación de tu cita. Si necesitas una nueva fecha, puedes solicitarla desde tu portal.';
+  if (item.requestType === 'reschedule') return 'Reprogramamos tu cita. Revisa la nueva fecha y los detalles en tu agenda Healen.';
+  return 'Programamos tu cita. Revisa la fecha y los detalles en tu agenda Healen.';
+}
+
+function AppointmentOperations({ notify, onOpenPatient, previewAppointmentSnapshot }: Omit<Props, 'previewSnapshot'>) {
+  const [scope, setScope] = useState<PortalAppointmentScope>('open');
+  const [snapshot, setSnapshot] = useState<Awaited<ReturnType<typeof fetchPortalAppointmentOperations>> | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [form, setForm] = useState({ startsAt: localDateTimeValue(), duration: 60, service: 'Seguimiento Healen', location: 'Healen', response: '' });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (quiet = false) => {
+    if (previewAppointmentSnapshot) {
+      setSnapshot(previewAppointmentSnapshot);
+      setSelectedId((current) => current ?? previewAppointmentSnapshot.items[0]?.id ?? null);
+      setLoading(false);
+      return;
+    }
+    if (!quiet) setLoading(true);
+    setError('');
+    try {
+      const next = await fetchPortalAppointmentOperations(scope);
+      setSnapshot(next);
+      setSelectedId((current) => current && next.items.some((item) => item.id === current)
+        ? current
+        : next.items[0]?.id ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo cargar la agenda solicitada.');
+    } finally {
+      setLoading(false);
+    }
+  }, [previewAppointmentSnapshot, scope]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const selected = useMemo(
+    () => snapshot?.items.find((item) => item.id === selectedId) ?? null,
+    [selectedId, snapshot],
+  );
+
+  useEffect(() => {
+    if (!selected) return;
+    const duration = selected.appointment?.startsAt && selected.appointment?.endsAt
+      ? Math.max(15, Math.round((new Date(selected.appointment.endsAt).getTime() - new Date(selected.appointment.startsAt).getTime()) / 60000))
+      : 60;
+    setForm({
+      startsAt: localDateTimeValue(selected.appointment?.startsAt),
+      duration,
+      service: selected.appointment?.title || 'Seguimiento Healen',
+      location: selected.appointment?.location || 'Healen',
+      response: initialAppointmentResponse(selected),
+    });
+  }, [selectedId, selected]);
+
+  async function act(action: 'assign_to_me' | 'accept' | 'decline') {
+    if (!selected) return;
+    if (previewAppointmentSnapshot) { notify('Vista de prueba: la acción no modifica datos.'); return; }
+    setBusy(true);
+    try {
+      const startsAt = selected.requestType === 'cancel' ? undefined : new Date(form.startsAt).toISOString();
+      const endsAt = startsAt ? new Date(new Date(startsAt).getTime() + form.duration * 60000).toISOString() : undefined;
+      await updatePortalAppointment(selected.id, action, {
+        startsAt,
+        endsAt,
+        service: form.service.trim(),
+        location: form.location.trim(),
+        response: form.response.trim(),
+      });
+      notify(action === 'assign_to_me' ? 'Solicitud asignada.' : action === 'accept' ? 'Solicitud resuelta y paciente notificado.' : 'Solicitud rechazada y paciente notificado.');
+      await load(true);
+    } catch (caught) {
+      notify(caught instanceof Error ? caught.message : 'No se pudo resolver la solicitud.', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const summary = snapshot?.summary ?? { open: 0, new: 0, changes: 0, overdue: 0, resolvedToday: 0 };
+  const closed = selected?.status !== 'pending';
+  const requiresSchedule = selected?.requestType !== 'cancel';
+  const canAccept = Boolean(selected) && form.response.trim().length >= 8 && (!requiresSchedule || (form.startsAt && form.service.trim().length > 1));
+
+  return (
+    <section className="portal-ops portal-appointments" aria-labelledby="portal-appointments-title">
+      <header className="portal-ops__intro" data-reveal>
+        <div>
+          <h2 id="portal-appointments-title">Solicitudes de agenda</h2>
+          <p>Programa, reprograma o cancela sin copiar datos: la decisión actualiza la agenda canónica y vuelve al portal del paciente.</p>
+        </div>
+        <button className="btn btn--ghost" onClick={() => void load()} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'is-spinning' : ''} /> Actualizar
+        </button>
+      </header>
+
+      <div className="portal-ops__pulse" data-reveal aria-label="Resumen de solicitudes de agenda">
+        <article><span>Pendientes</span><strong>{number.format(summary.open)}</strong></article>
+        <article><span>Nuevas citas</span><strong>{number.format(summary.new)}</strong></article>
+        <article><span>Cambios solicitados</span><strong>{number.format(summary.changes)}</strong></article>
+        <article className={summary.overdue ? 'is-overdue' : ''}><span>Fuera de tiempo</span><strong>{number.format(summary.overdue)}</strong></article>
+      </div>
+
+      <div className="portal-ops__filters" data-reveal role="tablist" aria-label="Filtrar solicitudes de agenda">
+        {appointmentScopes.map((item) => (
+          <button key={item.id} role="tab" aria-selected={scope === item.id} className={scope === item.id ? 'is-active' : ''} onClick={() => setScope(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="portal-ops__state portal-ops__state--error" role="alert" data-reveal>
+          <AlertTriangle size={22} /><strong>No pudimos abrir las solicitudes</strong><span>{error}</span>
+          <button className="btn btn--soft" onClick={() => void load()}>Intentar de nuevo</button>
+        </div>
+      )}
+      {!error && loading && <div className="portal-ops__state" aria-live="polite"><span className="spinner" /><strong>Preparando agenda…</strong></div>}
+      {!error && !loading && snapshot?.items.length === 0 && (
+        <div className="portal-ops__state" data-reveal><CalendarClock size={25} /><strong>Agenda al día</strong><span>No hay solicitudes en este filtro.</span></div>
+      )}
+
+      {!error && !loading && snapshot && snapshot.items.length > 0 && (
+        <div className="portal-ops__workspace" data-reveal>
+          <div className="portal-ops__queue" aria-label="Solicitudes de citas">
+            {snapshot.items.map((item) => {
+              const Icon = item.requestType === 'cancel' ? CalendarX : item.requestType === 'reschedule' ? CalendarClock : CalendarPlus;
+              return (
+                <button key={item.id} className={`portal-checkin portal-appointment-request${selectedId === item.id ? ' is-active' : ''}${item.isUrgent ? ' is-urgent' : ''}`} onClick={() => setSelectedId(item.id)}>
+                  <span className="portal-appointment-request__icon"><Icon size={16} /></span>
+                  <span className="portal-checkin__body">
+                    <span className="portal-checkin__top"><strong>{item.patientName}</strong><time>{dateTime.format(new Date(item.createdAt))}</time></span>
+                    <span className="portal-checkin__metrics">{appointmentTypeLabel(item)} · {item.preferredWindow || 'Sin franja indicada'}</span>
+                    <span className={`portal-checkin__due${item.isOverdue ? ' is-overdue' : ''}`}><Clock3 size={13} /> {item.status === 'pending' ? relativeDue(item.dueAt) : `Resuelta ${item.resolvedAt ? dateTime.format(new Date(item.resolvedAt)) : ''}`}</span>
+                  </span>
+                  <ArrowRight size={16} />
+                </button>
+              );
+            })}
+          </div>
+
+          {selected && (
+            <article className="portal-review portal-appointment-review" aria-live="polite">
+              <header className="portal-review__head">
+                <div>
+                  <span className={`portal-review__priority${selected.isUrgent ? ' portal-review__priority--urgent' : selected.status === 'accepted' ? ' portal-review__priority--reviewed' : selected.status === 'declined' ? ' portal-review__priority--dismissed' : ''}`}>
+                    {selected.isUrgent ? 'Próxima en menos de 24 h' : appointmentTypeLabel(selected)}
+                  </span>
+                  <h3>{selected.patientName}</h3>
+                  <p>{selected.patientCode || 'Sin código'} · {selected.patientPhone || selected.patientEmail || 'Sin contacto registrado'}</p>
+                </div>
+                {onOpenPatient && <button className="btn btn--ghost" onClick={() => onOpenPatient(selected.clientId)}>Abrir ficha</button>}
+              </header>
+
+              <div className="portal-appointment-review__request">
+                <div><span>Preferencia del paciente</span><strong>{selected.preferredWindow || 'No indicó una franja'}</strong></div>
+                <p>{selected.message || 'No agregó observaciones.'}</p>
+              </div>
+
+              {selected.appointment && (
+                <div className="portal-appointment-review__current">
+                  <CalendarClock size={18} />
+                  <div><span>Cita actual</span><strong>{dateTime.format(new Date(selected.appointment.startsAt))} · {selected.appointment.title}</strong></div>
+                  {selected.appointment.location && <small><MapPin size={13} /> {selected.appointment.location}</small>}
+                </div>
+              )}
+
+              {!closed && requiresSchedule && (
+                <div className="portal-appointment-form">
+                  <label><span>Fecha y hora confirmadas</span><input type="datetime-local" value={form.startsAt} min={localDateTimeValue(new Date(Date.now() + 10 * 60 * 1000).toISOString())} onChange={(event) => setForm((current) => ({ ...current, startsAt: event.target.value }))} /></label>
+                  <label><span>Duración</span><select value={form.duration} onChange={(event) => setForm((current) => ({ ...current, duration: Number(event.target.value) }))}><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>1 hora</option><option value={90}>1 h 30</option><option value={120}>2 horas</option></select></label>
+                  <label><span>Servicio</span><input value={form.service} maxLength={160} onChange={(event) => setForm((current) => ({ ...current, service: event.target.value }))} /></label>
+                  <label><span>Lugar</span><input value={form.location} maxLength={200} onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))} placeholder="Healen o enlace virtual" /></label>
+                </div>
+              )}
+
+              <div className="portal-review__owner">
+                <UserCheck size={17} />
+                <span>{selected.assignedName ? `Responsable: ${selected.assignedName}` : 'Aún no tiene responsable'}</span>
+                {!selected.assignedName && !closed && <button onClick={() => void act('assign_to_me')} disabled={busy}>Asignarme</button>}
+              </div>
+
+              <label className="portal-review__response">
+                <span>Respuesta para el paciente</span>
+                <textarea value={form.response} onChange={(event) => setForm((current) => ({ ...current, response: event.target.value }))} rows={4} maxLength={1200} disabled={closed} />
+                <small>{form.response.length}/1200 · aparecerá en la actividad del portal</small>
+              </label>
+
+              <footer className="portal-review__actions">
+                {closed ? (
+                  <span className="portal-review__closed"><Check size={16} /> {selected.status === 'declined' ? 'Solicitud rechazada' : 'Solicitud resuelta'} {selected.resolvedAt ? dateTime.format(new Date(selected.resolvedAt)) : ''}</span>
+                ) : (
+                  <>
+                    <button className="btn btn--ghost" onClick={() => void act('decline')} disabled={busy || form.response.trim().length < 8}><XCircle size={16} /> No aceptar</button>
+                    <button className="btn btn--primary" onClick={() => void act('accept')} disabled={busy || !canAccept}><Send size={16} /> {busy ? 'Guardando…' : selected.requestType === 'cancel' ? 'Confirmar cancelación' : selected.requestType === 'reschedule' ? 'Guardar nueva fecha' : 'Programar cita'}</button>
+                  </>
+                )}
+              </footer>
+            </article>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function PortalOperations(props: Props) {
+  const [area, setArea] = useState<'checkins' | 'appointments'>('checkins');
+  return (
+    <div className="portal-hub">
+      <header className="portal-hub__header" data-reveal>
+        <div><h2>Operación del portal</h2><p>Todo lo que el paciente envía llega aquí con responsable, tiempo de respuesta y trazabilidad.</p></div>
+        <div className="portal-hub__switch" role="tablist" aria-label="Área operativa">
+          <button role="tab" aria-selected={area === 'checkins'} className={area === 'checkins' ? 'is-active' : ''} onClick={() => setArea('checkins')}><ClipboardList size={17} /> Check-ins</button>
+          <button role="tab" aria-selected={area === 'appointments'} className={area === 'appointments' ? 'is-active' : ''} onClick={() => setArea('appointments')}><CalendarClock size={17} /> Citas</button>
+        </div>
+      </header>
+      {area === 'checkins' ? <CheckinOperations {...props} /> : <AppointmentOperations notify={props.notify} onOpenPatient={props.onOpenPatient} previewAppointmentSnapshot={props.previewAppointmentSnapshot} />}
+    </div>
+  );
+}
+
 export function PortalOperationsPreview() {
   const createdAt = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
-  return <PortalOperations notify={() => undefined} onOpenPatient={() => undefined} previewSnapshot={{
+  return <PortalOperations notify={() => undefined} onOpenPatient={() => undefined} previewAppointmentSnapshot={{
+    summary: { open: 4, new: 2, changes: 2, overdue: 1, resolvedToday: 6 },
+    items: [
+      {
+        id: 'appointment-request-preview', clientId: 'preview-client', patientCode: 'HLN-214', patientName: 'Valentina Demo', patientPhone: '+57 300 000 0000', patientEmail: 'valentina@ejemplo.com',
+        requestType: 'reschedule', status: 'pending', preferredWindow: '2026-09-04 · Mañana', message: 'Si es posible, prefiero la primera hora de la mañana.',
+        assignedTo: null, assignedName: null, assignedAt: null, dueAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), createdAt, staffResponse: null, resolvedAt: null, resolvedByName: null,
+        isOverdue: false, isUrgent: true, appointment: { id: 'appointment-preview', title: 'Control de seguimiento', startsAt: new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString(), endsAt: new Date(Date.now() + 21 * 60 * 60 * 1000).toISOString(), location: 'Healen', status: 'programada' },
+      },
+      {
+        id: 'appointment-request-preview-2', clientId: 'preview-client-2', patientCode: 'HLN-188', patientName: 'Gabriel Piedrahita', patientPhone: '+57 300 000 0001', patientEmail: null,
+        requestType: 'new', status: 'pending', preferredWindow: '2026-09-08 · Tarde', message: null,
+        assignedTo: 'preview-staff', assignedName: 'Laura · Recepción', assignedAt: createdAt, dueAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(), createdAt, staffResponse: null, resolvedAt: null, resolvedByName: null,
+        isOverdue: false, isUrgent: false, appointment: null,
+      },
+    ],
+  }} previewSnapshot={{
     summary: { open: 7, priority: 2, overdue: 1, reviewedToday: 11 },
     items: [
       {

@@ -10,6 +10,7 @@ const pwaConfig = readFileSync(resolve(root, 'portal/vite.config.ts'), 'utf8');
 const coreBridgeSql = readFileSync(resolve(root, 'db/29_portal_core_bridge.sql'), 'utf8');
 const coreFunction = readFileSync(resolve(root, 'supabase/functions/portal-core/index.ts'), 'utf8');
 const adminBridge = readFileSync(resolve(root, 'supabase/functions/portal-admin-bridge/index.ts'), 'utf8');
+const appointmentOperationsSql = readFileSync(resolve(root, 'db/33_portal_appointment_operations.sql'), 'utf8');
 
 function signature(name: string) {
   return rpcSql.match(new RegExp(`create or replace function ${name}\\(([^)]*)\\)`, 'i'))?.[1] ?? '';
@@ -64,6 +65,22 @@ describe('portal API isolation guardrails', () => {
     expect(adminBridge).not.toContain('PORTAL_SERVICE_ROLE_KEY');
     expect(adminBridge).toContain('PORTAL_PROVISIONING_ENABLED');
     expect(adminBridge).toContain('PORTAL_CANARY_CLIENT_IDS');
+  });
+
+  it('resolves portal appointment requests only through staff RPCs', () => {
+    expect(appointmentOperationsSql).toContain('perform public.require_staff()');
+    expect(appointmentOperationsSql).toContain('dash_portal_appointment_action');
+    expect(appointmentOperationsSql).toContain("grant execute on function public.dash_portal_appointment_action(uuid, text, jsonb) to authenticated");
+    expect(appointmentOperationsSql).toContain("grant execute on function public.portal_core_request_appointment(uuid, uuid, uuid, jsonb) to service_role");
+    expect(appointmentOperationsSql).toContain("from public, anon, authenticated");
+  });
+
+  it('keeps the requested preference separate from the canonical schedule', () => {
+    expect(appointmentOperationsSql).toContain("p_params->>'preferredWindow'");
+    expect(appointmentOperationsSql).toContain("p_payload->>'startsAt'");
+    expect(appointmentOperationsSql).toContain('where a.id = v_appointment and a.client_id = p_client_id');
+    expect(appointmentOperationsSql).toContain("set starts_at = v_starts_at");
+    expect(appointmentOperationsSql).toContain("insert into public.portal_notifications");
   });
 });
 

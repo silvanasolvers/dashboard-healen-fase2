@@ -30,6 +30,10 @@ para la arquitectura completa (tablas, funciones, vistas, seguridad, ejemplos).
 | `22_crm_patient_category_segments.sql` | Identidad paciente como categoría CRM y segmentaciones de campaña |
 | `23_patient_crm_identity_sync.sql` | Sincronización 1:1 de identidad `clients` ↔ CRM |
 | `29_portal_core_bridge.sql` | Superficie clínica mínima de Basics para el Portal separado; solo service role y publicación explícita |
+| `30_portal_daily_experience.sql` | Bootstrap diario, actividad, notificaciones y operaciones base del portal |
+| `31_portal_bold_checkout.sql` | Órdenes, conciliación y checkout Bold detrás del bridge seguro |
+| `32_portal_checkin_operations.sql` | Cola clínica de check-ins, alertas, responsables y revisión auditable |
+| `33_portal_appointment_operations.sql` | Solicitudes de citas conectadas a agenda, respuesta al paciente y auditoría |
 | `rollback_16_crm.sql` | Rollback manual y destructivo del CRM; queda fuera de la secuencia automática |
 
 ## Ejecutar

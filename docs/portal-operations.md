@@ -16,6 +16,14 @@
 - La respuesta visible queda en `response_to_patient`; nunca modifica dosis, diagnóstico ni tratamiento automáticamente.
 - La bandeja permite pendientes, prioridad, revisados y todos. El detalle enlaza de regreso a la ficha clínica canónica.
 
+## Circuito de citas
+
+- `db/33_portal_appointment_operations.sql` convierte solicitudes de cita, reprogramación o cancelación en una cola operativa con responsable y SLA de 8 horas.
+- El paciente solo envía una preferencia; nunca decide directamente el horario canónico ni identifica al cliente desde el navegador.
+- Recepción puede asignarse la solicitud, programar una nueva cita, reprogramar la existente, confirmar una cancelación o rechazarla con respuesta visible.
+- Aceptar actualiza `appointments`, comprueba cruces de horario, publica el cambio al portal y notifica al paciente en una sola transacción.
+- Solicitudes repetidas pendientes no se duplican. Cada asignación y resolución queda en auditoría.
+
 ## Secretos de servidor
 
 Nunca definirlos con prefijo `VITE_`:
@@ -31,7 +39,7 @@ Variables públicas de Vercel: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. En
 
 ## Orden de despliegue
 
-1. Ejecutar las migraciones 24–32 en orden en una instalación nueva; en producción actual la 32 ya está aplicada.
+1. Ejecutar las migraciones 24–33 en orden en una instalación nueva; en producción actual la 33 ya está aplicada.
 2. Configurar Google Provider en Supabase; redirects exactos de staging y `https://portal.healen.co/auth/callback`.
 3. Desplegar Edge Functions con secretos de staging.
 4. Ejecutar la matriz de aislamiento con dos usuarios sintéticos y un usuario no invitado.

@@ -928,6 +928,70 @@ export function updatePortalCheckin(
   }) as Promise<{ id: string; action: string; ok: boolean }>;
 }
 
+export type PortalAppointmentRequestType = 'new' | 'reschedule' | 'cancel';
+export type PortalAppointmentRequestStatus = 'pending' | 'accepted' | 'declined' | 'resolved';
+export type PortalAppointmentScope = 'open' | 'new' | 'reschedule' | 'cancel' | 'resolved' | 'all';
+
+export interface PortalAppointmentOperation {
+  id: string;
+  clientId: string;
+  patientCode: string | null;
+  patientName: string;
+  patientPhone: string | null;
+  patientEmail: string | null;
+  requestType: PortalAppointmentRequestType;
+  status: PortalAppointmentRequestStatus;
+  preferredWindow: string | null;
+  message: string | null;
+  assignedTo: string | null;
+  assignedName: string | null;
+  assignedAt: string | null;
+  dueAt: string | null;
+  createdAt: string;
+  staffResponse: string | null;
+  resolvedAt: string | null;
+  resolvedByName: string | null;
+  isOverdue: boolean;
+  isUrgent: boolean;
+  appointment: {
+    id: string;
+    title: string;
+    startsAt: string;
+    endsAt: string | null;
+    location: string | null;
+    status: string;
+  } | null;
+}
+
+export interface PortalAppointmentOperationsSnapshot {
+  summary: { open: number; new: number; changes: number; overdue: number; resolvedToday: number };
+  items: PortalAppointmentOperation[];
+}
+
+export interface PortalAppointmentResolution {
+  startsAt?: string;
+  endsAt?: string;
+  service?: string;
+  location?: string;
+  response: string;
+}
+
+export function fetchPortalAppointmentOperations(scope: PortalAppointmentScope = 'open') {
+  return rpc('dash_portal_appointment_operations', { p_scope: scope, p_limit: 100 }) as Promise<PortalAppointmentOperationsSnapshot>;
+}
+
+export function updatePortalAppointment(
+  requestId: string,
+  action: 'assign_to_me' | 'accept' | 'decline',
+  payload: PortalAppointmentResolution,
+) {
+  return rpc('dash_portal_appointment_action', {
+    p_request: requestId,
+    p_action: action,
+    p_payload: payload,
+  }) as Promise<{ id: string; appointmentId: string | null; action: string; ok: boolean }>;
+}
+
 /** Lee solo el estado operativo del portal para una ficha; requiere staff. */
 export function fetchPortalPatientStatus(clientId: string) {
   return Promise.all([
