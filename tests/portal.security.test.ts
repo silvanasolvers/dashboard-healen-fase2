@@ -11,6 +11,9 @@ const coreBridgeSql = readFileSync(resolve(root, 'db/29_portal_core_bridge.sql')
 const coreFunction = readFileSync(resolve(root, 'supabase/functions/portal-core/index.ts'), 'utf8');
 const adminBridge = readFileSync(resolve(root, 'supabase/functions/portal-admin-bridge/index.ts'), 'utf8');
 const appointmentOperationsSql = readFileSync(resolve(root, 'db/33_portal_appointment_operations.sql'), 'utf8');
+const documentCustodySql = readFileSync(resolve(root, 'db/34_portal_document_custody.sql'), 'utf8');
+const documentSecurity = readFileSync(resolve(root, 'supabase/functions/_shared/document-security.ts'), 'utf8');
+const documentAdmin = readFileSync(resolve(root, 'supabase/functions/portal-document-admin/index.ts'), 'utf8');
 
 function signature(name: string) {
   return rpcSql.match(new RegExp(`create or replace function ${name}\\(([^)]*)\\)`, 'i'))?.[1] ?? '';
@@ -81,6 +84,25 @@ describe('portal API isolation guardrails', () => {
     expect(appointmentOperationsSql).toContain('where a.id = v_appointment and a.client_id = p_client_id');
     expect(appointmentOperationsSql).toContain("set starts_at = v_starts_at");
     expect(appointmentOperationsSql).toContain("insert into public.portal_notifications");
+  });
+
+  it('keeps clinical files private, quarantined, scanned and patient-scoped', () => {
+    expect(documentCustodySql).toContain("'patient-documents-quarantine', 'patient-documents-quarantine', false");
+    expect(documentCustodySql).toContain("'patient-documents', 'patient-documents', false");
+    expect(documentCustodySql).toContain('drop policy if exists patient_documents_browser_read');
+    expect(documentSecurity).toContain('`${fields.clientId}/${documentId}/${input.safeName}`');
+    expect(documentSecurity).toContain("scan.status === 'infected'");
+    expect(documentSecurity).toContain("storage_bucket: DOCUMENT_BUCKET");
+    expect(coreFunction).toContain(".eq('client_id', envelope.basicsClientId)");
+    expect(coreFunction).toContain(".eq('scan_status', 'clean')");
+    expect(coreFunction).toContain("createSignedUrl(document.storage_path, 90");
+  });
+
+  it('requires staff authentication before document review or publication', () => {
+    expect(documentAdmin).toContain('staffClient.auth.getUser()');
+    expect(documentAdmin).toContain("staffClient.rpc('is_staff')");
+    expect(documentAdmin).toContain("document.scan_status !== 'clean'");
+    expect(documentAdmin).toContain("action: 'staff_document_download'");
   });
 });
 

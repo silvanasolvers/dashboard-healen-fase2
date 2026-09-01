@@ -1,0 +1,19 @@
+services:
+  document-scanner:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      DOCUMENT_SCANNER_SECRET: ${DOCUMENT_SCANNER_SECRET:?required}
+    networks:
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.healen-document-scanner.rule=Host(`scan-healen.solversai.cloud`)
+      - traefik.http.routers.healen-document-scanner.entrypoints=websecure
+      - traefik.http.routers.healen-document-scanner.tls.certresolver=letsencrypt
+      - traefik.http.services.healen-document-scanner.loadbalancer.server.port=8080
+
+networks:
+  dokploy-network:
+    external: true

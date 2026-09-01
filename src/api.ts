@@ -992,6 +992,80 @@ export function updatePortalAppointment(
   }) as Promise<{ id: string; appointmentId: string | null; action: string; ok: boolean }>;
 }
 
+export type PortalDocumentScope = 'pending' | 'published' | 'rejected' | 'all';
+export type PortalDocumentScanStatus = 'uploading' | 'pending' | 'scanning' | 'clean' | 'infected' | 'error';
+
+export interface PortalDocumentOperation {
+  id: string;
+  clientId: string;
+  patientCode: string | null;
+  patientName: string;
+  patientPhone: string | null;
+  title: string;
+  originalName: string | null;
+  category: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  reviewStatus: 'pending_review' | 'approved' | 'rejected';
+  scanStatus: PortalDocumentScanStatus;
+  visibility: 'internal' | 'patient_published';
+  uploadedByPatient: boolean;
+  createdAt: string;
+  publishedAt: string | null;
+  scanCompletedAt: string | null;
+  scanDetails: Record<string, unknown>;
+}
+
+export interface PortalDocumentOperationsSnapshot {
+  summary: { pending: number; scanning: number; published: number; rejected: number };
+  items: PortalDocumentOperation[];
+}
+
+export async function fetchPortalDocumentOperations(scope: PortalDocumentScope = 'pending') {
+  const result = await edge<{ data: PortalDocumentOperationsSnapshot }>('portal-document-admin', { action: 'list', scope });
+  return result.data;
+}
+
+export async function updatePortalDocument(
+  documentId: string,
+  action: 'publish' | 'reject' | 'revoke' | 'retry_scan',
+  payload: { title?: string; category?: string; reason?: string } = {},
+) {
+  const result = await edge<{ data: { documentId: string; status: string } }>('portal-document-admin', {
+    action, documentId, ...payload,
+  });
+  return result.data;
+}
+
+export async function openPortalDocument(documentId: string) {
+  const result = await edge<{ data: { url: string; expiresIn: number } }>('portal-document-admin', {
+    action: 'signed_url', documentId,
+  });
+  return result.data;
+}
+
+export async function uploadPortalDocument(
+  clientId: string,
+  file: File,
+  metadata: { title: string; category: string },
+) {
+  const prepared = await edge<{ data: { documentId: string; signedUrl: string; mimeType: string } }>('portal-document-admin', {
+    action: 'prepare_upload', clientId, fileName: file.name, mimeType: file.type,
+    sizeBytes: file.size, title: metadata.title, category: metadata.category,
+  });
+  const form = new FormData();
+  form.append('cacheControl', '0');
+  form.append('', file);
+  const uploadResponse = await fetch(prepared.data.signedUrl, {
+    method: 'POST', headers: { 'x-upsert': 'false' }, body: form,
+  });
+  if (!uploadResponse.ok) throw new Error('No se pudo transferir el archivo a la bóveda privada.');
+  const completed = await edge<{ data: { documentId: string; status: string } }>('portal-document-admin', {
+    action: 'complete_upload', documentId: prepared.data.documentId,
+  });
+  return completed.data;
+}
+
 /** Lee solo el estado operativo del portal para una ficha; requiere staff. */
 export function fetchPortalPatientStatus(clientId: string) {
   return Promise.all([

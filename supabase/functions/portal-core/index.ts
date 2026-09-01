@@ -1,5 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.112.3';
 import { assertFreshEnvelope, verifyHmacHex } from '../_shared/portal-integration.ts';
+import {
+  createDocumentUpload,
+  DocumentError,
+  scanAndPromoteDocument,
+} from '../_shared/document-security.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -138,6 +143,70 @@ async function paymentStatus(envelope: { basicsClientId: string; portalUserId: s
   return { orderId, status: refreshed?.status ?? order.status, providerStatus };
 }
 
+type PortalEnvelope = { basicsClientId: string; portalUserId: string; requestId: string; params: Record<string, unknown> };
+
+async function prepareDocumentUpload(envelope: PortalEnvelope) {
+  const upload = await createDocumentUpload(admin, {
+    clientId: envelope.basicsClientId,
+    portalUserId: envelope.portalUserId,
+    uploadedByPatient: true,
+    fileName: envelope.params.fileName,
+    mimeType: envelope.params.mimeType,
+    sizeBytes: envelope.params.sizeBytes,
+    title: envelope.params.title,
+    category: envelope.params.category,
+  });
+  await admin.from('portal_core_access_audit').insert({
+    request_id: envelope.requestId,
+    portal_user_id: envelope.portalUserId,
+    client_id: envelope.basicsClientId,
+    action: 'document_upload_prepare',
+    metadata: { documentId: upload.documentId },
+  });
+  return upload;
+}
+
+async function completeDocumentUpload(envelope: PortalEnvelope) {
+  const documentId = envelope.params.documentId;
+  if (!uuid(documentId)) throw new HttpError('DOCUMENT_REQUIRED', 400);
+  const result = await scanAndPromoteDocument(admin, String(documentId), {
+    clientId: envelope.basicsClientId,
+    portalUserId: envelope.portalUserId,
+  });
+  await admin.from('portal_core_access_audit').insert({
+    request_id: envelope.requestId,
+    portal_user_id: envelope.portalUserId,
+    client_id: envelope.basicsClientId,
+    action: 'document_upload_complete',
+    metadata: { documentId },
+  });
+  return result;
+}
+
+async function documentUrl(envelope: PortalEnvelope) {
+  const documentId = envelope.params.documentId;
+  if (!uuid(documentId)) throw new HttpError('DOCUMENT_REQUIRED', 400);
+  const { data: document, error } = await admin.from('patient_documents')
+    .select('id,storage_bucket,storage_path')
+    .eq('id', documentId).eq('client_id', envelope.basicsClientId)
+    .eq('visibility', 'patient_published').eq('review_status', 'approved')
+    .eq('scan_status', 'clean').eq('storage_bucket', 'patient-documents')
+    .is('removed_at', null).maybeSingle();
+  if (error) throw error;
+  if (!document?.storage_path) throw new HttpError('DOCUMENT_NOT_AVAILABLE', 404);
+  const { data: signed, error: signedError } = await admin.storage
+    .from('patient-documents').createSignedUrl(document.storage_path, 90, { download: true });
+  if (signedError || !signed?.signedUrl) throw signedError ?? new Error('DOCUMENT_SIGN_FAILED');
+  await admin.from('portal_core_access_audit').insert({
+    request_id: envelope.requestId,
+    portal_user_id: envelope.portalUserId,
+    client_id: envelope.basicsClientId,
+    action: 'document_download',
+    metadata: { documentId },
+  });
+  return { url: signed.signedUrl, expiresIn: 90 };
+}
+
 Deno.serve(async (request) => {
   if (request.method !== 'POST') return respond({ error: 'METHOD_NOT_ALLOWED' }, 405);
   try {
@@ -161,6 +230,9 @@ Deno.serve(async (request) => {
 
     if (envelope.action === 'create_checkout') return respond({ data: await createCheckout(envelope) }, 201);
     if (envelope.action === 'payment_status') return respond({ data: await paymentStatus(envelope) });
+    if (envelope.action === 'document_upload_prepare') return respond({ data: await prepareDocumentUpload(envelope) }, 201);
+    if (envelope.action === 'document_upload_complete') return respond({ data: await completeDocumentUpload(envelope) });
+    if (envelope.action === 'document_url') return respond({ data: await documentUrl(envelope) });
 
     const rpcName = {
       home: 'portal_core_get_home',
@@ -177,7 +249,6 @@ Deno.serve(async (request) => {
       request_profile_change: 'portal_core_request_profile_change',
       request_records: 'portal_core_request_records',
       redeem_reward: 'portal_core_redeem_reward',
-      document_url: 'portal_core_get_document_url',
     }[envelope.action];
     if (!rpcName) return respond({ error: 'ACTION_NOT_AVAILABLE' }, 400);
     const rpcParams: Record<string, unknown> = {
@@ -197,6 +268,7 @@ Deno.serve(async (request) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'UNKNOWN';
     if (error instanceof HttpError) return respond({ error: error.message }, error.status);
+    if (error instanceof DocumentError) return respond({ error: error.message }, error.status);
     return respond({ error: message === 'EXPIRED_ENVELOPE' ? message : 'INTEGRATION_ERROR' },
       message === 'EXPIRED_ENVELOPE' ? 401 : 500);
   }

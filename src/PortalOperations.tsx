@@ -8,21 +8,34 @@ import {
   Check,
   ClipboardList,
   Clock3,
+  Download,
+  FileCheck2,
+  FileText,
+  FileWarning,
+  LockKeyhole,
   MapPin,
   RefreshCw,
   Send,
+  ShieldCheck,
+  Upload,
   UserCheck,
   XCircle,
 } from 'lucide-react';
 import {
+  fetchPortalDocumentOperations,
   fetchPortalAppointmentOperations,
   fetchPortalCheckinOperations,
+  openPortalDocument,
   type PortalAppointmentOperation,
   type PortalAppointmentScope,
   type PortalCheckinOperation,
   type PortalCheckinScope,
+  type PortalDocumentOperation,
+  type PortalDocumentScope,
   updatePortalAppointment,
   updatePortalCheckin,
+  updatePortalDocument,
+  uploadPortalDocument,
 } from './api';
 
 type Props = {
@@ -30,6 +43,7 @@ type Props = {
   onOpenPatient?: (clientId: string) => void;
   previewSnapshot?: Awaited<ReturnType<typeof fetchPortalCheckinOperations>>;
   previewAppointmentSnapshot?: Awaited<ReturnType<typeof fetchPortalAppointmentOperations>>;
+  previewDocumentSnapshot?: Awaited<ReturnType<typeof fetchPortalDocumentOperations>>;
 };
 
 const scopes: Array<{ id: PortalCheckinScope; label: string }> = [
@@ -45,6 +59,13 @@ const appointmentScopes: Array<{ id: PortalAppointmentScope; label: string }> = 
   { id: 'reschedule', label: 'Reprogramar' },
   { id: 'cancel', label: 'Cancelar' },
   { id: 'resolved', label: 'Resueltas' },
+];
+
+const documentScopes: Array<{ id: PortalDocumentScope; label: string }> = [
+  { id: 'pending', label: 'Por revisar' },
+  { id: 'published', label: 'Publicados' },
+  { id: 'rejected', label: 'Rechazados' },
+  { id: 'all', label: 'Todos' },
 ];
 
 const number = new Intl.NumberFormat('es-CO');
@@ -470,8 +491,106 @@ function AppointmentOperations({ notify, onOpenPatient, previewAppointmentSnapsh
   );
 }
 
+function documentState(item: PortalDocumentOperation) {
+  if (item.scanStatus === 'infected') return { label: 'Archivo bloqueado', tone: 'urgent' };
+  if (item.scanStatus === 'error') return { label: 'Escaneo pendiente', tone: 'pending' };
+  if (item.scanStatus !== 'clean') return { label: 'Verificando archivo', tone: 'pending' };
+  if (item.visibility === 'patient_published' && item.reviewStatus === 'approved') return { label: 'Publicado', tone: 'reviewed' };
+  if (item.reviewStatus === 'rejected') return { label: 'Rechazado', tone: 'dismissed' };
+  return { label: 'Listo para revisar', tone: 'pending' };
+}
+
+function fileSize(bytes: number | null) {
+  if (!bytes) return 'Tamaño no registrado';
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+function DocumentOperations({ notify, onOpenPatient, previewDocumentSnapshot }: Omit<Props, 'previewSnapshot' | 'previewAppointmentSnapshot'>) {
+  const [scope, setScope] = useState<PortalDocumentScope>('pending');
+  const [snapshot, setSnapshot] = useState<Awaited<ReturnType<typeof fetchPortalDocumentOperations>> | null>(previewDocumentSnapshot ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(previewDocumentSnapshot?.items[0]?.id ?? null);
+  const [metadata, setMetadata] = useState({ title: '', category: 'Documento clínico' });
+  const [loading, setLoading] = useState(!previewDocumentSnapshot);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (quiet = false) => {
+    if (previewDocumentSnapshot) { setSnapshot(previewDocumentSnapshot); setLoading(false); return; }
+    if (!quiet) setLoading(true);
+    setError('');
+    try {
+      const next = await fetchPortalDocumentOperations(scope);
+      setSnapshot(next);
+      setSelectedId((current) => current && next.items.some((item) => item.id === current) ? current : next.items[0]?.id ?? null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo abrir el archivo clínico.');
+    } finally { setLoading(false); }
+  }, [previewDocumentSnapshot, scope]);
+
+  useEffect(() => { void load(); }, [load]);
+  const selected = useMemo(() => snapshot?.items.find((item) => item.id === selectedId) ?? null, [selectedId, snapshot]);
+  useEffect(() => { if (selected) setMetadata({ title: selected.title, category: selected.category }); }, [selected]);
+
+  async function act(action: 'publish' | 'reject' | 'revoke' | 'retry_scan') {
+    if (!selected) return;
+    if (previewDocumentSnapshot) { notify('Vista de prueba: la acción no modifica datos.'); return; }
+    setBusy(true);
+    try {
+      await updatePortalDocument(selected.id, action, action === 'publish' ? metadata : {});
+      notify(action === 'publish' ? 'Documento publicado para el paciente.' : action === 'revoke' ? 'Documento retirado del portal.' : action === 'retry_scan' ? 'Archivo verificado nuevamente.' : 'Documento rechazado y retirado.');
+      await load(true);
+    } catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo actualizar el documento.', true); }
+    finally { setBusy(false); }
+  }
+
+  async function download() {
+    if (!selected) return;
+    if (previewDocumentSnapshot) { notify('Vista de prueba: no hay un archivo real.'); return; }
+    setBusy(true);
+    try {
+      const signed = await openPortalDocument(selected.id);
+      window.location.assign(signed.url);
+    } catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo abrir el archivo.', true); }
+    finally { setBusy(false); }
+  }
+
+  async function upload(file: File) {
+    if (!selected) return;
+    if (previewDocumentSnapshot) { notify('Vista de prueba: la carga no modifica datos.'); return; }
+    setBusy(true);
+    try {
+      await uploadPortalDocument(selected.clientId, file, { title: file.name.replace(/\.[^.]+$/, ''), category: metadata.category });
+      notify('Archivo recibido, escaneado y agregado a la revisión del paciente.');
+      setScope('pending');
+      await load(true);
+    } catch (caught) { notify(caught instanceof Error ? caught.message : 'No se pudo cargar el archivo.', true); }
+    finally { setBusy(false); }
+  }
+
+  const summary = snapshot?.summary ?? { pending: 0, scanning: 0, published: 0, rejected: 0 };
+  const state = selected ? documentState(selected) : null;
+  return <section className="portal-ops portal-documents" aria-labelledby="portal-documents-title">
+    <header className="portal-ops__intro" data-reveal><div><h2 id="portal-documents-title">Custodia documental</h2><p>Revisa cada archivo limpio, ajusta cómo lo verá el paciente y publícalo con trazabilidad completa.</p></div><button className="btn btn--ghost" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'is-spinning' : ''} /> Actualizar</button></header>
+    <div className="portal-ops__pulse" data-reveal aria-label="Resumen documental"><article><span>Por revisar</span><strong>{number.format(summary.pending)}</strong></article><article><span>Verificando</span><strong>{number.format(summary.scanning)}</strong></article><article><span>Publicados</span><strong>{number.format(summary.published)}</strong></article><article className={summary.rejected ? 'is-overdue' : ''}><span>Bloqueados</span><strong>{number.format(summary.rejected)}</strong></article></div>
+    <div className="portal-ops__filters" data-reveal role="tablist" aria-label="Filtrar documentos">{documentScopes.map((item) => <button key={item.id} role="tab" aria-selected={scope === item.id} className={scope === item.id ? 'is-active' : ''} onClick={() => setScope(item.id)}>{item.label}</button>)}</div>
+    {error && <div className="portal-ops__state portal-ops__state--error" role="alert"><FileWarning size={22} /><strong>No pudimos abrir los documentos</strong><span>{error}</span><button className="btn btn--soft" onClick={() => void load()}>Intentar de nuevo</button></div>}
+    {!error && loading && <div className="portal-ops__state" aria-live="polite"><span className="spinner" /><strong>Abriendo la bóveda segura…</strong></div>}
+    {!error && !loading && snapshot?.items.length === 0 && <div className="portal-ops__state"><ShieldCheck size={25} /><strong>Todo está al día</strong><span>No hay documentos en este filtro.</span></div>}
+    {!error && !loading && snapshot && snapshot.items.length > 0 && <div className="portal-ops__workspace" data-reveal>
+      <div className="portal-ops__queue" aria-label="Documentos clínicos">{snapshot.items.map((item) => { const itemState = documentState(item); return <button key={item.id} className={`portal-checkin portal-document-row${selectedId === item.id ? ' is-active' : ''}`} onClick={() => setSelectedId(item.id)}><span className="portal-document-row__icon">{item.scanStatus === 'clean' ? <FileCheck2 size={17} /> : <LockKeyhole size={17} />}</span><span className="portal-checkin__body"><span className="portal-checkin__top"><strong>{item.patientName}</strong><time>{dateTime.format(new Date(item.createdAt))}</time></span><span className="portal-checkin__metrics">{item.title} · {fileSize(item.sizeBytes)}</span><span className={`portal-review__priority portal-review__priority--${itemState.tone}`}>{itemState.label}</span></span><ArrowRight size={16} /></button>; })}</div>
+      {selected && state && <article className="portal-review portal-document-review" aria-live="polite"><header className="portal-review__head"><div><span className={`portal-review__priority portal-review__priority--${state.tone}`}>{state.label}</span><h3>{selected.patientName}</h3><p>{selected.patientCode || 'Sin código'} · {selected.uploadedByPatient ? 'Compartido por el paciente' : 'Cargado por el equipo'}</p></div>{onOpenPatient && <button className="btn btn--ghost" onClick={() => onOpenPatient(selected.clientId)}>Abrir ficha</button>}</header>
+        <div className="portal-document-review__file"><FileText size={22} /><div><span>Archivo recibido</span><strong>{selected.originalName || selected.title}</strong><small>{selected.mimeType || 'Tipo no registrado'} · {fileSize(selected.sizeBytes)}</small></div>{selected.scanStatus === 'clean' && <button className="btn btn--ghost" disabled={busy} onClick={() => void download()}><Download size={16} /> Abrir</button>}</div>
+        <div className="portal-document-form"><label><span>Título visible para el paciente</span><input value={metadata.title} maxLength={180} onChange={(event) => setMetadata((current) => ({ ...current, title: event.target.value }))} /></label><label><span>Categoría</span><select value={metadata.category} onChange={(event) => setMetadata((current) => ({ ...current, category: event.target.value }))}><option>Documento clínico</option><option>Resultado de laboratorio</option><option>Fórmula médica</option><option>Consentimiento</option><option>Resumen clínico</option><option>Factura</option></select></label></div>
+        <div className="portal-document-review__custody"><ShieldCheck size={18} /><div><strong>{selected.scanStatus === 'clean' ? 'Verificación de seguridad superada' : 'El archivo todavía no se puede publicar'}</strong><span>{selected.scanStatus === 'clean' ? 'La descarga usa un enlace privado que vence en 90 segundos.' : 'Healen mantiene el archivo aislado hasta que el escáner confirme que está limpio.'}</span></div></div>
+        <label className="portal-document-review__upload"><Upload size={17} /><span>Agregar otro archivo para {selected.patientName}</span><input type="file" accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ''; }} /></label>
+        <footer className="portal-review__actions">{selected.scanStatus === 'error' ? <button className="btn btn--primary" disabled={busy} onClick={() => void act('retry_scan')}><RefreshCw size={16} /> Verificar de nuevo</button> : selected.visibility === 'patient_published' ? <button className="btn btn--ghost" disabled={busy} onClick={() => void act('revoke')}><LockKeyhole size={16} /> Retirar del portal</button> : selected.reviewStatus !== 'rejected' && <><button className="btn btn--ghost" disabled={busy} onClick={() => void act('reject')}><XCircle size={16} /> Rechazar</button><button className="btn btn--primary" disabled={busy || selected.scanStatus !== 'clean' || metadata.title.trim().length < 3} onClick={() => void act('publish')}><FileCheck2 size={16} /> Publicar para el paciente</button></>}</footer>
+      </article>}
+    </div>}
+  </section>;
+}
+
 export function PortalOperations(props: Props) {
-  const [area, setArea] = useState<'checkins' | 'appointments'>('checkins');
+  const [area, setArea] = useState<'checkins' | 'appointments' | 'documents'>('checkins');
   return (
     <div className="portal-hub">
       <header className="portal-hub__header" data-reveal>
@@ -479,16 +598,24 @@ export function PortalOperations(props: Props) {
         <div className="portal-hub__switch" role="tablist" aria-label="Área operativa">
           <button role="tab" aria-selected={area === 'checkins'} className={area === 'checkins' ? 'is-active' : ''} onClick={() => setArea('checkins')}><ClipboardList size={17} /> Check-ins</button>
           <button role="tab" aria-selected={area === 'appointments'} className={area === 'appointments' ? 'is-active' : ''} onClick={() => setArea('appointments')}><CalendarClock size={17} /> Citas</button>
+          <button role="tab" aria-selected={area === 'documents'} className={area === 'documents' ? 'is-active' : ''} onClick={() => setArea('documents')}><FileText size={17} /> Documentos</button>
         </div>
       </header>
-      {area === 'checkins' ? <CheckinOperations {...props} /> : <AppointmentOperations notify={props.notify} onOpenPatient={props.onOpenPatient} previewAppointmentSnapshot={props.previewAppointmentSnapshot} />}
+      {area === 'checkins' ? <CheckinOperations {...props} /> : area === 'appointments' ? <AppointmentOperations notify={props.notify} onOpenPatient={props.onOpenPatient} previewAppointmentSnapshot={props.previewAppointmentSnapshot} /> : <DocumentOperations notify={props.notify} onOpenPatient={props.onOpenPatient} previewDocumentSnapshot={props.previewDocumentSnapshot} />}
     </div>
   );
 }
 
 export function PortalOperationsPreview() {
   const createdAt = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
-  return <PortalOperations notify={() => undefined} onOpenPatient={() => undefined} previewAppointmentSnapshot={{
+  return <PortalOperations notify={() => undefined} onOpenPatient={() => undefined} previewDocumentSnapshot={{
+    summary: { pending: 3, scanning: 1, published: 28, rejected: 1 },
+    items: [{
+      id: 'document-preview', clientId: 'preview-client', patientCode: 'HLN-214', patientName: 'Valentina Demo', patientPhone: '+57 300 000 0000',
+      title: 'Resultados de laboratorio · agosto', originalName: 'laboratorios-agosto.pdf', category: 'Resultado de laboratorio', mimeType: 'application/pdf', sizeBytes: 1843200,
+      reviewStatus: 'pending_review', scanStatus: 'clean', visibility: 'internal', uploadedByPatient: true, createdAt, publishedAt: null, scanCompletedAt: createdAt, scanDetails: {},
+    }],
+  }} previewAppointmentSnapshot={{
     summary: { open: 4, new: 2, changes: 2, overdue: 1, resolvedToday: 6 },
     items: [
       {

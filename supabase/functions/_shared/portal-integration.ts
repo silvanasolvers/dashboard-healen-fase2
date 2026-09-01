@@ -15,13 +15,15 @@ export type CoreAction =
   | 'request_profile_change'
   | 'request_records'
   | 'redeem_reward'
+  | 'document_upload_prepare'
+  | 'document_upload_complete'
   | 'document_url';
 
 const coreActions: CoreAction[] = [
   'home', 'treatment', 'progress', 'appointments', 'documents', 'packages',
   'billing', 'create_checkout', 'payment_status', 'rewards', 'submit_checkin', 'request_appointment',
   'confirm_appointment', 'request_profile_change', 'request_records',
-  'redeem_reward', 'document_url',
+  'redeem_reward', 'document_upload_prepare', 'document_upload_complete', 'document_url',
 ];
 
 export type IntegrationEnvelope = {
