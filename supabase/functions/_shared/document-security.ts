@@ -139,7 +139,7 @@ export async function scanAndPromoteDocument(
     await admin.from('patient_documents').update({ scan_status: 'error', scan_details: { reason: 'scanner_timeout' } }).eq('id', documentId);
     throw new DocumentError('DOCUMENT_SCAN_UNAVAILABLE', 503);
   }
-  const scan = await scannerResponse.json().catch(() => ({})) as { status?: string; engine?: string; signature?: string };
+  const scan = await scannerResponse.json().catch(() => ({})) as { status?: string; engine?: string; signature?: string; detectedMime?: string };
   if (!scannerResponse.ok || !['clean', 'infected'].includes(scan.status ?? '')) {
     await admin.from('patient_documents').update({ scan_status: 'error', scan_details: { reason: 'scanner_error' } }).eq('id', documentId);
     throw new DocumentError('DOCUMENT_SCAN_UNAVAILABLE', 503);
@@ -154,7 +154,19 @@ export async function scanAndPromoteDocument(
     }).eq('id', documentId);
     throw new DocumentError('DOCUMENT_INFECTED', 422);
   }
-
+  const detectedMimeAllowed = scan.detectedMime === document.mime_type || (
+    document.mime_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      && ['application/zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(scan.detectedMime ?? '')
+  );
+  if (!detectedMimeAllowed) {
+    await admin.storage.from(QUARANTINE_BUCKET).remove([document.storage_path]);
+    await admin.from('patient_documents').update({
+      scan_status: 'infected', review_status: 'rejected', scan_engine: scan.engine ?? 'clamav',
+      scan_details: { reason: 'content_type_mismatch', detectedMime: scan.detectedMime ?? 'unknown' },
+      scan_completed_at: new Date().toISOString(), content_sha256: digest,
+    }).eq('id', documentId);
+    throw new DocumentError('DOCUMENT_CONTENT_INVALID', 422);
+  }
   const { error: uploadError } = await admin.storage.from(DOCUMENT_BUCKET).upload(document.storage_path, object, {
     contentType: document.mime_type ?? undefined,
     cacheControl: '0',

@@ -39,6 +39,16 @@ function scan(path) {
   });
 }
 
+function detectMime(path) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('file', ['--brief', '--mime-type', path], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += String(chunk); });
+    child.on('error', reject);
+    child.on('close', (code) => code === 0 ? resolve(output.trim()) : reject(new Error(`file exited ${code}`)));
+  });
+}
+
 createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') return json(response, 200, { ok: true, engine: 'clamav' });
   if (request.method !== 'POST' || request.url !== '/scan') return json(response, 404, { error: 'NOT_FOUND' });
@@ -62,11 +72,11 @@ createServer(async (request, response) => {
       request.pipe(output);
     });
     if (received < 1) return json(response, 400, { error: 'EMPTY_FILE' });
-    return json(response, 200, await scan(path));
+    const [result, detectedMime] = await Promise.all([scan(path), detectMime(path)]);
+    return json(response, 200, { ...result, detectedMime });
   } catch (error) {
     return json(response, error instanceof Error && error.message === 'FILE_TOO_LARGE' ? 413 : 500, { error: 'SCAN_FAILED' });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 }).listen(port, '0.0.0.0');
-
