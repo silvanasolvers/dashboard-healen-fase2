@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.portal-admin-bridge]
 verify_jwt = true
+
+[functions.bold-webhook]
+verify_jwt = false

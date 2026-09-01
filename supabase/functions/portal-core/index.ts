@@ -5,12 +5,137 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const sharedSecret = Deno.env.get('PORTAL_CORE_SHARED_SECRET')!;
 const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+const boldBase = 'https://integrations.api.bold.co';
+const portalOrigin = Deno.env.get('PORTAL_ORIGIN') ?? 'https://pacientes-healen.solversai.cloud';
+
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
 
 function respond(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
+}
+
+function uuid(value: unknown) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function createCheckout(envelope: { basicsClientId: string; portalUserId: string; requestId: string; params: Record<string, unknown> }) {
+  const packageId = envelope.params?.packageId;
+  if (!uuid(packageId)) throw new HttpError('PACKAGE_REQUIRED', 400);
+  const identityKey = Deno.env.get('BOLD_IDENTITY_KEY');
+  if (!identityKey) throw new HttpError('PAYMENTS_NOT_CONFIGURED', 503);
+
+  const { data: packageRow, error: packageError } = await admin.from('portal_packages')
+    .select('id,name,description,price,terms_version,active,valid_from,valid_until')
+    .eq('id', packageId).eq('active', true).maybeSingle();
+  if (packageError) throw packageError;
+  const now = new Date();
+  if (!packageRow || new Date(packageRow.valid_from) > now ||
+      (packageRow.valid_until && new Date(packageRow.valid_until) <= now)) {
+    throw new HttpError('PACKAGE_NOT_AVAILABLE', 404);
+  }
+
+  const { data: existing } = await admin.from('portal_package_orders')
+    .select('id,bold_payment_link,checkout_expires_at')
+    .eq('client_id', envelope.basicsClientId).eq('package_id', packageRow.id)
+    .eq('status', 'pending_payment').gt('checkout_expires_at', now.toISOString())
+    .not('bold_payment_link', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (existing?.bold_payment_link) {
+    return { orderId: existing.id, checkoutUrl: existing.bold_payment_link, expiresAt: existing.checkout_expires_at, reused: true };
+  }
+
+  const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
+  const { data: order, error: orderError } = await admin.from('portal_package_orders').insert({
+    client_id: envelope.basicsClientId,
+    package_id: packageRow.id,
+    amount: packageRow.price,
+    currency: 'COP',
+    terms_version: packageRow.terms_version,
+    checkout_expires_at: expiresAt.toISOString(),
+  }).select('id').single();
+  if (orderError) throw orderError;
+
+  const reference = `HEALEN-${String(order.id).replaceAll('-', '')}`;
+  const boldResponse = await fetch(`${boldBase}/online/link/v1`, {
+    method: 'POST',
+    headers: { Authorization: `x-api-key ${identityKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      amount_type: 'CLOSE',
+      amount: { currency: 'COP', total_amount: Number(packageRow.price), tip_amount: 0 },
+      reference,
+      description: packageRow.name.slice(0, 100),
+      expiration_date: expiresAt.getTime() * 1e6,
+      callback_url: `${portalOrigin}/pagos?order=${order.id}`,
+    }),
+  });
+  const boldBody = await boldResponse.json().catch(() => ({})) as { payload?: { url?: string; payment_link?: string }; errors?: unknown };
+  if (!boldResponse.ok || !boldBody.payload?.url || !boldBody.payload.payment_link) {
+    await admin.from('portal_package_orders').update({ status: 'cancelled' }).eq('id', order.id);
+    throw new HttpError('BOLD_LINK_FAILED', 502);
+  }
+  const { error: updateError } = await admin.from('portal_package_orders').update({
+    bold_payment_link: boldBody.payload.url,
+    bold_order_id: boldBody.payload.payment_link,
+    provider_reference: reference,
+  }).eq('id', order.id);
+  if (updateError) throw updateError;
+  await admin.from('portal_core_access_audit').insert({
+    request_id: envelope.requestId, portal_user_id: envelope.portalUserId,
+    client_id: envelope.basicsClientId, action: 'create_checkout', metadata: { orderId: order.id },
+  });
+  return { orderId: order.id, checkoutUrl: boldBody.payload.url, expiresAt: expiresAt.toISOString() };
+}
+
+async function paymentStatus(envelope: { basicsClientId: string; portalUserId: string; requestId: string; params: Record<string, unknown> }) {
+  const orderId = envelope.params?.orderId;
+  if (!uuid(orderId)) throw new HttpError('ORDER_REQUIRED', 400);
+  const { data: order, error } = await admin.from('portal_package_orders')
+    .select('id,status,amount,currency,bold_order_id,provider_reference')
+    .eq('id', orderId).eq('client_id', envelope.basicsClientId).maybeSingle();
+  if (error) throw error;
+  if (!order) throw new HttpError('ORDER_NOT_FOUND', 404);
+  if (['preparing', 'active', 'cancelled', 'refunded'].includes(order.status) || !order.bold_order_id) {
+    return { orderId, status: order.status };
+  }
+  const identityKey = Deno.env.get('BOLD_IDENTITY_KEY');
+  if (!identityKey) throw new HttpError('PAYMENTS_NOT_CONFIGURED', 503);
+  const boldResponse = await fetch(`${boldBase}/online/link/v1/${encodeURIComponent(order.bold_order_id)}`, {
+    headers: { Authorization: `x-api-key ${identityKey}` },
+  });
+  if (!boldResponse.ok) return { orderId, status: order.status, providerStatus: 'UNAVAILABLE' };
+  const current = await boldResponse.json() as { status?: string; total?: number; transaction_id?: string; payment_method?: string };
+  const providerStatus = String(current.status ?? 'UNKNOWN').toUpperCase();
+  if (providerStatus === 'PAID' || providerStatus === 'REJECTED') {
+    const event = {
+      id: `POLL-${order.bold_order_id}-${providerStatus}-${current.transaction_id ?? 'NO_TX'}`,
+      type: providerStatus === 'PAID' ? 'SALE_APPROVED' : 'SALE_REJECTED',
+      subject: order.bold_order_id,
+      data: {
+        payment_id: current.transaction_id ?? `${order.bold_order_id}-${providerStatus}`,
+        reference: order.provider_reference,
+        amount: { total: current.total ?? Number(order.amount), currency: order.currency ?? 'COP' },
+        payment_method: current.payment_method,
+        created_at: new Date().toISOString(),
+      },
+    };
+    const raw = JSON.stringify(event);
+    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw)).then((value) =>
+      Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, '0')).join(''));
+    const { error: processError } = await admin.rpc('portal_process_bold_event', { p_payload: event, p_payload_hash: hash });
+    if (processError) throw processError;
+  } else if (['CANCELLED', 'EXPIRED'].includes(providerStatus)) {
+    await admin.from('portal_package_orders').update({ status: 'cancelled' }).eq('id', order.id).eq('status', 'pending_payment');
+  }
+  const { data: refreshed } = await admin.from('portal_package_orders').select('status').eq('id', order.id).single();
+  await admin.from('portal_core_access_audit').insert({
+    request_id: envelope.requestId, portal_user_id: envelope.portalUserId,
+    client_id: envelope.basicsClientId, action: 'payment_status', metadata: { orderId: order.id, providerStatus },
+  });
+  return { orderId, status: refreshed?.status ?? order.status, providerStatus };
 }
 
 Deno.serve(async (request) => {
@@ -33,6 +158,9 @@ Deno.serve(async (request) => {
       p_expires_at: expiresAt,
     });
     if (registerError || registered !== true) return respond({ error: 'REQUEST_REJECTED' }, 403);
+
+    if (envelope.action === 'create_checkout') return respond({ data: await createCheckout(envelope) }, 201);
+    if (envelope.action === 'payment_status') return respond({ data: await paymentStatus(envelope) });
 
     const rpcName = {
       home: 'portal_core_get_home',
@@ -62,9 +190,13 @@ Deno.serve(async (request) => {
     }
     const { data, error } = await admin.rpc(rpcName, rpcParams);
     if (error) throw error;
-    return respond({ data });
+    const safeData = envelope.action === 'packages' && Array.isArray(data)
+      ? data.map((item) => ({ ...item, eligible: Boolean(item?.eligible) && Boolean(Deno.env.get('BOLD_IDENTITY_KEY')) }))
+      : data;
+    return respond({ data: safeData });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'UNKNOWN';
+    if (error instanceof HttpError) return respond({ error: error.message }, error.status);
     return respond({ error: message === 'EXPIRED_ENVELOPE' ? message : 'INTEGRATION_ERROR' },
       message === 'EXPIRED_ENVELOPE' ? 401 : 500);
   }

@@ -6,6 +6,8 @@ export type CoreAction =
   | 'documents'
   | 'packages'
   | 'billing'
+  | 'create_checkout'
+  | 'payment_status'
   | 'rewards'
   | 'submit_checkin'
   | 'request_appointment'
@@ -17,7 +19,7 @@ export type CoreAction =
 
 const coreActions: CoreAction[] = [
   'home', 'treatment', 'progress', 'appointments', 'documents', 'packages',
-  'billing', 'rewards', 'submit_checkin', 'request_appointment',
+  'billing', 'create_checkout', 'payment_status', 'rewards', 'submit_checkin', 'request_appointment',
   'confirm_appointment', 'request_profile_change', 'request_records',
   'redeem_reward', 'document_url',
 ];
