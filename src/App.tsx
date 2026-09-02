@@ -61,6 +61,7 @@ import {
   X,
 } from 'lucide-react';
 import { startAurora } from './aurora';
+import { categoryVisualClass } from './categoryPalette';
 import { patientEvolutionLabel, patientNextAction, treatmentProgress } from './patient-status';
 import {
   AccountingTab,
@@ -4654,8 +4655,8 @@ function ContabilidadView({
             <article>
               <strong>{primaryTitle}</strong>
               {primaryBreak.length === 0 && <p className="muted-line">Sin datos en el periodo.</p>}
-              {primaryBreak.map((x) => (
-                <div className="detail-line" key={x.k}>
+              {primaryBreak.map((x, index) => (
+                <div className={`detail-line category-visual ${categoryVisualClass(index)}`} key={x.k}>
                   <span>{x.k}</span>
                   <strong>{formatCurrency(x.v)}</strong>
                 </div>
@@ -5315,8 +5316,8 @@ function ReportesView({
               </div>
             </div>
             <div className="cat-list">
-              {(a?.expenses_by_category ?? []).map((x) => (
-                <div key={x.k}>
+              {(a?.expenses_by_category ?? []).map((x, index) => (
+                <div className={`category-visual ${categoryVisualClass(index)}`} key={x.k}>
                   <span>{x.k}</span>
                   <strong className="tnum">{formatCurrency(x.v)}</strong>
                 </div>
