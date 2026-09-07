@@ -61,6 +61,7 @@ import {
   X,
 } from 'lucide-react';
 import { startAurora } from './aurora';
+import { closuresForRange } from './closure-ranges';
 import { patientEvolutionLabel, patientNextAction, treatmentProgress } from './patient-status';
 import {
   AccountingTab,
@@ -4348,8 +4349,10 @@ function DateRangeBar({
    CIERRES DIARIOS
    ============================================================ */
 function CierresView({ closures }: { closures: DailyClosure[] }) {
-  const latest = closures[0] ?? null;
-  const totals = closures.reduce(
+  const [range, setRange] = useState<DateRange>(() => rangeForPreset('mes'));
+  const visibleClosures = closuresForRange(closures, range);
+  const latest = visibleClosures[0] ?? null;
+  const totals = visibleClosures.reduce(
     (acc, item) => ({
       sales: acc.sales + item.salesTotal,
       inflow: acc.inflow + item.bankInflow,
@@ -4358,24 +4361,79 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
     { sales: 0, inflow: 0, business: 0 },
   );
 
-  if (!latest) {
-    return (
-      <section className="panel" data-reveal>
-        <div className="panel__head">
-          <div><span className="eyebrow">Control operativo</span><h2>Cierres diarios</h2></div>
-        </div>
-        <p className="closure-empty">Todavía no hay cierres diarios registrados.</p>
-      </section>
+  function exportRows(): Array<Array<string | number>> {
+    return visibleClosures.map((item) => [
+      item.date,
+      item.weekday,
+      item.salesTotal,
+      item.bankInflow,
+      item.businessExpenses,
+      item.bankBalance ?? '',
+      item.boldBalance ?? '',
+      item.cashBalance,
+      item.openingBalance ?? '',
+      item.closingBank ?? '',
+    ]);
+  }
+
+  function onCsv() {
+    if (!visibleClosures.length) return;
+    downloadCsv(
+      `healen-cierres-${range.from || 'todo'}`,
+      ['Fecha', 'Día', 'Ventas', 'Pago del día', 'Gasto empresa', 'Bancolombia', 'Bold', 'Efectivo', 'Saldo inicial', 'Saldo final'],
+      exportRows(),
     );
+  }
+
+  async function onPdf() {
+    if (!visibleClosures.length) return;
+    await downloadPdf({
+      filename: `healen-cierres-${range.from || 'todo'}`,
+      title: 'Cierres diarios',
+      subtitle: rangeLabel(range),
+      kpis: [
+        { label: 'Cierres', value: String(visibleClosures.length) },
+        { label: 'Ventas', value: formatCurrency(totals.sales) },
+        { label: 'Pagos', value: formatCurrency(totals.inflow) },
+        { label: 'Gastos empresa', value: formatCurrency(totals.business) },
+      ],
+      sections: [{
+        heading: 'Cierres por día',
+        headers: ['Fecha', 'Día', 'Ventas', 'Pago del día', 'Gasto empresa', 'Bancolombia', 'Bold', 'Efectivo', 'Saldo inicial', 'Saldo final'],
+        rows: visibleClosures.map((item) => [
+          item.date,
+          item.weekday,
+          formatCurrency(item.salesTotal),
+          formatCurrency(item.bankInflow),
+          formatCurrency(item.businessExpenses),
+          item.bankBalance === null ? 'No informado' : formatCurrency(item.bankBalance),
+          item.boldBalance === null ? 'No informado' : formatCurrency(item.boldBalance),
+          formatCurrency(item.cashBalance),
+          item.openingBalance === null ? 'No informado' : formatCurrency(item.openingBalance),
+          item.closingBank === null ? 'No informado' : formatCurrency(item.closingBank),
+        ]),
+      }],
+    });
   }
 
   return (
     <>
-      <section className="closure-hero panel" data-reveal>
+      <DateRangeBar range={range} onChange={setRange} onCsv={onCsv} onPdf={onPdf} />
+
+      {!latest ? (
+        <section className="panel" data-reveal>
+          <div className="panel__head">
+            <div><span className="eyebrow">Control operativo</span><h2>Cierres diarios</h2></div>
+          </div>
+          <p className="closure-empty">No hay cierres registrados en el rango seleccionado.</p>
+        </section>
+      ) : (
+      <>
+        <section className="closure-hero panel" data-reveal>
         <div className="closure-hero__lead">
-          <span className="eyebrow">Último cierre registrado</span>
+          <span className="eyebrow">Último cierre del rango</span>
           <h2>{latest.weekday} · {formatLongDate(latest.date)}</h2>
-          <p>Vista operativa independiente de Caja y de las ventas individuales por paciente.</p>
+          <p>{rangeLabel(range)} · Los totales y la tabla incluyen únicamente las fechas seleccionadas.</p>
         </div>
         <div className="closure-hero__amount">
           <span>Venta del día</span>
@@ -4390,20 +4448,20 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
           <div><span>Saldo al inicio del día</span><strong>{latest.openingBalance === null ? 'No informado' : formatCurrency(latest.openingBalance)}</strong></div>
           <div><span>Saldo final del día</span><strong>{latest.closingBank === null ? 'No informado' : formatCurrency(latest.closingBank)}</strong></div>
         </div>
-      </section>
+        </section>
 
       <section className="kpi-grid" data-reveal>
-        <SignalKpi icon={ClipboardList} tone="brand" label="Cierres registrados" value={closures.length} hint="Histórico operativo" />
-        <SignalKpi icon={TrendingUp} tone="ok" label="Ventas acumuladas" value={formatCurrency(totals.sales)} hint="Según cierres" />
-        <SignalKpi icon={CreditCard} tone="brand" label="Pagos del día" value={formatCurrency(totals.inflow)} hint="Acumulado de cierres" />
-        <SignalKpi icon={Building2} tone="warn" label="Gastos empresa" value={formatCurrency(totals.business)} hint="Egresos del negocio" />
+        <SignalKpi icon={ClipboardList} tone="brand" label="Cierres del rango" value={visibleClosures.length} hint={rangeLabel(range)} />
+        <SignalKpi icon={TrendingUp} tone="ok" label="Ventas del rango" value={formatCurrency(totals.sales)} hint="Solo fechas seleccionadas" />
+        <SignalKpi icon={CreditCard} tone="brand" label="Pagos del rango" value={formatCurrency(totals.inflow)} hint="Solo fechas seleccionadas" />
+        <SignalKpi icon={Building2} tone="warn" label="Gastos empresa" value={formatCurrency(totals.business)} hint="Solo fechas seleccionadas" />
       </section>
 
       <section className="panel" data-reveal>
         <div className="panel__head">
           <div>
-            <span className="eyebrow">Histórico</span>
-            <h2>Cierres por día</h2>
+            <span className="eyebrow">Histórico por rango</span>
+            <h2>Cierres por día · {rangeLabel(range)}</h2>
           </div>
           <span className="closure-legend">Pago del día = dinero ingresado al banco</span>
         </div>
@@ -4423,7 +4481,7 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
               </tr>
             </thead>
             <tbody>
-              {closures.map((item) => (
+              {visibleClosures.map((item) => (
                 <tr key={item.id}>
                   <td><strong>{formatDate(item.date)}</strong><span>{item.weekday}</span></td>
                   <td className="num"><strong>{formatCurrency(item.salesTotal)}</strong></td>
@@ -4446,6 +4504,8 @@ function CierresView({ closures }: { closures: DailyClosure[] }) {
         </div>
         <p className="closure-note">Esta sección muestra únicamente información operativa de la empresa.</p>
       </section>
+      </>
+      )}
     </>
   );
 }
