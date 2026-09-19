@@ -33,7 +33,7 @@ declare d drafts%rowtype; s submissions%rowtype; a attachments%rowtype; m remind
 begin
  if coalesce(auth.role(),'')<>'service_role' then raise exception 'Forbidden' using errcode='42501';end if;
  if action='seed' then
-  insert into protocols(visit_type,version,definition,content_hash) values(payload->>'visitType',payload->>'version',payload->'definition',payload->>'hash') on conflict(visit_type,version) do nothing;
+  insert into protocols(visit_type,version,definition,content_hash) values(payload->>'visitType',payload->>'version',payload->'definition',payload->>'hash') on conflict(visit_type,version) do update set definition=excluded.definition,content_hash=excluded.content_hash where protocols.approved_at is null and not exists(select 1 from submissions entry where entry.visit_type=protocols.visit_type and entry.protocol_version=protocols.version) and not exists(select 1 from drafts draft where draft.visit_type=protocols.visit_type and draft.protocol_version=protocols.version);
   if not exists(select 1 from protocols where visit_type=payload->>'visitType' and version=payload->>'version' and content_hash=payload->>'hash') then raise exception 'protocol_version_conflict';end if;return '{"ok":true}';
  elsif action='protocol' then
   select * into svc from healen_booking.services where id=(payload->>'serviceId')::uuid and active;
