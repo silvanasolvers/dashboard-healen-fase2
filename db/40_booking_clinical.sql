@@ -44,6 +44,7 @@ begin
  elsif action='draft_create' then
   v:=public.healen_clinical_rpc('protocol',payload);select * into cfg from healen_booking.settings;
   if payload->'consents'->>'booking' is distinct from 'true' or payload->'consents'->>'sensitive' is distinct from 'true' or ((v->>'modality')='video' and payload->'consents'->>'teleconsultation' is distinct from 'true') then raise exception 'invalid_consent';end if;
+  if payload->'consentTexts'->>'booking' is distinct from cfg.privacy_text or payload->'consentTexts'->>'sensitive' is distinct from cfg.sensitive_text or (v->>'modality'='video' and payload->'consentTexts'->>'teleconsultation' is distinct from cfg.teleconsultation_text) then raise exception 'consent_changed';end if;
   insert into drafts(token_hash,service_id,visit_type,modality,protocol_version,consents) values(payload->>'hash',(payload->>'serviceId')::uuid,v->>'visitType',v->>'modality',v->>'version',jsonb_build_object('booking',true,'sensitive',true,'teleconsultation',v->>'modality'='video','bookingText',cfg.privacy_text,'sensitiveText',cfg.sensitive_text,'teleconsultationText',cfg.teleconsultation_text,'acceptedAt',now())) returning * into d;
   return to_jsonb(d)-'token_hash';
  elsif action in ('draft_get','draft_save','complete','attachment_prepare','attachment_complete') then
