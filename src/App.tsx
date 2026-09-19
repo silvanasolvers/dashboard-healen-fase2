@@ -1,3 +1,4 @@
+import { BookingIntakes } from './BookingIntakes';
 import {
   ElementType,
   FormEvent,
@@ -2888,6 +2889,7 @@ function AgendaView({ patients, appointments, onOpenPatient }: { patients: Patie
 
   return (
     <div className="view-wrap agenda" data-reveal>
+      <BookingIntakes patients={patients} />
       <section className="agenda-hero" data-reveal>
         <div>
           <span className="eyebrow">Agenda inteligente</span>
@@ -5543,7 +5545,7 @@ function PatientDetail({
   go: (v: View) => void;
 }) {
   const ref = useScrollReveal(`${patient.id}-${0}`);
-  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero' | 'portal'>('resumen');
+  const [tab, setTab] = useState<'resumen' | 'notas' | 'historial' | 'relacionado' | 'dinero' | 'portal' | 'cuestionarios'>('resumen');
   const [dossier, setDossier] = useState<PatientDossier | null>(null);
   const [loading, setLoading] = useState(true);
   const signal = overallSignal(patient);
@@ -5588,6 +5590,7 @@ function PatientDetail({
     { id: 'relacionado' as const, label: 'Relacionado', icon: LinkIcon, count: dossier?.related ? dossier.related.treatments.length + dossier.related.sales.length + dossier.related.appointments.length + dossier.related.relationships.length : undefined },
     { id: 'dinero' as const, label: 'Dinero', icon: Wallet, count: undefined },
     { id: 'portal' as const, label: 'Portal', icon: Globe2, count: undefined },
+    { id: 'cuestionarios' as const, label: 'Cuestionarios', icon: ClipboardList, count: undefined },
   ];
 
   return (
@@ -5666,6 +5669,7 @@ function PatientDetail({
       {tab === 'relacionado' && <RelacionadoPanel dossier={dossier} loading={loading} />}
       {tab === 'dinero' && <DineroPanel patient={patient} dossier={dossier} />}
       {tab === 'portal' && <PortalPatientPanel patient={patient} dossier={dossier} />}
+      {tab === 'cuestionarios' && patient.clientUuid && <BookingIntakes clientId={patient.clientUuid} />}
     </div>
   );
 }
